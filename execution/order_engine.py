@@ -1,0 +1,409 @@
+"""
+Order Execution Engine — Motor de ejecución de órdenes.
+Convierte señales en órdenes, maneja cancel/replace dinámico,
+minimiza slippage, gestiona órdenes pendientes.
+"""
+from __future__ import annotations
+import asyncio
+import time
+import uuid
+from typing import Dict, List, Optional
+
+from config.settings import Settings, SymbolConfig
+from core.types import (
+    Signal, Order, OrderType, Side, TimeInForce, StrategyType, Position, Trade,
+)
+from exchange.strike_client import StrikeClient
+from risk.risk_manager import RiskManager
+from execution.smart_router import (
+    SmartOrderRouter, FillProbabilityModel, QueuePositionModel,
+    VWAPEngine, ExecutionAnalytics, TradeIntensityModel,
+    SpreadPredictor,
+)
+import structlog
+
+logger = structlog.get_logger(__name__)
+
+
+class OrderExecutionEngine:
+    """Motor de ejecución que convierte señales validadas en órdenes.
+
+    Integra SmartOrderRouter para decision inteligente de limit vs market,
+    fill probability model, y execution analytics.
+    """
+
+    def __init__(
+        self,
+        settings: Settings,
+        client: StrikeClient,
+        risk_manager: RiskManager,
+    ) -> None:
+        self.settings = settings
+        self.client = client
+        self.risk_manager = risk_manager
+
+        # Tracking de órdenes activas
+        self._active_orders: Dict[str, Order] = {}  # order_id -> Order
+        # Mapping de señal a orden para cancel/replace
+        self._signal_orders: Dict[str, str] = {}  # signal_key -> order_id
+        # Fills recientes
+        self._recent_trades: List[Trade] = []
+
+        # ── Smart execution components ───────────────────────────────
+        self.fill_model = FillProbabilityModel()
+        self.queue_model = QueuePositionModel()
+        self.smart_router = SmartOrderRouter(
+            fill_model=self.fill_model,
+            queue_model=self.queue_model,
+            opportunity_cost_bps=5.0,
+        )
+        self.vwap_engine = VWAPEngine()
+        self.exec_analytics = ExecutionAnalytics()
+        self.trade_intensity: Dict[str, TradeIntensityModel] = {}
+        self.spread_predictor: Dict[str, SpreadPredictor] = {}
+
+        # Inicializar per-symbol
+        for sym in settings.symbols:
+            self.trade_intensity[sym.symbol] = TradeIntensityModel()
+            self.spread_predictor[sym.symbol] = SpreadPredictor()
+
+    # ── Ejecución de señales ───────────────────────────────────────
+
+    async def execute_signal(self, signal: Signal, sym_config: SymbolConfig) -> Optional[Order]:
+        """Ejecuta una señal de trading como orden en el exchange.
+
+        Usa SmartOrderRouter para decision inteligente de tipo de orden.
+        """
+        price = signal.entry_price
+        size_units = signal.size_usd / price if price > 0 else 0
+        if size_units <= 0:
+            return None
+
+        # Generar client_order_id único
+        client_id = f"bs_{signal.strategy.value[:2]}_{uuid.uuid4().hex[:8]}"
+
+        # ── Smart Routing Decision ───────────────────────────────────
+        is_exit = signal.metadata.get("action") in (
+            "exit_mean_reversion", "trailing_stop_hit", "mm_unwind"
+        )
+        is_mm = signal.strategy == StrategyType.MARKET_MAKING
+
+        # Extraer features del mercado desde metadata
+        spread_bps = signal.metadata.get("spread_bps", self.settings.trading.slippage_bps * 2)
+        atr_bps = 0.0
+        atr_val = signal.metadata.get("atr", 0)
+        if atr_val is not None and atr_val > 0 and price > 0:
+            atr_bps = atr_val / price * 10_000
+
+        book_depth = signal.metadata.get("book_depth_usd", 0)
+        microprice = signal.metadata.get("microprice", 0)
+        mid_price = signal.metadata.get("mid_price", price)
+
+        # Trade intensity
+        intensity = self.trade_intensity.get(signal.symbol)
+        trade_rate = intensity.current.total_intensity if intensity else 0.0
+
+        kyle_lambda_bps = signal.metadata.get("kyle_lambda_bps", 0.0)
+
+        routing = self.smart_router.route(
+            side=signal.side.value,
+            price=price,
+            size_usd=signal.size_usd,
+            spread_bps=spread_bps,
+            atr_bps=atr_bps,
+            book_depth_usd=book_depth,
+            trade_intensity=trade_rate,
+            signal_strength=signal.strength,
+            is_exit=is_exit,
+            is_mm=is_mm,
+            maker_fee_bps=self.settings.trading.maker_fee * 10_000,
+            taker_fee_bps=self.settings.trading.taker_fee * 10_000,
+            microprice=microprice,
+            mid_price=mid_price,
+            kyle_lambda_bps=kyle_lambda_bps,
+        )
+
+        # ── Build order from routing decision ────────────────────────
+        if is_mm:
+            # MM: siempre limit + post_only (override routing for safety)
+            order = Order(
+                symbol=signal.symbol,
+                side=signal.side,
+                order_type=OrderType.LIMIT,
+                quantity=size_units,
+                price=signal.entry_price,
+                time_in_force=TimeInForce.GTC,
+                post_only=True,
+                client_order_id=client_id,
+                strategy=signal.strategy,
+            )
+        elif routing.order_type == "MARKET" or is_exit:
+            order = Order(
+                symbol=signal.symbol,
+                side=signal.side,
+                order_type=OrderType.MARKET,
+                quantity=size_units,
+                reduce_only=is_exit,
+                client_order_id=client_id,
+                strategy=signal.strategy,
+            )
+            # Stash expected price for slippage tracking (market orders have price=None)
+            order._expected_price = signal.entry_price
+        else:
+            # Limit order con precio optimizado del router
+            limit_price = routing.limit_price
+            if limit_price <= 0:
+                # Fallback: precio de senal + slippage minimo
+                slippage = self.settings.trading.slippage_bps * price / 10_000
+                limit_price = price + slippage if signal.side == Side.BUY else price - slippage
+
+            order = Order(
+                symbol=signal.symbol,
+                side=signal.side,
+                order_type=OrderType.LIMIT,
+                quantity=size_units,
+                price=limit_price,
+                time_in_force=TimeInForce.IOC,
+                client_order_id=client_id,
+                strategy=signal.strategy,
+            )
+
+        logger.debug("smart_routing", symbol=signal.symbol,
+                      decision=routing.order_type, reason=routing.reason,
+                      cost_bps=round(routing.expected_cost_bps, 2),
+                      fill_prob=round(routing.fill_probability, 2))
+
+        # Enviar orden
+        try:
+            result = await self.client.place_order(order)
+            order.order_id = result.get("orderId", result.get("order_id", ""))
+            order.status = result.get("status", "NEW")
+            if order.order_id:
+                self._active_orders[order.order_id] = order
+            logger.info(
+                "order_placed", symbol=order.symbol, side=order.side.value,
+                type=order.order_type.value, qty=round(order.quantity, 6),
+                price=order.price, order_id=order.order_id,
+            )
+
+            # Solo colocar SL/TP si la orden principal ya fue filled (no NEW — podría no fillarse)
+            if (order.status in ("FILLED", "PARTIALLY_FILLED")
+                    and signal.stop_loss != signal.entry_price
+                    and signal.take_profit != signal.entry_price
+                    and signal.strategy != StrategyType.MARKET_MAKING):
+                await self._place_protective_orders(signal, size_units, sym_config)
+
+            return order
+
+        except Exception as e:
+            logger.error("order_failed", symbol=signal.symbol, error=str(e))
+            return None
+
+    async def _place_protective_orders(
+        self, signal: Signal, size: float, sym_config: SymbolConfig
+    ) -> None:
+        """Coloca órdenes de stop loss y take profit."""
+        # Stop Loss
+        sl_side = Side.SELL if signal.side == Side.BUY else Side.BUY
+        sl_order = Order(
+            symbol=signal.symbol,
+            side=sl_side,
+            order_type=OrderType.STOP,
+            quantity=size,
+            stop_price=signal.stop_loss,
+            reduce_only=True,
+            client_order_id=f"bs_sl_{uuid.uuid4().hex[:8]}",
+            strategy=signal.strategy,
+        )
+        try:
+            result = await self.client.place_order(sl_order)
+            sl_order.order_id = result.get("orderId", result.get("order_id", ""))
+            if sl_order.order_id:
+                self._active_orders[sl_order.order_id] = sl_order
+        except Exception as e:
+            logger.error("sl_order_failed", symbol=signal.symbol, error=str(e))
+
+        # Take Profit
+        tp_order = Order(
+            symbol=signal.symbol,
+            side=sl_side,
+            order_type=OrderType.TAKE_PROFIT,
+            quantity=size,
+            stop_price=signal.take_profit,
+            reduce_only=True,
+            client_order_id=f"bs_tp_{uuid.uuid4().hex[:8]}",
+            strategy=signal.strategy,
+        )
+        try:
+            result = await self.client.place_order(tp_order)
+            tp_order.order_id = result.get("orderId", result.get("order_id", ""))
+            if tp_order.order_id:
+                self._active_orders[tp_order.order_id] = tp_order
+        except Exception as e:
+            logger.error("tp_order_failed", symbol=signal.symbol, error=str(e))
+
+    # ── Market Making: cancel/replace ──────────────────────────────
+
+    async def refresh_mm_orders(
+        self, symbol: str, signals: List[Signal]
+    ) -> None:
+        """Refresca órdenes de market making: cancela las viejas y coloca nuevas."""
+        # Cancelar solo órdenes MM activas para este símbolo (no tocar SL/TP de otras estrategias)
+        to_cancel = [
+            oid for oid, o in self._active_orders.items()
+            if o.symbol == symbol and o.strategy == StrategyType.MARKET_MAKING
+        ]
+
+        for oid in to_cancel:
+            try:
+                await self.client.cancel_order(symbol, oid)
+                self._active_orders.pop(oid, None)
+            except Exception as e:
+                logger.warning("mm_cancel_single_failed", order_id=oid, error=str(e))
+        if to_cancel:
+            logger.debug("mm_orders_cancelled", symbol=symbol, count=len(to_cancel))
+
+        # Colocar nuevas órdenes MM en batch
+        mm_signals = [s for s in signals if s.strategy == StrategyType.MARKET_MAKING]
+        if not mm_signals:
+            return
+
+        orders = []
+        for sig in mm_signals:
+            price = sig.entry_price
+            size = sig.size_usd / price if price > 0 else 0
+            if size <= 0:
+                continue
+            orders.append(Order(
+                symbol=sig.symbol,
+                side=sig.side,
+                order_type=OrderType.LIMIT,
+                quantity=size,
+                price=price,
+                post_only=True,
+                client_order_id=f"bs_mm_{uuid.uuid4().hex[:8]}",
+                strategy=StrategyType.MARKET_MAKING,
+            ))
+
+        if orders:
+            try:
+                result = await self.client.batch_orders(orders)
+                # Track order IDs from batch response for future cancellation
+                if isinstance(result, dict):
+                    order_results = result.get("orders", result.get("data", []))
+                    if isinstance(order_results, list):
+                        for i, resp in enumerate(order_results):
+                            if isinstance(resp, dict) and i < len(orders):
+                                oid = resp.get("orderId", resp.get("order_id", ""))
+                                if oid:
+                                    orders[i].order_id = oid
+                                    orders[i].status = resp.get("status", "NEW")
+                                    self._active_orders[oid] = orders[i]
+                logger.info("mm_orders_placed", symbol=symbol, count=len(orders),
+                            tracked=sum(1 for o in orders if o.order_id))
+            except Exception as e:
+                logger.error("mm_batch_failed", symbol=symbol, error=str(e))
+
+    # ── Procesamiento de fills (desde WebSocket) ──────────────────
+
+    def on_order_update(self, data: Dict) -> Optional[Trade]:
+        """Procesa actualización de orden desde WebSocket."""
+        order_id = str(data.get("i", data.get("orderId", "")))
+        exec_type = data.get("x", data.get("executionType", ""))
+        status = data.get("X", data.get("orderStatus", ""))
+
+        order = self._active_orders.get(order_id)
+
+        if exec_type == "TRADE":
+            # Fill parcial o total
+            fill_price = float(data.get("L", data.get("lastFilledPrice", 0)))
+            fill_qty = float(data.get("l", data.get("lastFilledQuantity", 0)))
+            commission = float(data.get("n", data.get("commission", 0)))
+            realized_pnl = float(data.get("rp", data.get("realizedProfit", 0)))
+
+            side = Side(data.get("S", data.get("side", "BUY")))
+            symbol = data.get("s", data.get("symbol", ""))
+
+            # Slippage tracking: comparar precio esperado vs fill real
+            expected_price = 0.0
+            actual_slippage_bps = 0.0
+            latency_ms = 0.0
+            signal_features = {}
+
+            if order:
+                # For market orders price=None; use _expected_price stashed at creation
+                expected_price = order.price or getattr(order, '_expected_price', 0.0)
+                if expected_price > 0 and fill_price > 0:
+                    # Signed slippage: positive = adverse (paid more for BUY / received less for SELL)
+                    if side == Side.BUY:
+                        actual_slippage_bps = (fill_price - expected_price) / expected_price * 10_000
+                    else:
+                        actual_slippage_bps = (expected_price - fill_price) / expected_price * 10_000
+                    # Registrar en slippage tracker del risk manager
+                    self.risk_manager.slippage_tracker.record_fill(
+                        expected_price=expected_price,
+                        fill_price=fill_price,
+                        symbol=symbol,
+                        size_usd=fill_price * fill_qty,
+                    )
+                # Latencia: timestamp de fill - timestamp de orden
+                fill_ts = float(data.get("T", data.get("transactTime", 0)))
+                if fill_ts > 0 and order.timestamp > 0:
+                    latency_ms = (fill_ts / 1000.0 - order.timestamp) * 1000  # ms
+
+            trade = Trade(
+                symbol=symbol,
+                side=side,
+                price=fill_price,
+                quantity=fill_qty,
+                fee=commission,
+                order_id=order_id,
+                strategy=order.strategy if order else None,
+                pnl=realized_pnl,
+                expected_price=expected_price,
+                actual_slippage_bps=actual_slippage_bps,
+                latency_ms=latency_ms,
+            )
+            self._recent_trades.append(trade)
+            # Limitar historial en memoria
+            if len(self._recent_trades) > 500:
+                self._recent_trades = self._recent_trades[-250:]
+
+            # Actualizar risk manager con PnL
+            if realized_pnl != 0:
+                self.risk_manager.record_trade_result(realized_pnl, strategy=trade.strategy)
+
+            logger.info(
+                "trade_fill", symbol=symbol, side=side.value,
+                price=fill_price, qty=fill_qty, pnl=realized_pnl,
+            )
+
+            # Limpiar orden completamente filled del tracking
+            if status in ("FILLED", "CANCELED", "REJECTED", "EXPIRED"):
+                self._active_orders.pop(order_id, None)
+
+            return trade
+
+        if status in ("FILLED", "CANCELED", "REJECTED", "EXPIRED"):
+            self._active_orders.pop(order_id, None)
+
+        return None
+
+    # ── Emergencia ─────────────────────────────────────────────────
+
+    async def cancel_all(self) -> None:
+        """Cancela todas las órdenes activas (emergencia)."""
+        try:
+            await self.client.cancel_all_orders()
+            self._active_orders.clear()
+            logger.warning("all_orders_cancelled_emergency")
+        except Exception as e:
+            logger.error("emergency_cancel_failed", error=str(e))
+
+    @property
+    def active_order_count(self) -> int:
+        return len(self._active_orders)
+
+    @property
+    def recent_trades(self) -> List[Trade]:
+        return self._recent_trades[-100:]  # últimos 100 trades

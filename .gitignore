@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.pyc
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+
+# Environment & Secrets
+.env
+.env.local
+*.key
+
+# Data (large files, user-specific)
+data/trades/
+data/klines/
+data/orderbook/
+data/binance/
+data/stats/
+data/metadata.json
+data/*.db
+data/catalog.json
+logs/
+
+# Automation
+automation/logs/
+automation/STOP_COLLECTOR
+
+# Desktop app
+desktop/node_modules/
+desktop/dist/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Tauri signing keys (NEVER commit)
+~/.tauri/

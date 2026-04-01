@@ -1,0 +1,88 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
+
+@theme {
+  /* Core backgrounds */
+  --color-bg-base: #050810;
+  --color-bg-surface: #0B1120;
+  --color-bg-elevated: #111B2E;
+
+  /* Borders */
+  --color-border-subtle: #1A2540;
+  --color-border-default: #243050;
+
+  /* Text */
+  --color-text-primary: #F0F4FA;
+  --color-text-secondary: #8898AA;
+  --color-text-muted: #4A5568;
+
+  /* Accent */
+  --color-accent: #00D4AA;
+  --color-accent-dim: #00A88A;
+
+  /* Semantic */
+  --color-profit: #00D4AA;
+  --color-loss: #FF4757;
+  --color-warning: #FFA502;
+  --color-info: #3B82F6;
+
+  /* Strategy colors */
+  --color-strategy-mr: #6C5CE7;
+  --color-strategy-ofm: #00CEC9;
+  --color-strategy-tf: #00B894;
+  --color-strategy-mm: #FDCB6E;
+
+  /* Regime colors */
+  --color-regime-ranging: #74B9FF;
+  --color-regime-up: #00D4AA;
+  --color-regime-down: #FF4757;
+  --color-regime-breakout: #E84393;
+
+  /* Micro colors */
+  --color-vpin: #E84393;
+  --color-hawkes: #FF7675;
+  --color-as-spread: #00CEC9;
+
+  /* Fonts */
+  --font-display: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+/* Base styles */
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+  font-family: var(--font-display);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-default);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* Selection */
+::selection {
+  background: rgba(0, 212, 170, 0.2);
+  color: var(--color-text-primary);
+}
