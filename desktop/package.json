@@ -15,6 +15,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5.96.1",
     "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-shell": "^2.3.5",
     "clsx": "^2.1.1",
     "framer-motion": "^12.38.0",
     "lightweight-charts": "^4.2.2",

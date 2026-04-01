@@ -24,6 +24,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -36,6 +41,14 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri -> target
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Python engine sidecar
+        run: python scripts/build_engine.py
 
       - name: Install frontend dependencies
         working-directory: desktop
@@ -60,6 +73,8 @@ jobs:
             - **Windows MSI**: `BotStrike___VERSION___x64_en-US.msi` (recommended)
             - **Windows NSIS**: `BotStrike___VERSION___x64-setup.exe`
 
+            **Standalone**: Includes Python trading engine — no Python installation needed.
+
             ### Auto-Update
             Existing installations will automatically detect this update.
 
@@ -70,15 +85,11 @@ jobs:
           includeUpdaterJson: true
           updaterJsonKeepUniversal: true
 
-  # Verify the release artifacts are valid
   verify:
     needs: build-windows
     runs-on: ubuntu-latest
     steps:
       - name: Verify release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Release created successfully"
-          echo "Auto-update JSON should be available at:"
-          echo "https://github.com/${{ github.repository }}/releases/latest/download/latest.json"
+          echo "Auto-update JSON: https://github.com/${{ github.repository }}/releases/latest/download/latest.json"

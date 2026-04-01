@@ -1,5 +1,6 @@
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -8,6 +9,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -16,20 +18,83 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
             let handle = app.handle().clone();
+
+            // Launch Python engine sidecar
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = check_for_updates(handle).await {
+                launch_engine_sidecar(&handle).await;
+            });
+
+            // Auto-update check (separate task)
+            let handle2 = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = check_for_updates(handle2).await {
                     log::warn!("Update check failed: {}", e);
                 }
             });
+
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
+async fn launch_engine_sidecar(app: &tauri::AppHandle) {
+    // Small delay to let the window render
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    log::info!("Launching BotStrike engine sidecar...");
+
+    let shell = app.shell();
+    let sidecar = shell.sidecar("binaries/botstrike-engine");
+
+    match sidecar {
+        Ok(command) => {
+            match command.spawn() {
+                Ok((mut rx, child)) => {
+                    log::info!("Engine sidecar started (pid: {})", child.pid());
+
+                    // Store child handle for cleanup
+                    // Read stdout/stderr in background
+                    tauri::async_runtime::spawn(async move {
+                        use tauri_plugin_shell::process::CommandEvent;
+                        while let Some(event) = rx.recv().await {
+                            match event {
+                                CommandEvent::Stdout(line) => {
+                                    let text = String::from_utf8_lossy(&line);
+                                    if !text.trim().is_empty() {
+                                        log::info!("[engine] {}", text.trim());
+                                    }
+                                }
+                                CommandEvent::Stderr(line) => {
+                                    let text = String::from_utf8_lossy(&line);
+                                    if !text.trim().is_empty() {
+                                        log::warn!("[engine] {}", text.trim());
+                                    }
+                                }
+                                CommandEvent::Terminated(status) => {
+                                    log::warn!("Engine sidecar terminated: {:?}", status);
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                    });
+                }
+                Err(e) => {
+                    log::error!("Failed to spawn engine sidecar: {}", e);
+                    log::info!("Falling back to manual mode — run: python -m server.bridge");
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("Sidecar binary not found: {}", e);
+            log::info!("Engine sidecar not bundled — run manually: python -m server.bridge");
+        }
+    }
+}
+
 async fn check_for_updates(app: tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    // Let the app window render first
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
     log::info!("Checking for updates...");
@@ -41,7 +106,6 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<(), Box<dyn std::err
         let current = update.current_version.clone();
         log::info!("Update available: {} -> {}", current, version);
 
-        // Step 1: Ask user if they want to update
         let should_update = app
             .dialog()
             .message(format!(
@@ -61,7 +125,6 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<(), Box<dyn std::err
             return Ok(());
         }
 
-        // Step 2: Download and install
         log::info!("Downloading update v{}...", version);
         let mut total_downloaded: usize = 0;
 
@@ -82,7 +145,6 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<(), Box<dyn std::err
             )
             .await?;
 
-        // Step 3: Notify and restart
         app.dialog()
             .message(format!(
                 "BotStrike v{} installed successfully.\n\nThe app will restart now.",

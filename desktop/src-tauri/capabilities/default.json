@@ -7,6 +7,12 @@
     "core:default",
     "updater:default",
     "dialog:default",
-    "process:default"
+    "process:default",
+    "shell:default",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [{ "name": "binaries/botstrike-engine", "sidecar": true, "args": true }]
+    },
+    "shell:allow-kill"
   ]
 }
