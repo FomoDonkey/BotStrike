@@ -22,7 +22,7 @@ def main():
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--noconfirm",
-        "--onedir",
+        "--onefile",
         "--console",  # Need console for logging output
         "--name", "botstrike-engine",
         # Add all Python source directories as data
@@ -76,23 +76,16 @@ def main():
 
     # Copy the built exe to Tauri binaries with correct naming
     # Tauri sidecar requires: {name}-{target_triple}.exe
-    src_exe = os.path.join(ROOT, "build", "engine", "botstrike-engine", "botstrike-engine.exe")
+    # With --onefile, the exe is directly in the dist folder
+    src_exe = os.path.join(ROOT, "build", "engine", "botstrike-engine.exe")
     dst_exe = os.path.join(DIST_DIR, "botstrike-engine-x86_64-pc-windows-msvc.exe")
 
     if os.path.exists(src_exe):
         shutil.copy2(src_exe, dst_exe)
-        # Also copy the entire directory (DLLs, etc.) next to it
-        dst_dir = os.path.join(DIST_DIR, "botstrike-engine-x86_64-pc-windows-msvc")
-        if os.path.exists(dst_dir):
-            shutil.rmtree(dst_dir)
-        shutil.copytree(
-            os.path.join(ROOT, "build", "engine", "botstrike-engine"),
-            dst_dir,
-        )
         size_mb = os.path.getsize(dst_exe) / 1024 / 1024
         print(f"\nEngine built successfully!")
         print(f"  Exe: {dst_exe} ({size_mb:.1f} MB)")
-        print(f"  Dir: {dst_dir}")
+        print(f"  Mode: onefile (single standalone exe, no DLLs needed)")
     else:
         print(f"ERROR: Expected exe not found at {src_exe}")
         sys.exit(1)
