@@ -38,7 +38,7 @@ export function SystemPage() {
         setLogs((prev) => [...prev.slice(-499), { timestamp: msg.timestamp, level: "error", message: msg.error }]);
       }
     });
-    return unsub;
+    return () => { unsub(); };
   }, []);
 
   // Auto-scroll logs

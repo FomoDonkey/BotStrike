@@ -171,7 +171,7 @@ export function BacktestPage() {
                     />
                     <Tooltip
                       contentStyle={{ background: "#0B1120", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 }}
-                      formatter={(v: number) => [`$${v.toFixed(2)}`, "Equity"]}
+                      formatter={(v: any) => [`$${Number(v).toFixed(2)}`, "Equity"]}
                     />
                     <Area type="monotone" dataKey="equity" stroke="#00D4AA" fill="url(#btGrad)" strokeWidth={2} dot={false} />
                   </AreaChart>
