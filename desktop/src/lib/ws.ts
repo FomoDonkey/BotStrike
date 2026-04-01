@@ -5,14 +5,15 @@ type MessageHandler = (data: any) => void;
 class WebSocketClient {
   private ws: WebSocket | null = null;
   private url: string;
+  private channel: string;
   private handlers: Set<MessageHandler> = new Set();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private _connected = false;
   private _reconnectAttempts = 0;
-  private _maxReconnectDelay = 10000;
 
   constructor(channel: string) {
+    this.channel = channel;
     this.url = `${BRIDGE_WS_URL}/ws/${channel}`;
   }
 
@@ -21,7 +22,7 @@ class WebSocketClient {
   }
 
   connect() {
-    if (this.ws?.readyState === WebSocket.OPEN) return;
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) return;
 
     try {
       this.ws = new WebSocket(this.url);
@@ -44,22 +45,32 @@ class WebSocketClient {
       this.ws.onclose = () => {
         this._connected = false;
         this.stopPing();
+        this.ws = null;
         this.scheduleReconnect();
       };
 
       this.ws.onerror = () => {
+        // onerror is always followed by onclose, so reconnect happens there
         this._connected = false;
       };
     } catch {
+      this.ws = null;
       this.scheduleReconnect();
     }
   }
 
   disconnect() {
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.stopPing();
-    this.ws?.close();
-    this.ws = null;
+    if (this.ws) {
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.close();
+      this.ws = null;
+    }
     this._connected = false;
   }
 
@@ -69,11 +80,12 @@ class WebSocketClient {
   }
 
   private startPing() {
+    this.stopPing();
     this.pingTimer = setInterval(() => {
       if (this.ws?.readyState === WebSocket.OPEN) {
         this.ws.send(JSON.stringify({ type: "ping" }));
       }
-    }, 15000);
+    }, 30000);
   }
 
   private stopPing() {
@@ -86,7 +98,8 @@ class WebSocketClient {
   private scheduleReconnect() {
     if (this.reconnectTimer) return;
     this._reconnectAttempts++;
-    const delay = Math.min(1000 * Math.pow(1.5, this._reconnectAttempts), this._maxReconnectDelay);
+    // Start at 3s, max 30s — much slower than before to avoid flooding
+    const delay = Math.min(3000 * Math.pow(2, Math.min(this._reconnectAttempts - 1, 4)), 30000);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
@@ -105,8 +118,10 @@ export function getChannel(channel: string): WebSocketClient {
 }
 
 export function connectAll() {
-  ["market", "trading", "micro", "risk", "system"].forEach((ch) => {
-    getChannel(ch).connect();
+  // Stagger connections to avoid simultaneous flood
+  const channelNames = ["market", "trading", "micro", "risk", "system"];
+  channelNames.forEach((ch, i) => {
+    setTimeout(() => getChannel(ch).connect(), i * 500);
   });
 }
 
