@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "BotStrike",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "identifier": "com.botstrike.app",
   "build": {
     "frontendDist": "../dist",
@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' ws://127.0.0.1:9420 http://127.0.0.1:9420 ws://localhost:9420 http://localhost:9420 https://api.binance.com wss://stream.binance.com:9443; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; script-src 'self'"
+      "csp": null
     }
   },
   "bundle": {
