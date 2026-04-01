@@ -80,8 +80,9 @@ jobs:
 
       - name: Create sidecar placeholder for cargo check
         run: |
-          mkdir -p desktop/src-tauri/binaries
+          mkdir -p desktop/src-tauri/binaries/engine
           echo "placeholder" > desktop/src-tauri/binaries/botstrike-engine-x86_64-pc-windows-msvc.exe
+          echo "placeholder" > desktop/src-tauri/binaries/engine/botstrike-engine.exe
 
       - name: Cargo check (no full build)
         working-directory: desktop/src-tauri
