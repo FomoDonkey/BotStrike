@@ -18,7 +18,7 @@ interface DatasetInfo {
 
 export function DataPage() {
   const system = useSystemStore();
-  const ticks = useMarketStore((s) => s.recentTicks);
+  const prices = useMarketStore((s) => s.prices);
   const [catalog, setCatalog] = useState<DatasetInfo[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -29,11 +29,11 @@ export function DataPage() {
     }).catch(() => setLoading(false));
   }, []);
 
-  const tickCounts = Object.entries(ticks).map(([sym, arr]) => ({
+  const tickCounts = Object.entries(prices).map(([sym, price]) => ({
     symbol: sym,
-    count: arr.length,
-    tps: arr.length > 1 ? Math.round(arr.length / ((arr[arr.length - 1].timestamp - arr[0].timestamp) || 1)) : 0,
-    lastPrice: arr.length > 0 ? arr[arr.length - 1].price : 0,
+    count: 0,
+    tps: 0,
+    lastPrice: price,
   }));
 
   return (
