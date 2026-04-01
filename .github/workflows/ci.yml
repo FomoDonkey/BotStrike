@@ -78,6 +78,11 @@ jobs:
         working-directory: desktop
         run: npm run build
 
+      - name: Create sidecar placeholder for cargo check
+        run: |
+          mkdir -p desktop/src-tauri/binaries
+          echo "placeholder" > desktop/src-tauri/binaries/botstrike-engine-x86_64-pc-windows-msvc.exe
+
       - name: Cargo check (no full build)
         working-directory: desktop/src-tauri
         run: cargo check
