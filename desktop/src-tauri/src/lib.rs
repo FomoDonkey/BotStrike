@@ -1,4 +1,5 @@
 use tauri::Manager;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_updater::UpdaterExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -15,10 +16,11 @@ pub fn run() {
                         .build(),
                 )?;
             }
-            // Auto-update check on startup (non-blocking)
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let _ = check_for_updates(handle).await;
+                if let Err(e) = check_for_updates(handle).await {
+                    log::warn!("Update check failed: {}", e);
+                }
             });
             Ok(())
         })
@@ -27,35 +29,71 @@ pub fn run() {
 }
 
 async fn check_for_updates(app: tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    // Wait a few seconds before checking (let app settle)
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    // Let the app window render first
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
+    log::info!("Checking for updates...");
     let updater = app.updater()?;
     let response = updater.check().await?;
 
     if let Some(update) = response {
         let version = update.version.clone();
-        log::info!("Update available: v{}", version);
+        let current = update.current_version.clone();
+        log::info!("Update available: {} -> {}", current, version);
 
-        // Download and install
-        let mut downloaded: usize = 0;
+        // Step 1: Ask user if they want to update
+        let should_update = app
+            .dialog()
+            .message(format!(
+                "BotStrike v{} is available (current: v{}).\n\nDo you want to download and install it now?",
+                version, current
+            ))
+            .title("Update Available")
+            .kind(MessageDialogKind::Info)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Download & Install".into(),
+                "Later".into(),
+            ))
+            .blocking_show();
+
+        if !should_update {
+            log::info!("User skipped update");
+            return Ok(());
+        }
+
+        // Step 2: Download and install
+        log::info!("Downloading update v{}...", version);
+        let mut total_downloaded: usize = 0;
+
         update
             .download_and_install(
                 |chunk_length, content_length| {
-                    downloaded += chunk_length;
-                    log::info!(
-                        "Downloaded {} / {}",
-                        downloaded,
-                        content_length.unwrap_or(0)
-                    );
+                    total_downloaded += chunk_length;
+                    if let Some(total) = content_length {
+                        let pct = (total_downloaded as f64 / total as f64 * 100.0) as u32;
+                        if pct % 25 == 0 {
+                            log::info!("Downloading: {}% ({}/{})", pct, total_downloaded, total);
+                        }
+                    }
                 },
                 || {
-                    log::info!("Download complete, restarting...");
+                    log::info!("Download complete, preparing install...");
                 },
             )
             .await?;
 
-        // Restart to apply update
+        // Step 3: Notify and restart
+        app.dialog()
+            .message(format!(
+                "BotStrike v{} installed successfully.\n\nThe app will restart now.",
+                version
+            ))
+            .title("Update Installed")
+            .kind(MessageDialogKind::Info)
+            .buttons(MessageDialogButtons::Ok)
+            .blocking_show();
+
+        log::info!("Restarting to apply v{}", version);
         app.restart();
     } else {
         log::info!("App is up to date");
