@@ -4,7 +4,9 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/TopBar";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { ConnectionOverlay } from "@/components/shared/ConnectionOverlay";
+import { AlertToast } from "@/components/shared/AlertToast";
 import { useWebSocketBridge } from "@/hooks/useWebSocket";
+import { useAlertSounds } from "@/hooks/useAlertSounds";
 
 const pageVariants = {
   initial: { opacity: 0, y: 8 },
@@ -14,11 +16,13 @@ const pageVariants = {
 
 export function Layout() {
   useWebSocketBridge();
+  useAlertSounds();
   const location = useLocation();
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg-base">
       <ConnectionOverlay />
+      <AlertToast />
       <Sidebar />
       <div className="flex flex-col flex-1 min-w-0">
         <TopBar />

@@ -12,7 +12,11 @@ import { BacktestPage } from "@/pages/backtest/BacktestPage";
 import { DataPage } from "@/pages/data/DataPage";
 import { SettingsPage } from "@/pages/settings/SettingsPage";
 import { SystemPage } from "@/pages/system/SystemPage";
+import { initTheme } from "@/stores/themeStore";
 import "./index.css";
+
+// Apply saved theme before first render
+initTheme();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
