@@ -1,16 +1,57 @@
+import { useEffect, useState, useRef } from "react";
 import { motion } from "framer-motion";
 import { GlassPanel } from "@/components/shared/GlassPanel";
-import { useSystemStore } from "@/stores/systemStore";
 import { PulsingDot } from "@/components/shared/PulsingDot";
+import { useSystemStore } from "@/stores/systemStore";
 import { formatDuration, cn } from "@/lib/utils";
-import { Monitor, Cpu, Wifi, WifiOff, Clock, Users } from "lucide-react";
+import { api } from "@/lib/api";
+import { getChannel } from "@/lib/ws";
+import { Monitor, Cpu, Wifi, WifiOff, Clock, Users, Activity, Play, Square, RefreshCw } from "lucide-react";
+
+interface LogEntry {
+  timestamp: number;
+  level: string;
+  message: string;
+}
 
 export function SystemPage() {
   const system = useSystemStore();
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [botStatus, setBotStatus] = useState<any>(null);
+  const logsEndRef = useRef<HTMLDivElement>(null);
+
+  // Fetch bot status periodically
+  useEffect(() => {
+    const fetch = () => api.botStatus().then(setBotStatus).catch(() => null);
+    fetch();
+    const i = setInterval(fetch, 5000);
+    return () => clearInterval(i);
+  }, []);
+
+  // Subscribe to system channel for logs
+  useEffect(() => {
+    const unsub = getChannel("system").subscribe((msg) => {
+      if (msg.type === "log") {
+        setLogs((prev) => [...prev.slice(-499), { timestamp: msg.timestamp, level: msg.level || "info", message: msg.message || JSON.stringify(msg) }]);
+      }
+      if (msg.type === "engine_error") {
+        setLogs((prev) => [...prev.slice(-499), { timestamp: msg.timestamp, level: "error", message: msg.error }]);
+      }
+    });
+    return unsub;
+  }, []);
+
+  // Auto-scroll logs
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [logs]);
+
+  const handleStart = () => api.botStart("paper").catch(() => null);
+  const handleStop = () => api.botStop().catch(() => null);
 
   return (
     <motion.div
-      className="space-y-4"
+      className="space-y-4 h-full flex flex-col"
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
     >
@@ -22,7 +63,7 @@ export function SystemPage() {
         {/* Engine Status */}
         <GlassPanel className="p-5" glow={system.engineRunning}>
           <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-4">Trading Engine</h3>
-          <div className="flex items-center gap-3 mb-3">
+          <div className="flex items-center gap-3 mb-4">
             <PulsingDot active={system.engineRunning} />
             <span className={cn(
               "text-lg font-semibold",
@@ -31,7 +72,7 @@ export function SystemPage() {
               {system.engineRunning ? "Running" : "Stopped"}
             </span>
           </div>
-          <div className="space-y-2 text-xs">
+          <div className="space-y-2 text-xs mb-4">
             <div className="flex justify-between">
               <span className="text-text-muted flex items-center gap-1"><Cpu className="w-3 h-3" /> Mode</span>
               <span className={cn(
@@ -49,44 +90,127 @@ export function SystemPage() {
               <span className="text-text-muted flex items-center gap-1"><Users className="w-3 h-3" /> WS Clients</span>
               <span className="font-mono">{system.clientsConnected}</span>
             </div>
+            {botStatus && (
+              <>
+                <div className="flex justify-between">
+                  <span className="text-text-muted">Equity</span>
+                  <span className="font-mono text-text-primary">${(botStatus.equity || 300).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-muted">PnL</span>
+                  <span className={cn("font-mono", (botStatus.pnl || 0) >= 0 ? "text-profit" : "text-loss")}>
+                    ${(botStatus.pnl || 0).toFixed(2)}
+                  </span>
+                </div>
+              </>
+            )}
+          </div>
+          {/* Controls */}
+          <div className="flex gap-2">
+            <button
+              onClick={handleStart}
+              disabled={system.engineRunning}
+              className={cn(
+                "flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-all",
+                system.engineRunning
+                  ? "bg-white/5 text-text-muted cursor-not-allowed"
+                  : "bg-profit/10 text-profit hover:bg-profit/20"
+              )}
+            >
+              <Play className="w-3 h-3" /> Start
+            </button>
+            <button
+              onClick={handleStop}
+              disabled={!system.engineRunning}
+              className={cn(
+                "flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-all",
+                !system.engineRunning
+                  ? "bg-white/5 text-text-muted cursor-not-allowed"
+                  : "bg-loss/10 text-loss hover:bg-loss/20"
+              )}
+            >
+              <Square className="w-3 h-3" /> Stop
+            </button>
           </div>
         </GlassPanel>
 
         {/* WebSocket Status */}
         <GlassPanel className="p-5" glow={system.wsConnected}>
-          <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-4">WebSocket Connections</h3>
+          <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-4">Connections</h3>
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                {system.wsConnected ? (
-                  <Wifi className="w-4 h-4 text-accent" />
-                ) : (
-                  <WifiOff className="w-4 h-4 text-loss" />
-                )}
-                <span className="text-sm text-text-primary">Binance Market Data</span>
+            {[
+              { name: "Bridge Server", connected: system.bridgeConnected, detail: "localhost:9420" },
+              { name: "Market Data (Binance)", connected: system.wsConnected, detail: "stream.binance.com" },
+            ].map((c) => (
+              <div key={c.name} className="flex items-center justify-between p-3 rounded-lg bg-white/[0.02]">
+                <div className="flex items-center gap-3">
+                  <PulsingDot active={c.connected} />
+                  <div>
+                    <p className="text-sm text-text-primary">{c.name}</p>
+                    <p className="text-[10px] text-text-muted font-mono">{c.detail}</p>
+                  </div>
+                </div>
+                <span className={cn(
+                  "text-[10px] font-mono px-2 py-0.5 rounded font-semibold",
+                  c.connected ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss"
+                )}>
+                  {c.connected ? "ONLINE" : "OFFLINE"}
+                </span>
               </div>
-              <span className={cn(
-                "text-xs font-mono px-2 py-0.5 rounded",
-                system.wsConnected ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss"
-              )}>
-                {system.wsConnected ? "CONNECTED" : "DISCONNECTED"}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <PulsingDot active={system.bridgeConnected} />
-                <span className="text-sm text-text-primary">Bridge Server</span>
+            ))}
+          </div>
+
+          <div className="mt-4 pt-4 border-t border-white/5">
+            <h4 className="text-xs text-text-muted mb-2">App Info</h4>
+            <div className="space-y-1 text-xs">
+              <div className="flex justify-between">
+                <span className="text-text-muted">Version</span>
+                <span className="font-mono text-text-secondary">1.1.0</span>
               </div>
-              <span className={cn(
-                "text-xs font-mono px-2 py-0.5 rounded",
-                system.bridgeConnected ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss"
-              )}>
-                {system.bridgeConnected ? "CONNECTED" : "DISCONNECTED"}
-              </span>
+              <div className="flex justify-between">
+                <span className="text-text-muted">Framework</span>
+                <span className="font-mono text-text-secondary">Tauri v2 + React</span>
+              </div>
             </div>
           </div>
         </GlassPanel>
       </div>
+
+      {/* Live Logs */}
+      <GlassPanel className="flex-1 p-4 flex flex-col min-h-0">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-xs text-text-secondary uppercase tracking-wider flex items-center gap-2">
+            <Activity className="w-3 h-3" /> Live Logs
+          </h3>
+          <button
+            onClick={() => setLogs([])}
+            className="text-[10px] text-text-muted hover:text-text-secondary flex items-center gap-1"
+          >
+            <RefreshCw className="w-2.5 h-2.5" /> Clear
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto rounded-lg bg-bg-base/50 p-3 font-mono text-[11px] leading-5">
+          {logs.length === 0 ? (
+            <p className="text-text-muted">Waiting for log output...</p>
+          ) : (
+            logs.map((log, i) => (
+              <div key={i} className="flex gap-2">
+                <span className="text-text-muted shrink-0">
+                  {new Date(log.timestamp * 1000).toLocaleTimeString("en-US", { hour12: false })}
+                </span>
+                <span className={cn(
+                  "shrink-0 w-12",
+                  log.level === "error" ? "text-loss" : log.level === "warn" ? "text-warning" : "text-text-muted"
+                )}>
+                  [{log.level}]
+                </span>
+                <span className="text-text-secondary break-all">{log.message}</span>
+              </div>
+            ))
+          )}
+          <div ref={logsEndRef} />
+        </div>
+      </GlassPanel>
     </motion.div>
   );
 }
