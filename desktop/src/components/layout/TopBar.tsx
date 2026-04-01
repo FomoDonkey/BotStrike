@@ -7,11 +7,37 @@ import { AnimatedNumber } from "@/components/shared/AnimatedNumber";
 import { formatUSD, formatPct, formatDuration } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { Wifi, WifiOff, Clock, TrendingUp, TrendingDown, Minus } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+
+function PriceFlash({ price, prev }: { price: number; prev: number }) {
+  const [flash, setFlash] = useState<"up" | "down" | null>(null);
+  const lastPrice = useRef(prev);
+
+  useEffect(() => {
+    if (price === 0 || price === lastPrice.current) return;
+    setFlash(price > lastPrice.current ? "up" : "down");
+    lastPrice.current = price;
+    const t = setTimeout(() => setFlash(null), 400);
+    return () => clearTimeout(t);
+  }, [price]);
+
+  return (
+    <span className={cn(
+      "font-mono font-semibold text-sm tabular-nums transition-all duration-200 px-1.5 py-0.5 rounded",
+      flash === "up" && "text-profit bg-profit/10",
+      flash === "down" && "text-loss bg-loss/10",
+      !flash && "text-text-primary",
+    )}>
+      {price > 0 ? `$${price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "---"}
+    </span>
+  );
+}
 
 export function TopBar() {
   const btcPrice = useMarketStore((s) => s.prices["BTCUSDT"] || s.prices["BTC-USD"] || 0);
-  const prevPrice = useMarketStore((s) => s.prevPrices["BTCUSDT"] || s.prevPrices["BTC-USD"] || 0);
+  const btcPrev = useMarketStore((s) => s.prevPrices["BTCUSDT"] || s.prevPrices["BTC-USD"] || 0);
+  const ethPrice = useMarketStore((s) => s.prices["ETHUSDT"] || s.prices["ETH-USD"] || 0);
+  const ethPrev = useMarketStore((s) => s.prevPrices["ETHUSDT"] || s.prevPrices["ETH-USD"] || 0);
   const metrics = useTradingStore((s) => s.metrics);
   const system = useSystemStore();
   const regime = useRiskStore((s) => s.regime);
@@ -22,31 +48,21 @@ export function TopBar() {
     return () => clearInterval(t);
   }, []);
 
-  const priceDir = btcPrice > prevPrice ? "up" : btcPrice < prevPrice ? "down" : "flat";
-
   return (
     <header className="flex items-center justify-between h-11 px-4 bg-bg-surface/30 backdrop-blur-xl border-b border-white/5 text-xs select-none">
-      {/* Left: Price + Regime */}
-      <div className="flex items-center gap-5">
-        {/* BTC Price */}
-        <div className="flex items-center gap-2">
+      {/* Left: Prices + Regime */}
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-1.5">
           <span className="text-text-muted font-medium">BTC</span>
-          <span
-            className={cn(
-              "font-mono font-semibold text-sm tabular-nums transition-colors duration-150",
-              priceDir === "up" && "text-profit",
-              priceDir === "down" && "text-loss",
-              priceDir === "flat" && "text-text-primary"
-            )}
-          >
-            {btcPrice > 0 ? `$${btcPrice.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "---"}
-          </span>
-          {priceDir === "up" && <TrendingUp className="w-3 h-3 text-profit" />}
-          {priceDir === "down" && <TrendingDown className="w-3 h-3 text-loss" />}
-          {priceDir === "flat" && <Minus className="w-3 h-3 text-text-muted" />}
+          <PriceFlash price={btcPrice} prev={btcPrev} />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-text-muted font-medium">ETH</span>
+          <PriceFlash price={ethPrice} prev={ethPrev} />
         </div>
 
-        {/* Regime */}
+        <div className="w-px h-4 bg-white/5" />
+
         <div className="flex items-center gap-1.5">
           <span className="text-text-muted">Regime</span>
           <span className={cn(
@@ -63,8 +79,8 @@ export function TopBar() {
       </div>
 
       {/* Center: Equity + PnL */}
-      <div className="flex items-center gap-6">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center gap-5">
+        <div className="flex items-center gap-1.5">
           <span className="text-text-muted">Equity</span>
           <AnimatedNumber
             value={metrics.equity}
@@ -72,20 +88,16 @@ export function TopBar() {
             className="font-mono font-semibold text-text-primary"
           />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <span className="text-text-muted">PnL</span>
           <AnimatedNumber
             value={metrics.pnl}
-            format={formatUSD}
+            format={(v) => `${v >= 0 ? "+" : ""}${formatUSD(v)}`}
             colorize
             className="font-mono font-semibold"
           />
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-text-muted">Trades</span>
-          <span className="font-mono font-semibold text-text-primary">{metrics.total_trades}</span>
-        </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <span className="text-text-muted">WR</span>
           <span className="font-mono font-semibold text-text-primary">
             {formatPct(metrics.win_rate)}
@@ -93,19 +105,17 @@ export function TopBar() {
         </div>
       </div>
 
-      {/* Right: Connection + Clock */}
-      <div className="flex items-center gap-4">
-        {/* Mode badge */}
+      {/* Right: Mode + Connection + Clock */}
+      <div className="flex items-center gap-3">
         <span className={cn(
           "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider",
-          system.mode === "live" && "bg-loss/10 text-loss",
+          system.mode === "live" && "bg-loss/10 text-loss shadow-[0_0_8px_rgba(255,71,87,0.15)]",
           system.mode === "paper" && "bg-warning/10 text-warning",
           system.mode === "dry_run" && "bg-info/10 text-info",
         )}>
           {system.mode}
         </span>
 
-        {/* Connection status */}
         <div className="flex items-center gap-1.5">
           <PulsingDot active={system.wsConnected} />
           {system.wsConnected ? (
@@ -115,13 +125,11 @@ export function TopBar() {
           )}
         </div>
 
-        {/* Uptime */}
         <div className="flex items-center gap-1 text-text-muted">
           <Clock className="w-3 h-3" />
           <span className="font-mono">{formatDuration(system.uptimeSec)}</span>
         </div>
 
-        {/* Clock */}
         <span className="font-mono text-text-muted">
           {time.toLocaleTimeString("en-US", { hour12: false })}
         </span>
