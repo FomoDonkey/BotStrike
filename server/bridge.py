@@ -119,9 +119,64 @@ class BridgeState:
 state = BridgeState()
 
 
+# ── Data Update on Startup ───────────────────────────────────────
+async def update_market_data():
+    """Download/update 90 days of Binance klines on startup (incremental)."""
+    try:
+        from data.binance_downloader import BinanceDownloader
+
+        settings = Settings()
+        symbols = settings.symbol_names  # ["BTC-USD", ...]
+
+        await state.channels.broadcast("system", {
+            "type": "log",
+            "timestamp": time.time(),
+            "level": "info",
+            "message": f"Updating market data for {symbols}...",
+        })
+
+        downloader = BinanceDownloader(
+            data_dir=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "binance"),
+            symbols=symbols,
+        )
+
+        for sym in symbols:
+            try:
+                path = await downloader.download_klines(sym, days=90, interval="1m")
+                await state.channels.broadcast("system", {
+                    "type": "log",
+                    "timestamp": time.time(),
+                    "level": "info",
+                    "message": f"Klines updated: {sym} -> {path}",
+                })
+            except Exception as e:
+                await state.channels.broadcast("system", {
+                    "type": "log",
+                    "timestamp": time.time(),
+                    "level": "warn",
+                    "message": f"Kline update failed for {sym}: {e}",
+                })
+
+        await downloader.close()
+
+        await state.channels.broadcast("system", {
+            "type": "log",
+            "timestamp": time.time(),
+            "level": "info",
+            "message": "Market data update complete",
+        })
+
+    except Exception as e:
+        # Non-critical — engine works without historical data
+        print(f"[bridge] Market data update skipped: {e}")
+
+
 # ── Engine Integration ───────────────────────────────────────────
 async def start_engine(mode: str = "paper"):
     """Start the BotStrike trading engine."""
+    # Update market data first (incremental — only downloads new candles)
+    await update_market_data()
+
     from main import BotStrike
 
     settings = Settings()
