@@ -726,13 +726,12 @@ class LiveDashboard:
             Panel(whale_tbl, title="[bold yellow]Whale Trades >$250K[/]", border_style="yellow"),
         )
 
-        return Group(top_panel, flow, charts, bottom)
+        return Group(top_panel, flow, charts, bottom, self._strat_panel)
 
 
 async def main():
     dash = LiveDashboard()
-    console.print(dash._strat_panel)
-    console.print()
+    # Strategy panel now included in build() — no separate print needed
 
     async def trade_ws():
         while True:
