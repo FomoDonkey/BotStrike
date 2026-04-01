@@ -1,4 +1,5 @@
 use tauri::Manager;
+use tauri_plugin_updater::UpdaterExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -14,12 +15,10 @@ pub fn run() {
                         .build(),
                 )?;
             }
-            // Auto-update check on startup
+            // Auto-update check on startup (non-blocking)
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = check_for_updates(handle).await {
-                    log::warn!("Update check failed: {}", e);
-                }
+                let _ = check_for_updates(handle).await;
             });
             Ok(())
         })
@@ -28,46 +27,39 @@ pub fn run() {
 }
 
 async fn check_for_updates(app: tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let updater = app.updater_builder().build()?;
-    if let Some(update) = updater.check().await? {
+    // Wait a few seconds before checking (let app settle)
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    let updater = app.updater()?;
+    let response = updater.check().await?;
+
+    if let Some(update) = response {
         let version = update.version.clone();
         log::info!("Update available: v{}", version);
 
-        // Use dialog to ask user
-        let do_update = tauri_plugin_dialog::MessageDialogBuilder::new(
-            "Update Available",
-            format!(
-                "BotStrike v{} is available. Would you like to update now?",
-                version
-            ),
-        )
-        .kind(tauri_plugin_dialog::MessageDialogKind::Info)
-        .ok_button_label("Update")
-        .cancel_button_label("Later")
-        .blocking_show();
+        // Download and install
+        let mut downloaded: usize = 0;
+        update
+            .download_and_install(
+                |chunk_length, content_length| {
+                    downloaded += chunk_length;
+                    log::info!(
+                        "Downloaded {} / {}",
+                        downloaded,
+                        content_length.unwrap_or(0)
+                    );
+                },
+                || {
+                    log::info!("Download complete, restarting...");
+                },
+            )
+            .await?;
 
-        if do_update {
-            log::info!("Downloading update v{}...", version);
-            let mut downloaded = 0;
-            update
-                .download_and_install(
-                    |chunk_length, content_length| {
-                        downloaded += chunk_length;
-                        log::info!(
-                            "Downloaded {} / {}",
-                            downloaded,
-                            content_length.unwrap_or(0)
-                        );
-                    },
-                    || {
-                        log::info!("Download complete, restarting...");
-                    },
-                )
-                .await?;
-            app.restart();
-        }
+        // Restart to apply update
+        app.restart();
     } else {
-        log::info!("No updates available");
+        log::info!("App is up to date");
     }
+
     Ok(())
 }
