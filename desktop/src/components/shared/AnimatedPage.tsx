@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 const variants = {
   initial: { opacity: 0, y: 6 },
-  enter: { opacity: 1, y: 0, transition: { duration: 0.2, ease: "easeOut" } },
+  enter: { opacity: 1, y: 0, transition: { duration: 0.2, ease: "easeOut" as const } },
   exit: { opacity: 0, y: -4, transition: { duration: 0.12 } },
 };
 
