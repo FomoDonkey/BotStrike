@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMarketStore, type Candle } from "@/stores/marketStore";
 
 interface CandlestickChartProps {
@@ -13,17 +13,17 @@ export function CandlestickChart({ symbol, className }: CandlestickChartProps) {
   const volumeSeriesRef = useRef<any>(null);
   const lastCandleHash = useRef("");
   const [error, setError] = useState<string | null>(null);
+  const [chartReady, setChartReady] = useState(false);
 
+  // Step 1: Initialize chart (async)
   useEffect(() => {
     if (!containerRef.current) return;
-
     let destroyed = false;
+    let resizeObs: ResizeObserver | null = null;
 
-    async function initChart() {
+    (async () => {
       try {
-        // Dynamic import to avoid SSR/WebView issues
         const lc = await import("lightweight-charts");
-
         if (destroyed || !containerRef.current) return;
 
         const chart = lc.createChart(containerRef.current, {
@@ -76,86 +76,79 @@ export function CandlestickChart({ symbol, className }: CandlestickChartProps) {
         seriesRef.current = candleSeries;
         volumeSeriesRef.current = volumeSeries;
 
-        // Resize observer
-        const resizeObserver = new ResizeObserver((entries) => {
+        resizeObs = new ResizeObserver((entries) => {
           if (destroyed) return;
           const { width, height } = entries[0].contentRect;
-          if (width > 0 && height > 0) {
-            chart.applyOptions({ width, height });
-          }
+          if (width > 0 && height > 0) chart.applyOptions({ width, height });
         });
-        resizeObserver.observe(containerRef.current);
+        resizeObs.observe(containerRef.current);
 
-        // Cleanup on destroy
-        return () => {
-          destroyed = true;
-          resizeObserver.disconnect();
-          chart.remove();
-          chartRef.current = null;
-          seriesRef.current = null;
-          volumeSeriesRef.current = null;
-        };
+        setChartReady(true); // Signal that chart is ready for data
       } catch (e: any) {
-        console.error("[CandlestickChart] init error:", e);
+        console.error("[Chart] init error:", e);
         setError(e.message || "Chart failed to load");
       }
-    }
-
-    const cleanupPromise = initChart();
+    })();
 
     return () => {
       destroyed = true;
-      cleanupPromise.then((cleanup) => cleanup?.());
+      resizeObs?.disconnect();
+      if (chartRef.current) {
+        chartRef.current.remove();
+        chartRef.current = null;
+        seriesRef.current = null;
+        volumeSeriesRef.current = null;
+      }
     };
   }, []);
 
-  // Subscribe to candle updates
-  const updateChart = useCallback(() => {
-    const candles = useMarketStore.getState().candles[symbol];
-    if (!candles || !candles.length || !seriesRef.current || !volumeSeriesRef.current) return;
-
-    const last = candles[candles.length - 1];
-    const hash = `${candles.length}_${last.close}_${last.high}_${last.low}`;
-    if (hash === lastCandleHash.current) return;
-    lastCandleHash.current = hash;
-
-    try {
-      const candleData = candles.map((c: Candle) => ({
-        time: c.time as any,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      }));
-
-      const volumeData = candles.map((c: Candle) => ({
-        time: c.time as any,
-        value: c.volume,
-        color: c.close >= c.open ? "rgba(0,212,170,0.2)" : "rgba(255,71,87,0.2)",
-      }));
-
-      seriesRef.current.setData(candleData);
-      volumeSeriesRef.current.setData(volumeData);
-    } catch (e) {
-      console.error("[CandlestickChart] update error:", e);
-    }
-  }, [symbol]);
-
+  // Step 2: Subscribe to data ONLY after chart is ready
   useEffect(() => {
+    if (!chartReady) return;
+
+    function updateChart() {
+      const candles = useMarketStore.getState().candles[symbol];
+      if (!candles?.length || !seriesRef.current || !volumeSeriesRef.current) return;
+
+      const last = candles[candles.length - 1];
+      const hash = `${candles.length}_${last.close}_${last.high}_${last.low}`;
+      if (hash === lastCandleHash.current) return;
+      lastCandleHash.current = hash;
+
+      try {
+        seriesRef.current.setData(
+          candles.map((c: Candle) => ({
+            time: c.time as any,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+          }))
+        );
+        volumeSeriesRef.current.setData(
+          candles.map((c: Candle) => ({
+            time: c.time as any,
+            value: c.volume,
+            color: c.close >= c.open ? "rgba(0,212,170,0.2)" : "rgba(255,71,87,0.2)",
+          }))
+        );
+      } catch (e) {
+        console.error("[Chart] update error:", e);
+      }
+    }
+
     const unsub = useMarketStore.subscribe(updateChart);
-    updateChart();
-    return unsub;
-  }, [updateChart]);
+    updateChart(); // Load existing data
+    return () => { unsub(); };
+  }, [symbol, chartReady]);
 
   if (error) {
     return (
-      <div className={className} style={{ display: "flex", alignItems: "center", justifyContent: "center", color: "#FF4757", fontSize: 12, fontFamily: "monospace" }}>
+      <div className={className} style={{ display: "flex", alignItems: "center", justifyContent: "center", color: "#FF4757", fontSize: 12 }}>
         Chart error: {error}
       </div>
     );
   }
 
-  return (
-    <div ref={containerRef} className={className} style={{ width: "100%", height: "100%" }} />
-  );
+  return <div ref={containerRef} className={className} style={{ width: "100%", height: "100%" }} />;
 }

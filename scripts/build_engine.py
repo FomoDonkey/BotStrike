@@ -22,7 +22,7 @@ def main():
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--noconfirm",
-        "--onefile",
+        "--onedir",
         "--console",  # Need console for logging output
         "--name", "botstrike-engine",
         # Add all Python source directories as data
@@ -39,7 +39,7 @@ def main():
         "--add-data", f"{os.path.join(ROOT, 'analytics')};analytics",
         "--add-data", f"{os.path.join(ROOT, 'notifications')};notifications",
         "--add-data", f"{os.path.join(ROOT, 'backtesting')};backtesting",
-        "--add-data", f"{os.path.join(ROOT, 'data')};data",
+        # NOT including data/ — it has parquet files that are huge and user-specific
         "--add-data", f"{os.path.join(ROOT, 'server')};server",
         # Hidden imports that PyInstaller might miss
         "--hidden-import", "uvicorn.logging",
@@ -58,6 +58,23 @@ def main():
         "--hidden-import", "nacl.encoding",
         "--hidden-import", "structlog",
         "--hidden-import", "dotenv",
+        # Exclude heavy packages not needed for bridge server
+        "--exclude-module", "torch",
+        "--exclude-module", "tensorflow",
+        "--exclude-module", "llvmlite",
+        "--exclude-module", "numba",
+        "--exclude-module", "scipy",
+        "--exclude-module", "matplotlib",
+        "--exclude-module", "PIL",
+        "--exclude-module", "lxml",
+        "--exclude-module", "streamlit",
+        "--exclude-module", "plotly",
+        "--exclude-module", "lightgbm",
+        "--exclude-module", "sklearn",
+        "--exclude-module", "IPython",
+        "--exclude-module", "notebook",
+        "--exclude-module", "jupyter",
+        "--exclude-module", "rich",
         # Dist path
         "--distpath", os.path.join(ROOT, "build", "engine"),
         "--workpath", os.path.join(ROOT, "build", "pyinstaller"),
@@ -74,18 +91,30 @@ def main():
         print("ERROR: PyInstaller build failed!")
         sys.exit(1)
 
-    # Copy the built exe to Tauri binaries with correct naming
-    # Tauri sidecar requires: {name}-{target_triple}.exe
-    # With --onefile, the exe is directly in the dist folder
-    src_exe = os.path.join(ROOT, "build", "engine", "botstrike-engine.exe")
+    # Copy the entire onedir folder to Tauri binaries
+    src_dir = os.path.join(ROOT, "build", "engine", "botstrike-engine")
+    src_exe = os.path.join(src_dir, "botstrike-engine.exe")
+    # Tauri externalBin target
     dst_exe = os.path.join(DIST_DIR, "botstrike-engine-x86_64-pc-windows-msvc.exe")
+    # Also copy the full folder for the Rust launcher to find
+    dst_engine_dir = os.path.join(DIST_DIR, "engine")
 
     if os.path.exists(src_exe):
+        # Copy exe with Tauri naming (for externalBin)
         shutil.copy2(src_exe, dst_exe)
-        size_mb = os.path.getsize(dst_exe) / 1024 / 1024
+        # Copy full folder (exe + DLLs + _internal)
+        if os.path.exists(dst_engine_dir):
+            shutil.rmtree(dst_engine_dir)
+        shutil.copytree(src_dir, dst_engine_dir)
+
+        size_mb = sum(
+            os.path.getsize(os.path.join(dp, f))
+            for dp, _, fns in os.walk(dst_engine_dir)
+            for f in fns
+        ) / 1024 / 1024
         print(f"\nEngine built successfully!")
-        print(f"  Exe: {dst_exe} ({size_mb:.1f} MB)")
-        print(f"  Mode: onefile (single standalone exe, no DLLs needed)")
+        print(f"  Dir: {dst_engine_dir} ({size_mb:.0f} MB total)")
+        print(f"  Exe: {dst_engine_dir}/botstrike-engine.exe")
     else:
         print(f"ERROR: Expected exe not found at {src_exe}")
         sys.exit(1)

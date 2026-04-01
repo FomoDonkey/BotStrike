@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useAlertStore } from "@/stores/alertStore";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle, AlertCircle, Info, X } from "lucide-react";
@@ -16,8 +17,9 @@ const colors = {
 };
 
 export function AlertToast() {
-  const alerts = useAlertStore((s) => s.alerts.filter((a) => !a.dismissed));
+  const allAlerts = useAlertStore((s) => s.alerts);
   const dismiss = useAlertStore((s) => s.dismissAlert);
+  const alerts = useMemo(() => allAlerts.filter((a) => !a.dismissed), [allAlerts]);
 
   return (
     <div className="fixed top-14 right-4 z-40 flex flex-col gap-2 w-80">

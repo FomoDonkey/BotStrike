@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "BotStrike",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "identifier": "com.botstrike.app",
   "build": {
     "frontendDist": "../dist",
@@ -36,8 +36,8 @@
       "icons/icon.ico"
     ],
     "createUpdaterArtifacts": true,
-    "externalBin": [
-      "binaries/botstrike-engine"
+    "resources": [
+      "binaries/engine/**/*"
     ]
   },
   "plugins": {

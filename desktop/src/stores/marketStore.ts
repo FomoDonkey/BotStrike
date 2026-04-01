@@ -35,19 +35,43 @@ export interface OrderBookData {
 }
 
 interface MarketState {
-  // Price data per symbol
   prices: Record<string, number>;
   prevPrices: Record<string, number>;
   candles: Record<string, Candle[]>;
   orderbooks: Record<string, OrderBookData>;
-  recentTicks: Record<string, Tick[]>;
   regime: Record<string, string>;
-  tps: Record<string, number>;
 
-  // Actions
+  // Throttled tick buffer — NOT in state to avoid re-renders
+  _tickBuffer: Record<string, Tick[]>;
+
   onTick: (tick: Tick) => void;
   onCandles: (symbol: string, candles: Candle[]) => void;
   onSnapshot: (data: any) => void;
+}
+
+// Throttle price updates to max 4/sec to prevent re-render storm
+let _priceFlushTimer: ReturnType<typeof setInterval> | null = null;
+const _pendingPrices: Record<string, { price: number; prev: number }> = {};
+
+function startPriceThrottle() {
+  if (_priceFlushTimer) return;
+  _priceFlushTimer = setInterval(() => {
+    const keys = Object.keys(_pendingPrices);
+    if (keys.length === 0) return;
+
+    const updates: Partial<MarketState> = {};
+    const prices = { ...useMarketStore.getState().prices };
+    const prevPrices = { ...useMarketStore.getState().prevPrices };
+
+    for (const sym of keys) {
+      const p = _pendingPrices[sym];
+      prevPrices[sym] = p.prev;
+      prices[sym] = p.price;
+      delete _pendingPrices[sym];
+    }
+
+    useMarketStore.setState({ prices, prevPrices });
+  }, 250); // 4 updates/sec max
 }
 
 export const useMarketStore = create<MarketState>((set, get) => ({
@@ -55,42 +79,40 @@ export const useMarketStore = create<MarketState>((set, get) => ({
   prevPrices: {},
   candles: {},
   orderbooks: {},
-  recentTicks: {},
   regime: {},
-  tps: {},
+  _tickBuffer: {},
 
-  onTick: (tick) =>
-    set((s) => {
-      const currentPrice = s.prices[tick.symbol];
-      return {
-        prevPrices: { ...s.prevPrices, [tick.symbol]: currentPrice ?? tick.price },
-        prices: { ...s.prices, [tick.symbol]: tick.price },
-        recentTicks: {
-          ...s.recentTicks,
-          [tick.symbol]: [...(s.recentTicks[tick.symbol] || []).slice(-99), tick],
-        },
-      };
-    }),
+  onTick: (tick) => {
+    // Buffer price — don't trigger React re-render on every tick
+    const current = get().prices[tick.symbol] ?? tick.price;
+    _pendingPrices[tick.symbol] = { price: tick.price, prev: current };
+    startPriceThrottle();
+  },
 
   onCandles: (symbol, candles) =>
     set((s) => ({
       candles: { ...s.candles, [symbol]: candles },
     })),
 
-  onSnapshot: (data) =>
-    set((s) => {
-      const updates: Partial<MarketState> = {};
-      const sym = data.symbol;
-      if (data.price) {
-        updates.prevPrices = { ...s.prevPrices, [sym]: s.prices[sym] || data.price };
-        updates.prices = { ...s.prices, [sym]: data.price };
-      }
-      if (data.orderbook) {
-        updates.orderbooks = { ...s.orderbooks, [sym]: data.orderbook };
-      }
-      if (data.regime) {
-        updates.regime = { ...s.regime, [sym]: data.regime };
-      }
-      return updates;
-    }),
+  onSnapshot: (data) => {
+    const sym = data.symbol;
+    if (!sym) return;
+    const s = get();
+    const updates: any = {};
+
+    if (data.price) {
+      _pendingPrices[sym] = { price: data.price, prev: s.prices[sym] ?? data.price };
+      startPriceThrottle();
+    }
+    if (data.orderbook) {
+      updates.orderbooks = { ...s.orderbooks, [sym]: data.orderbook };
+    }
+    if (data.regime) {
+      updates.regime = { ...s.regime, [sym]: data.regime };
+    }
+
+    if (Object.keys(updates).length > 0) {
+      set(updates);
+    }
+  },
 }));

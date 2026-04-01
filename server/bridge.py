@@ -286,18 +286,17 @@ async def _broadcast_symbol_state(engine, symbol: str):
 
 # ── Broadcast Loops ──────────────────────────────────────────────
 async def market_broadcast_loop():
-    """Broadcast market ticks at throttled rate (10/sec)."""
+    """Broadcast market ticks at throttled rate (4/sec)."""
     while True:
         try:
             if state._market_queue:
-                # Swap-and-drain: atomically grab current queue, clear it
                 queue = state._market_queue.copy()
                 state._market_queue.clear()
                 for tick in queue.values():
                     await state.channels.broadcast("market", tick)
         except Exception:
             pass
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.25)  # 4/sec — matches frontend throttle
 
 
 async def candle_broadcast_loop():
@@ -313,7 +312,7 @@ async def candle_broadcast_loop():
                     if df is None or df.empty:
                         continue
 
-                    rows = df.tail(200)
+                    rows = df.tail(60)  # Last 60 candles (1h for 1m bars)
                     # Skip broadcast if data hasn't changed
                     new_hash = len(rows)
                     last_close = float(rows.iloc[-1].get("close", 0)) if len(rows) > 0 else 0

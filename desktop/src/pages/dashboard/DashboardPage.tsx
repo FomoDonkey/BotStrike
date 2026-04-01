@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useShallow } from "zustand/shallow";
 import { motion } from "framer-motion";
 import { GlassPanel } from "@/components/shared/GlassPanel";
 import { MetricCard } from "@/components/shared/MetricCard";
@@ -31,14 +32,16 @@ const ALLOCATION_DATA = [
 ];
 
 export function DashboardPage() {
-  const btcPrice = useMarketStore((s) => s.prices["BTCUSDT"] || s.prices["BTC-USD"] || 0);
-  const btcPrev = useMarketStore((s) => s.prevPrices["BTCUSDT"] || s.prevPrices["BTC-USD"] || 0);
-  const ethPrice = useMarketStore((s) => s.prices["ETHUSDT"] || s.prices["ETH-USD"] || 0);
-  const metrics = useTradingStore((s) => s.metrics);
-  const risk = useRiskStore();
-  const positions = useTradingStore((s) => s.positions);
+  const btcPrice = useMarketStore((s) => s.prices["BTCUSDT"] || 0);
+  const btcPrev = useMarketStore((s) => s.prevPrices["BTCUSDT"] || 0);
+  const ethPrice = useMarketStore((s) => s.prices["ETHUSDT"] || 0);
+  const metrics = useTradingStore(useShallow((s) => s.metrics));
+  const drawdown_pct = useRiskStore((s) => s.drawdown_pct);
+  const max_drawdown_pct = useRiskStore((s) => s.max_drawdown_pct);
+  const circuit_breaker_active = useRiskStore((s) => s.circuit_breaker_active);
+  const positions = useTradingStore(useShallow((s) => s.positions));
   const signals = useTradingStore((s) => s.recentSignals);
-  const micro = useMicroStore((s) => s.snapshots);
+  const micro = useMicroStore(useShallow((s) => s.snapshots));
 
   const allPositions = useMemo(() => Object.values(positions).flat(), [positions]);
   const btcUp = btcPrice > btcPrev;
@@ -118,11 +121,11 @@ export function DashboardPage() {
         />
         <MetricCard
           label="Drawdown"
-          value={risk.drawdown_pct}
+          value={drawdown_pct}
           format={formatPct}
           icon={<ShieldAlert className="w-3 h-3" />}
-          glow={risk.circuit_breaker_active}
-          subtext={risk.circuit_breaker_active ? "CIRCUIT BREAKER ACTIVE" : `Max ${formatPct(risk.max_drawdown_pct)}`}
+          glow={circuit_breaker_active}
+          subtext={circuit_breaker_active ? "CIRCUIT BREAKER ACTIVE" : `Max ${formatPct(max_drawdown_pct)}`}
         />
         <MetricCard
           label="Total Fees"

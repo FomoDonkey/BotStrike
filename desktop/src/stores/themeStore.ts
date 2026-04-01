@@ -26,32 +26,45 @@ const THEMES: Record<ThemeVariant, Record<string, string>> = {
   },
 };
 
+function safeGetItem(key: string): string | null {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+function safeSetItem(key: string, value: string) {
+  try { localStorage.setItem(key, value); } catch { /* ignore */ }
+}
+
 interface ThemeState {
   variant: ThemeVariant;
   setVariant: (v: ThemeVariant) => void;
 }
 
 export const useThemeStore = create<ThemeState>((set) => ({
-  variant: (localStorage.getItem("botstrike-theme") as ThemeVariant) || "dark",
+  variant: (safeGetItem("botstrike-theme") as ThemeVariant) || "dark",
 
   setVariant: (variant) => {
-    // Apply CSS variables to :root
-    const vars = THEMES[variant];
-    const root = document.documentElement;
-    for (const [key, value] of Object.entries(vars)) {
-      root.style.setProperty(key, value);
-    }
-    localStorage.setItem("botstrike-theme", variant);
+    try {
+      const vars = THEMES[variant];
+      const root = document.documentElement;
+      for (const [key, value] of Object.entries(vars)) {
+        root.style.setProperty(key, value);
+      }
+    } catch { /* ignore */ }
+    safeSetItem("botstrike-theme", variant);
     set({ variant });
   },
 }));
 
-// Apply saved theme on load
 export function initTheme() {
-  const saved = (localStorage.getItem("botstrike-theme") as ThemeVariant) || "dark";
-  const vars = THEMES[saved];
-  const root = document.documentElement;
-  for (const [key, value] of Object.entries(vars)) {
-    root.style.setProperty(key, value);
+  try {
+    const saved = (safeGetItem("botstrike-theme") as ThemeVariant) || "dark";
+    const vars = THEMES[saved];
+    if (vars && document.documentElement) {
+      for (const [key, value] of Object.entries(vars)) {
+        document.documentElement.style.setProperty(key, value);
+      }
+    }
+  } catch {
+    // Silently ignore — default CSS theme applies
   }
 }
