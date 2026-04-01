@@ -143,32 +143,60 @@ class LiveDashboard:
 
     @staticmethod
     def _build_strat_panel():
+        from config.settings import Settings, TradingConfig
+        from strategies.mean_reversion import TF_CONFIGS
+
+        settings = Settings()
+        tc = settings.trading
+
+        # Top: capital & risk from config
         t = Table(show_header=False, box=None, expand=True, padding=(0, 1))
         t.add_column(style="bold cyan", width=14, justify="right")
         t.add_column(width=28)
         t.add_column(style="bold cyan", width=14, justify="right")
         t.add_column(width=28)
 
-        t.add_row("Capital", "$300 BTC-USD 2x lev", "Risk/trade", "1.5% ($4.50)")
-        t.add_row("Timeframe", "15m bars / 5s eval", "Trend", "4H+1D Binance klines")
+        syms = ", ".join(s.symbol for s in settings.symbols)
+        lev = settings.symbols[0].leverage if settings.symbols else 1
+        t.add_row("Capital", f"${tc.initial_capital:.0f} {syms} {lev}x lev",
+                  "Risk/trade", f"{tc.risk_per_trade_pct*100:.1f}% (${tc.initial_capital * tc.risk_per_trade_pct:.2f})")
+        t.add_row("Max DD", f"{tc.max_drawdown_pct*100:.0f}%",
+                  "Vol target", f"{tc.vol_target_annual*100:.0f}% annual")
         t.add_row("", "", "", "")
 
+        # Strategies from config
         t2 = Table(show_header=False, box=None, expand=True, padding=(0, 1))
         t2.add_column(style="bold", width=10, justify="right")
         t2.add_column()
 
-        t2.add_row("[green]MR 40%", "[green]Multi-TF Divergence[/] — scans 1D, 4H, 1H, 15m")
-        t2.add_row("1D", "RSI 30/70 | SL 2.0x TP 5.0x ATR | Risk 3% | Highest conviction")
-        t2.add_row("4H", "RSI 30/70 | SL 1.8x TP 4.0x ATR | Risk 2% | High conviction")
-        t2.add_row("1H", "RSI 32/68 | SL 1.5x TP 3.5x ATR | Risk 1.5% | Medium conviction")
-        t2.add_row("15m", "RSI 30/70 | SL 1.5x TP 3.0x ATR | Risk 1% | Base conviction")
+        # MR — read from TF_CONFIGS dynamically
+        mr_alloc = tc.allocation_mean_reversion * 100
+        tf_names = ", ".join(cfg.name for cfg in TF_CONFIGS.values())
+        t2.add_row(f"[green]MR {mr_alloc:.0f}%", f"[green]Multi-TF Divergence[/] -- scans {tf_names}")
+
+        for tf_key, cfg in TF_CONFIGS.items():
+            t2.add_row(
+                f"  {cfg.name}",
+                f"RSI {cfg.rsi_oversold:.0f}/{cfg.rsi_overbought:.0f} | "
+                f"SL {cfg.sl_mult}x TP {cfg.tp_mult}x ATR | "
+                f"Risk {cfg.risk_pct*100:.0f}% | ADX<{cfg.adx_max:.0f}"
+            )
+
         t2.add_row("", "")
-        t2.add_row("[magenta]OFM 60%", "[magenta]Order Flow Momentum[/] — weighted scoring")
-        t2.add_row("Entry", "OBI 40% + Microprice 30% + Hawkes 20% + Depth 10% >= 0.55")
-        t2.add_row("Filter", "Trend scalar (x1.1 with / x0.3 against) | VPIN<0.75 | spread<15bps")
-        t2.add_row("Exit", "Momentum reversal (30s+) | Hawkes fade (60s+) | 3min max")
-        t2.add_row("", "")
-        t2.add_row("[dim]Disabled", "[dim]Trend Following, Market Making")
+
+        # OFM
+        ofm_alloc = tc.allocation_order_flow_momentum * 100
+        t2.add_row(f"[magenta]OFM {ofm_alloc:.0f}%", "[magenta]Order Flow Momentum[/] -- weighted scoring")
+
+        # Disabled strategies
+        disabled = []
+        if tc.allocation_trend_following == 0:
+            disabled.append("Trend Following")
+        if tc.allocation_market_making == 0:
+            disabled.append("Market Making")
+        if disabled:
+            t2.add_row("", "")
+            t2.add_row("[dim]Disabled", f"[dim]{', '.join(disabled)}")
 
         return Panel(Group(t, t2), title="[bold white]Strategy Configuration[/]",
                      border_style="white", box=box.ROUNDED)
