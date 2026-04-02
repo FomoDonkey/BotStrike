@@ -19,6 +19,14 @@ pub fn run() {
                 )?;
             }
 
+            // Set high-res window icon (bundle icon is only for .exe file)
+            if let Some(window) = app.get_webview_window("main") {
+                let icon_bytes = include_bytes!("../icons/128x128.png");
+                if let Ok(icon) = tauri::image::Image::from_bytes(icon_bytes) {
+                    let _ = window.set_icon(Some(icon));
+                }
+            }
+
             // Collect possible engine paths
             let mut engine_paths: Vec<std::path::PathBuf> = Vec::new();
 

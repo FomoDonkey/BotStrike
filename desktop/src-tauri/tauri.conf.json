@@ -21,7 +21,6 @@
         "center": true
       }
     ],
-    "defaultWindowIcon": "icons/icon.png",
     "security": {
       "csp": null
     }
