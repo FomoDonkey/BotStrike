@@ -105,13 +105,13 @@ class LiveDashboard:
         self._strat_panel = self._build_strat_panel()
         # Cache strategy config for live display
         from config.settings import Settings as _S
-        from strategies.order_flow_momentum import OrderFlowMomentumStrategy as _OFM
+        from strategies.order_flow_momentum import COOLDOWN_SEC as _ofm_cd_val
         self._tc = _S().trading
         _s0 = _S().symbols[0] if _S().symbols else None
         self._lev = _s0.leverage if _s0 else 1
         self._mr_alloc = self._tc.allocation_mean_reversion * 100
         self._ofm_alloc = self._tc.allocation_order_flow_momentum * 100
-        self._ofm_cd = _OFM(self._tc).COOLDOWN_SEC
+        self._ofm_cd = _ofm_cd_val
 
     def _fetch_trend(self):
         """Fetch real trend from Binance klines (sync, blocking but fast)."""
@@ -245,7 +245,8 @@ class LiveDashboard:
         ofm.add_row("Trend scalar", "With: x1.1 | Against: x0.3 | Neutral: x1.0 (4H+1D Binance)", "")
         ofm.add_row("SL / TP", "[bold]1.5x / 3.0x ATR[/] (R:R 1:2.0)", "")
         ofm.add_row("Hold time", "30s-180s (momentum scalping)", "")
-        ofm.add_row("Cooldown", f"{ofm_inst.COOLDOWN_SEC}s between trades", "")
+        from strategies.order_flow_momentum import COOLDOWN_SEC as _ofm_cd
+        ofm.add_row("Cooldown", f"{_ofm_cd}s between trades", "")
         ofm.add_row("Filters", "VPIN <0.75 | Spread <15bps | Hawkes count >=3 | Kyle impact <1.5", "")
 
         ofm_alloc = tc.allocation_order_flow_momentum * 100
