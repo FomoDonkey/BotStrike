@@ -103,6 +103,22 @@ class LiveDashboard:
         self._trend_color = "dim"
         self._trend_last_fetch = 0
         self._strat_panel = self._build_strat_panel()
+        # Cache compact summary for live display
+        from strategies.mean_reversion import TF_CONFIGS as _tfc
+        from config.settings import Settings as _S
+        _tc = _S().trading
+        _s0 = _S().symbols[0] if _S().symbols else None
+        _tf = "/".join(c.name for c in _tfc.values())
+        self._strat_summary_text = (
+            f" [green]MR {_tc.allocation_mean_reversion*100:.0f}%[/] {_tf} divergence"
+            f"  |  [magenta]OFM {_tc.allocation_order_flow_momentum*100:.0f}%[/] scalp"
+            f"  |  ${_tc.initial_capital:.0f}"
+            f"  {_s0.leverage if _s0 else 1}x"
+            f"  Risk {_tc.risk_per_trade_pct*100:.1f}%"
+            f"  DD [red]{_tc.max_drawdown_pct*100:.0f}%[/]"
+            f"  Fees M:{_tc.maker_fee*10000:.1f}/T:{_tc.taker_fee*10000:.1f}bps"
+            f"  Slip {_tc.slippage_bps:.0f}bps"
+        )
 
     def _fetch_trend(self):
         """Fetch real trend from Binance klines (sync, blocking but fast)."""
@@ -785,12 +801,21 @@ class LiveDashboard:
             Panel(whale_tbl, title="[bold yellow]Whale Trades >$250K[/]", border_style="yellow"),
         )
 
-        return Group(top_panel, flow, charts, bottom, self._strat_panel)
+        # Compact strategy summary (1 line) — detailed panel shown at startup
+        strat_summary = Table.grid(expand=True)
+        strat_summary.add_column()
+        strat_summary.add_row(self._strat_summary_text)
+
+        return Group(top_panel, flow, charts, bottom, strat_summary)
 
 
 async def main():
     dash = LiveDashboard()
-    # Strategy panel now included in build() — no separate print needed
+    # Show detailed strategy panel at startup (3 sec)
+    console.print(dash._strat_panel)
+    console.print("[dim]Starting live display in 3 seconds...[/]")
+    import time as _t
+    _t.sleep(3)
 
     async def trade_ws():
         while True:
