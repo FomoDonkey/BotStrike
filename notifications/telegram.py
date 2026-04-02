@@ -140,36 +140,101 @@ class TelegramNotifier:
         cfg = config or {}
         capital = cfg.get("initial_capital", "N/A")
         testnet = cfg.get("testnet", False)
+        strategies = cfg.get("strategies", [])
+        risk_per_trade = cfg.get("risk_per_trade_pct", 0)
+        max_drawdown = cfg.get("max_drawdown_pct", 0)
         mode_desc = {
             "paper": "Paper Trading (simulado, sin dinero real)",
-            "live": "LIVE (operando con dinero real)",
+            "live": "🔥 LIVE (operando con dinero real)",
             "dry_run": "Dry Run (solo observa, no opera)",
         }.get(mode, mode)
+
+        strat_nombres = {
+            "MEAN_REVERSION": "Mean Reversion",
+            "TREND_FOLLOWING": "Trend Following",
+            "MARKET_MAKING": "Market Making",
+            "ORDER_FLOW_MOMENTUM": "Order Flow Momentum",
+        }
+        strat_list = ", ".join(strat_nombres.get(s, s) for s in strategies) if strategies else "Todas"
+
         text = (
-            "🟢 <b>Bot encendido</b>\n\n"
-            f"Modo: <b>{mode_desc}</b>\n"
-            f"Monedas: {', '.join(symbols)}\n"
-            f"Capital inicial: ${capital:,.0f}\n"
-            f"Red: {'Testnet' if testnet else 'Mainnet (real)'}"
+            "🟢 <b>Bot encendido</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"📌 Modo: <b>{mode_desc}</b>\n"
+            f"🌐 Red: {'Testnet' if testnet else 'Mainnet (real)'}\n\n"
+            f"💰 Capital inicial: <b>${capital:,.0f}</b>\n"
+            f"📊 Monedas: {', '.join(symbols)}\n"
+            f"🧠 Estrategias: {strat_list}\n"
         )
+        if risk_per_trade:
+            text += f"⚖️ Riesgo por trade: {risk_per_trade:.1%}\n"
+        if max_drawdown:
+            text += f"🛡️ Max drawdown permitido: {max_drawdown:.0%}\n"
+
         self._enqueue(text)
 
     async def notify_shutdown(self, metrics: Optional[Dict] = None) -> None:
-        """Bot deteniendose."""
+        """Bot deteniendose con resumen completo de sesion."""
         m = metrics or {}
         total = m.get("total_trades", 0)
         pnl = m.get("total_pnl", 0)
+        net_pnl = m.get("net_pnl", pnl)
+        fees = m.get("total_fees", 0)
         wr = m.get("win_rate", 0)
+        avg_win = m.get("avg_win", 0)
+        avg_loss = m.get("avg_loss", 0)
+        pf = m.get("profit_factor", 0)
+        sharpe = m.get("sharpe_ratio", 0)
+        max_dd = m.get("max_drawdown", 0)
+        runtime = m.get("runtime_hours", 0)
+        by_strat = m.get("by_strategy", {})
+
+        pnl_emoji = "✅" if net_pnl > 0 else ("❌" if net_pnl < 0 else "➖")
+
         text = (
-            "🔴 <b>Bot apagado</b>\n\n"
-            f"Operaciones realizadas: {total}\n"
-            f"Ganancia/Perdida total: ${pnl:+,.2f}\n"
-            f"Tasa de acierto: {wr:.1%}"
+            "🔴 <b>Bot apagado</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"⏱️ Tiempo activo: <b>{runtime:.1f}h</b>\n"
+            f"📈 Operaciones: <b>{total}</b>\n\n"
         )
+
+        if total > 0:
+            text += (
+                f"<b>💰 Resultado de sesion</b>\n"
+                f"{pnl_emoji} PnL neto: <b>${net_pnl:+,.2f}</b>\n"
+                f"💸 Comisiones pagadas: ${fees:,.2f}\n\n"
+                f"<b>📊 Metricas clave</b>\n"
+                f"🎯 Win rate: <b>{wr:.1%}</b>\n"
+                f"✅ Ganancia promedio: ${avg_win:+,.4f}\n"
+                f"❌ Perdida promedio: ${avg_loss:+,.4f}\n"
+                f"📐 Profit factor: <b>{pf:.2f}</b>\n"
+                f"📉 Max drawdown: {max_dd:.2%}\n"
+            )
+            if sharpe != 0:
+                sharpe_emoji = "🟢" if sharpe > 1 else ("🟡" if sharpe > 0 else "🔴")
+                text += f"{sharpe_emoji} Sharpe ratio: <b>{sharpe:.2f}</b>\n"
+
+            # Desglose por estrategia
+            if by_strat:
+                strat_nombres = {
+                    "MEAN_REVERSION": "MR", "TREND_FOLLOWING": "TF",
+                    "MARKET_MAKING": "MM", "ORDER_FLOW_MOMENTUM": "OFM",
+                }
+                text += "\n<b>🧠 Por estrategia</b>\n"
+                for st, data in sorted(by_strat.items()):
+                    nombre = strat_nombres.get(st, st)
+                    st_pnl = data.get("pnl", 0)
+                    st_trades = data.get("trades", 0)
+                    st_wr = data.get("win_rate", 0)
+                    st_emoji = "✅" if st_pnl > 0 else ("❌" if st_pnl < 0 else "➖")
+                    text += f"  {st_emoji} {nombre}: ${st_pnl:+,.2f} ({st_trades} ops, {st_wr:.0%} wr)\n"
+        else:
+            text += "Sin operaciones en esta sesion.\n"
+
         self._enqueue(text)
 
     async def notify_trade(self, trade: Any) -> None:
-        """Trade ejecutado (live o paper). Envio inmediato."""
+        """Trade ejecutado (live o paper). Envio inmediato con detalle completo."""
         side = getattr(trade, "side", "?")
         side_str = side.value if hasattr(side, "value") else str(side)
         symbol = getattr(trade, "symbol", "?")
@@ -179,6 +244,9 @@ class TelegramNotifier:
         pnl = getattr(trade, "pnl", 0)
         strategy = getattr(trade, "strategy", "")
         strat_str = strategy.value if hasattr(strategy, "value") else str(strategy)
+        slippage_bps = getattr(trade, "actual_slippage_bps", 0)
+        expected_price = getattr(trade, "expected_price", 0)
+        latency_ms = getattr(trade, "latency_ms", 0)
 
         nocional = price * qty if price and qty else 0
         accion = "Compra" if side_str == "BUY" else "Venta"
@@ -188,18 +256,30 @@ class TelegramNotifier:
             "MEAN_REVERSION": "Mean Reversion",
             "TREND_FOLLOWING": "Trend Following",
             "MARKET_MAKING": "Market Making",
+            "ORDER_FLOW_MOMENTUM": "Order Flow Momentum",
         }.get(strat_str, strat_str)
 
         pnl_emoji = "✅" if pnl > 0 else ("❌" if pnl < 0 else "➖")
 
         text = (
-            f"{emoji} <b>{accion} de {symbol}</b>\n\n"
-            f"Precio: ${price:,.4f}\n"
-            f"Cantidad invertida: ${nocional:,.2f}\n"
-            f"Estrategia: {strat_nombre}\n"
-            f"Comision: ${fee:,.4f}\n"
-            f"{pnl_emoji} Resultado: <b>${pnl:+,.4f}</b>"
+            f"{emoji} <b>{accion} — {symbol}</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"💲 Precio: <b>${price:,.4f}</b>\n"
+            f"💰 Nocional: ${nocional:,.2f}\n"
+            f"🧠 Estrategia: {strat_nombre}\n"
+            f"💸 Comision: ${fee:,.4f}\n"
+            f"{pnl_emoji} Resultado: <b>${pnl:+,.4f}</b>\n"
         )
+
+        # Slippage y ejecucion
+        if expected_price > 0:
+            text += f"\n<b>⚡ Ejecucion</b>\n"
+            text += f"🎯 Precio esperado: ${expected_price:,.4f}\n"
+            slip_emoji = "🟢" if abs(slippage_bps) < 5 else ("🟡" if abs(slippage_bps) < 15 else "🔴")
+            text += f"{slip_emoji} Slippage: {slippage_bps:+.1f} bps\n"
+            if latency_ms > 0:
+                text += f"⏱️ Latencia: {latency_ms:.0f}ms\n"
+
         self._enqueue(text)
 
     async def notify_signal(self, signal: Any) -> None:
@@ -223,45 +303,75 @@ class TelegramNotifier:
         new_str = new_regime.value if hasattr(new_regime, "value") else str(new_regime)
 
         desc_map = {
-            "TRENDING_UP": ("📈", "Tendencia alcista", "el precio esta subiendo con fuerza"),
-            "TRENDING_DOWN": ("📉", "Tendencia bajista", "el precio esta bajando con fuerza"),
-            "RANGING": ("↔️", "Mercado lateral", "el precio se mueve en un rango sin direccion clara"),
-            "BREAKOUT": ("💥", "Ruptura", "el precio rompio un nivel importante"),
-            "UNKNOWN": ("❓", "Indefinido", "no hay suficientes datos para determinar la tendencia"),
+            "TRENDING_UP": ("📈", "Tendencia alcista", "el precio sube con fuerza — Trend Following favorecido"),
+            "TRENDING_DOWN": ("📉", "Tendencia bajista", "el precio baja con fuerza — Trend Following favorecido"),
+            "RANGING": ("↔️", "Mercado lateral", "sin direccion clara — Mean Reversion y Market Making favorecidos"),
+            "BREAKOUT": ("💥", "Ruptura", "rotura de nivel importante — volatilidad esperada alta"),
+            "UNKNOWN": ("❓", "Indefinido", "datos insuficientes — operando con cautela"),
         }
+        old_emoji, old_nombre, _ = desc_map.get(old_str, ("🔄", old_str, ""))
         emoji, nombre, explicacion = desc_map.get(new_str, ("🔄", new_str, ""))
 
         text = (
-            f"{emoji} <b>Cambio de mercado en {symbol}</b>\n\n"
-            f"Nuevo estado: <b>{nombre}</b>\n"
-            f"({explicacion})"
+            f"{emoji} <b>Cambio de regimen — {symbol}</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Antes: {old_emoji} {old_nombre}\n"
+            f"Ahora: {emoji} <b>{nombre}</b>\n\n"
+            f"💡 {explicacion}"
         )
         self._enqueue(text)
 
     async def notify_risk_event(self, event: str, details: Optional[Dict] = None) -> None:
-        """Evento de riesgo critico. Envio inmediato."""
+        """Evento de riesgo critico. Envio inmediato con contexto completo."""
         d = details or {}
 
         event_desc = {
             "max_drawdown": "Perdida maxima alcanzada",
             "circuit_breaker": "Freno de emergencia activado",
             "impact_stress": "Mercado demasiado peligroso para operar",
+            "ror_throttle": "Risk of Ruin elevado — reduciendo posiciones",
+            "correlation_stress": "Correlacion entre activos anormalmente alta",
         }.get(event, event)
+
+        event_action = {
+            "max_drawdown": "Se cancelan todas las ordenes abiertas. El bot seguira monitoreando pero no abrira nuevas posiciones hasta que el drawdown se recupere.",
+            "circuit_breaker": "TODAS las operaciones pausadas. Se requiere intervencion manual o esperar el cooldown automatico.",
+            "impact_stress": "Se reducen los tamanos de posicion y se evitan nuevas entradas hasta que el impacto de mercado se normalice.",
+            "ror_throttle": "Se reduce el tamano de nuevas posiciones para proteger el capital.",
+            "correlation_stress": "Se reducen posiciones para limitar riesgo de movimiento correlacionado.",
+        }.get(event, "Se han tomado medidas de proteccion automaticas.")
+
+        label_map = {
+            "drawdown_pct": "📉 Drawdown actual",
+            "threshold": "🛡️ Limite configurado",
+            "equity": "💰 Equity actual",
+            "equity_peak": "🏔️ Peak de equity",
+            "consecutive_losses": "📊 Perdidas consecutivas",
+            "total_exposure": "📏 Exposicion total",
+            "risk_of_ruin": "☠️ Risk of Ruin",
+            "avg_correlation": "🔗 Correlacion media",
+        }
 
         detail_lines = ""
         for k, v in d.items():
-            label = {
-                "drawdown_pct": "Perdida acumulada",
-                "threshold": "Limite configurado",
-            }.get(k, k)
-            detail_lines += f"{label}: {v}\n"
+            label = label_map.get(k, k)
+            if isinstance(v, float):
+                if k.endswith("_pct") or k in ("risk_of_ruin", "avg_correlation"):
+                    detail_lines += f"  {label}: {v:.2%}\n"
+                else:
+                    detail_lines += f"  {label}: ${v:,.2f}\n"
+            else:
+                detail_lines += f"  {label}: {v}\n"
 
         text = (
-            f"🚨 <b>ALERTA DE RIESGO</b>\n\n"
-            f"<b>{event_desc}</b>\n"
-            f"{detail_lines}\n"
-            f"Se han cancelado todas las ordenes abiertas por seguridad."
+            "🚨 <b>ALERTA DE RIESGO</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"⚠️ <b>{event_desc}</b>\n\n"
         )
+        if detail_lines:
+            text += f"{detail_lines}\n"
+        text += f"🛡️ <i>{event_action}</i>"
+
         self._enqueue(text)
 
     async def notify_error(self, task_name: str, error: str) -> None:
@@ -308,7 +418,7 @@ class TelegramNotifier:
         self._collector_status[symbol] = existing
 
     async def notify_portfolio_snapshot(self, summary: Dict) -> None:
-        """Snapshot de portfolio. Envia cada 5 llamadas (5 min)."""
+        """Snapshot de portfolio completo. Envia cada 5 llamadas (5 min)."""
         self._portfolio_counter += 1
         if self._portfolio_counter < PORTFOLIO_SUMMARY_EVERY:
             return
@@ -317,17 +427,92 @@ class TelegramNotifier:
         equity = summary.get("equity", summary.get("total_equity", 0))
         risk = summary.get("risk", {})
         pnl = risk.get("total_pnl", summary.get("total_pnl", 0))
+        daily_pnl = risk.get("daily_pnl", 0)
         dd = risk.get("drawdown_pct", summary.get("max_drawdown_pct", 0))
+        equity_peak = risk.get("equity_peak", equity)
+        consec_losses = risk.get("consecutive_losses", 0)
+        circuit_breaker = risk.get("circuit_breaker", False)
+        total_exposure = risk.get("total_exposure", 0)
+        positions = risk.get("positions", {})
+
+        # Quant models
+        ror = risk.get("risk_of_ruin", 0)
+        vol_scalar = risk.get("vol_target_scalar", 1.0)
+        vol_realized = risk.get("vol_realized", 0)
+        corr_stress = risk.get("correlation_stress", False)
+        avg_corr = risk.get("avg_correlation", 0)
+        slippage_bps = risk.get("slippage_avg_bps", 0)
+        slippage_n = risk.get("slippage_samples", 0)
+        kelly = risk.get("kelly_fractions", {})
+
+        # Strategy data
+        strat_pnl = summary.get("strategy_pnl", {})
+        strat_trades = summary.get("strategy_trades", {})
+        weights = summary.get("weights", {})
 
         pnl_emoji = "✅" if pnl > 0 else ("❌" if pnl < 0 else "➖")
+        daily_emoji = "✅" if daily_pnl > 0 else ("❌" if daily_pnl < 0 else "➖")
         dd_emoji = "🟢" if dd < 0.05 else ("🟡" if dd < 0.10 else "🔴")
 
         text = (
-            f"📊 <b>Resumen del portfolio</b> (cada 5 min)\n\n"
-            f"Capital actual: <b>${equity:,.2f}</b>\n"
-            f"{pnl_emoji} Ganancia/Perdida: ${pnl:+,.2f}\n"
-            f"{dd_emoji} Peor caida: {dd:.2%}"
+            "📊 <b>Portfolio</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"💰 Equity: <b>${equity:,.2f}</b>\n"
+            f"🏔️ Peak: ${equity_peak:,.2f}\n"
+            f"{pnl_emoji} PnL total: <b>${pnl:+,.2f}</b>\n"
+            f"{daily_emoji} PnL hoy: ${daily_pnl:+,.2f}\n"
+            f"{dd_emoji} Drawdown: {dd:.2%}\n"
         )
+
+        # Posiciones abiertas
+        active_pos = {s: n for s, n in positions.items() if abs(n) > 0.01}
+        if active_pos:
+            text += f"\n<b>📍 Posiciones abiertas</b>\n"
+            for sym, notional in sorted(active_pos.items()):
+                text += f"  {'🟢' if notional > 0 else '🔴'} {sym}: ${notional:+,.2f}\n"
+            text += f"📏 Exposicion total: ${total_exposure:,.2f}\n"
+        else:
+            text += f"\n📍 Sin posiciones abiertas\n"
+
+        # Estrategias
+        total_trades = sum(strat_trades.values())
+        if total_trades > 0:
+            strat_nombres = {
+                "MEAN_REVERSION": "MR", "TREND_FOLLOWING": "TF",
+                "MARKET_MAKING": "MM", "ORDER_FLOW_MOMENTUM": "OFM",
+            }
+            text += f"\n<b>🧠 Estrategias</b> ({total_trades} ops)\n"
+            for st in sorted(strat_pnl.keys()):
+                nombre = strat_nombres.get(st, st)
+                sp = strat_pnl.get(st, 0)
+                st_n = strat_trades.get(st, 0)
+                w = weights.get(st, 0)
+                k = kelly.get(st, 0)
+                if st_n > 0:
+                    st_emoji = "✅" if sp > 0 else ("❌" if sp < 0 else "➖")
+                    text += f"  {st_emoji} {nombre}: ${sp:+,.2f} | {st_n} ops | peso {w:.0%} | kelly {k:.1%}\n"
+
+        # Modelos cuantitativos
+        text += f"\n<b>🔬 Risk Engine</b>\n"
+        ror_emoji = "🟢" if ror < 0.05 else ("🟡" if ror < 0.15 else "🔴")
+        text += f"{ror_emoji} Risk of ruin: {ror:.1%}\n"
+
+        vol_emoji = "🟢" if 0.8 <= vol_scalar <= 1.2 else "🟡"
+        text += f"{vol_emoji} Vol target: x{vol_scalar:.2f} (vol real: {vol_realized:.2%})\n"
+
+        if slippage_n > 0:
+            slip_emoji = "🟢" if slippage_bps < 5 else ("🟡" if slippage_bps < 15 else "🔴")
+            text += f"{slip_emoji} Slippage prom: {slippage_bps:.1f} bps ({slippage_n} fills)\n"
+
+        if corr_stress:
+            text += f"⚠️ Correlacion elevada: {avg_corr:.2f}\n"
+
+        if consec_losses >= 3:
+            text += f"⚠️ Rachas perdedoras: {consec_losses} seguidas\n"
+
+        if circuit_breaker:
+            text += "🚨 <b>CIRCUIT BREAKER ACTIVO</b>\n"
+
         self._enqueue(text)
 
     # ── Internal: enqueue ────────────────────────────────────────
@@ -388,21 +573,33 @@ class TelegramNotifier:
             "MEAN_REVERSION": "Mean Reversion",
             "TREND_FOLLOWING": "Trend Following",
             "MARKET_MAKING": "Market Making",
+            "ORDER_FLOW_MOMENTUM": "Order Flow",
         }
+
+        buys = sum(1 for s in signals if s.side == "BUY")
+        sells = len(signals) - buys
 
         lines = []
         for s in signals:
             accion = "Comprar" if s.side == "BUY" else "Vender"
             emoji = "🟢" if s.side == "BUY" else "🔴"
-            confianza = "alta" if s.strength > 0.7 else ("media" if s.strength > 0.4 else "baja")
+            if s.strength > 0.7:
+                confianza = "🔥 alta"
+            elif s.strength > 0.4:
+                confianza = "🟡 media"
+            else:
+                confianza = "⚪ baja"
             lines.append(
-                f"{emoji} {accion} <b>{s.symbol}</b> a ${s.entry_price:,.2f}\n"
-                f"    Estrategia: {strat_nombre.get(s.strategy, s.strategy)}\n"
-                f"    Confianza: {confianza} ({s.strength:.0%}) | Monto: ${s.size_usd:,.0f}"
+                f"{emoji} {accion} <b>{s.symbol}</b> a ${s.entry_price:,.4f}\n"
+                f"    🧠 {strat_nombre.get(s.strategy, s.strategy)}\n"
+                f"    📊 Confianza: {confianza} ({s.strength:.0%})\n"
+                f"    💰 Tamano: ${s.size_usd:,.2f}"
             )
 
         text = (
-            f"📡 <b>Senales detectadas</b> ({len(signals)})\n\n"
+            f"📡 <b>Senales detectadas</b> ({len(signals)})\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🟢 Compras: {buys} | 🔴 Ventas: {sells}\n\n"
             + "\n\n".join(lines)
         )
         self._enqueue(text)

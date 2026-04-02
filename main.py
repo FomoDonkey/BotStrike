@@ -191,6 +191,8 @@ class BotStrike:
             config={
                 "initial_capital": self.settings.trading.initial_capital,
                 "testnet": self.settings.use_testnet,
+                "risk_per_trade_pct": self.settings.trading.risk_per_trade_pct,
+                "max_drawdown_pct": self.settings.trading.max_drawdown_pct,
             },
         )
 
