@@ -63,7 +63,7 @@ export const useAlertStore = create<AlertState>((set, get) => ({
   },
 
   dismissAlert: (id) =>
-    set((s) => ({ alerts: s.alerts.map((a) => a.id === id ? { ...a, dismissed: true } : a) })),
+    set((s) => ({ alerts: s.alerts.filter((a) => a.id !== id) })),
 
   clearAll: () => set({ alerts: [] }),
 

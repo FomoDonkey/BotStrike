@@ -30,6 +30,7 @@ export function TradingPage() {
   const positionsMap = useTradingStore(useShallow((s) => s.positions));
   const positions = useMemo(() => Object.values(positionsMap).flat(), [positionsMap]);
   const signals = useTradingStore(useShallow((s) => s.recentSignals));
+  const recentSignals = useMemo(() => [...signals].reverse().slice(0, 10), [signals]);
   const micro = useMicroStore((s) => s.snapshots[symbol] || s.snapshots["BTC-USD"]);
 
   const priceUp = price > prevPrice;
@@ -175,7 +176,7 @@ export function TradingPage() {
             <p className="text-text-muted text-xs">No signals yet</p>
           ) : (
             <div className="space-y-1.5">
-              {[...signals].reverse().slice(0, 10).map((s, i) => (
+              {recentSignals.map((s, i) => (
                 <div key={`${s.timestamp}-${i}`} className="flex items-center justify-between text-xs">
                   <div className="flex items-center gap-2">
                     <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: STRATEGY_COLORS[s.strategy] || "#4A5568" }} />

@@ -18,12 +18,12 @@ import {
 
 const stagger = {
   hidden: {},
-  show: { transition: { staggerChildren: 0.06 } },
+  show: { transition: { staggerChildren: 0.03 } },
 };
 
 const fadeUp = {
-  hidden: { opacity: 0, y: 16 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: "easeOut" as const } },
+  hidden: { opacity: 0, y: 8 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.2, ease: "easeOut" as const } },
 };
 
 const ALLOCATION_DATA = [
@@ -44,6 +44,7 @@ export function DashboardPage() {
   const micro = useMicroStore(useShallow((s) => s.snapshots));
 
   const allPositions = useMemo(() => Object.values(positions).flat(), [positions]);
+  const recentSignals = useMemo(() => [...signals].reverse().slice(0, 8), [signals]);
   const btcUp = btcPrice > btcPrev;
 
   return (
@@ -218,13 +219,10 @@ export function DashboardPage() {
             </div>
           ) : (
             <div className="space-y-1.5 max-h-48 overflow-y-auto">
-              {[...signals].reverse().slice(0, 8).map((s, i) => (
-                <motion.div
+              {recentSignals.map((s, i) => (
+                <div
                   key={`${s.timestamp}-${i}`}
                   className="flex items-center justify-between text-xs p-1.5 rounded-lg hover:bg-white/[0.02]"
-                  initial={{ opacity: 0, x: 12 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.03 }}
                 >
                   <div className="flex items-center gap-2">
                     <span
@@ -238,7 +236,7 @@ export function DashboardPage() {
                   <span className={cn("font-mono", s.side === "BUY" ? "text-profit" : "text-loss")}>
                     {s.side}
                   </span>
-                </motion.div>
+                </div>
               ))}
             </div>
           )}

@@ -17,16 +17,30 @@ interface MicroState {
   onUpdate: (data: MicroData) => void;
 }
 
+const MAX_MICRO_HISTORY = 120; // 2 min @ 1Hz — sufficient for charts
+
 export const useMicroStore = create<MicroState>((set) => ({
   snapshots: {},
   history: {},
 
   onUpdate: (data) =>
-    set((s) => ({
-      snapshots: { ...s.snapshots, [data.symbol]: data },
-      history: {
-        ...s.history,
-        [data.symbol]: [...(s.history[data.symbol] || []).slice(-299), data],
-      },
-    })),
+    set((s) => {
+      // Mutate history array in-place to avoid spreading entire history object
+      const sym = data.symbol;
+      const prev = s.history[sym];
+      let arr: MicroData[];
+      if (!prev) {
+        arr = [data];
+      } else if (prev.length >= MAX_MICRO_HISTORY) {
+        // Reuse array, shift out oldest, push new
+        arr = prev.slice(-(MAX_MICRO_HISTORY - 1));
+        arr.push(data);
+      } else {
+        arr = [...prev, data];
+      }
+      return {
+        snapshots: { ...s.snapshots, [sym]: data },
+        history: { ...s.history, [sym]: arr },
+      };
+    }),
 }));

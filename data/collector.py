@@ -90,7 +90,7 @@ class StrikeDataCollector:
         symbols: Optional[List[str]] = None,
         notifier: Optional[Any] = None,
     ) -> None:
-        self.settings = copy.deepcopy(settings)
+        self.settings = copy.copy(settings)  # shallow copy: settings no se mutan
         self.data_dir = os.path.abspath(data_dir)
         self.symbols = symbols or settings.symbol_names
 

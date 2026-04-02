@@ -60,7 +60,6 @@ function startPriceThrottle() {
   _priceFlushTimer = setInterval(() => {
     const keys = Object.keys(_pendingPrices);
     if (keys.length === 0) {
-      // Auto-stop after 10s of no data (40 idle ticks)
       _idleCount++;
       if (_idleCount > 40 && _priceFlushTimer) {
         clearInterval(_priceFlushTimer);
@@ -71,8 +70,23 @@ function startPriceThrottle() {
     }
     _idleCount = 0;
 
-    const prices = { ...useMarketStore.getState().prices };
-    const prevPrices = { ...useMarketStore.getState().prevPrices };
+    // Only setState if any price actually changed — avoids re-render storm
+    const state = useMarketStore.getState();
+    let changed = false;
+    for (const sym of keys) {
+      if (state.prices[sym] !== _pendingPrices[sym].price) {
+        changed = true;
+        break;
+      }
+    }
+    if (!changed) {
+      // Prices identical — clear pending, skip setState
+      for (const sym of keys) delete _pendingPrices[sym];
+      return;
+    }
+
+    const prices = { ...state.prices };
+    const prevPrices = { ...state.prevPrices };
 
     for (const sym of keys) {
       const p = _pendingPrices[sym];

@@ -239,10 +239,10 @@ class HistoricalDataLoader:
         Para cada barra, genera ~10 trades interpolados entre OHLC.
         """
         records = []
-        for _, bar in ohlcv.iterrows():
-            ts = float(bar["timestamp"])
-            o, h, l, c = float(bar["open"]), float(bar["high"]), float(bar["low"]), float(bar["close"])
-            vol = float(bar["volume"]) if bar["volume"] > 0 else 1.0
+        for bar in ohlcv.itertuples():
+            ts = float(bar.timestamp)
+            o, h, l, c = float(bar.open), float(bar.high), float(bar.low), float(bar.close)
+            vol = float(bar.volume) if bar.volume > 0 else 1.0
 
             # Secuencia: open → high → low → close (simplificada)
             path = [o, (o + h) / 2, h, (h + l) / 2, l, (l + c) / 2, c]
@@ -286,13 +286,18 @@ class HistoricalDataLoader:
         self, trades: pd.DataFrame, interval: str
     ) -> pd.DataFrame:
         """Agrega trades en barras OHLCV."""
-        df = trades.copy()
+        df = trades[["timestamp", "price", "quantity"]].copy()
         df["dt"] = pd.to_datetime(df["timestamp"], unit="s")
         df = df.set_index("dt")
 
-        ohlcv = df["price"].resample(interval).ohlc()
-        ohlcv.columns = ["open", "high", "low", "close"]
-        ohlcv["volume"] = df["quantity"].resample(interval).sum()
+        # Single resample pass con agg dict (evita doble agrupación)
+        ohlcv = df.resample(interval).agg(
+            open=("price", "first"),
+            high=("price", "max"),
+            low=("price", "min"),
+            close=("price", "last"),
+            volume=("quantity", "sum"),
+        )
         ohlcv["timestamp"] = ohlcv.index.astype(np.int64) // 10**9
         ohlcv = ohlcv.dropna(subset=["open"]).reset_index(drop=True)
         return ohlcv
@@ -325,17 +330,17 @@ class HistoricalDataLoader:
         trades_arr = trades.to_dict("records")
         trade_idx = 0
 
-        for _, bar in ohlcv.iterrows():
-            bar_start = float(bar["timestamp"])
+        for bar in ohlcv.itertuples():
+            bar_start = float(bar.timestamp)
             bar_end = bar_start + interval_sec
 
             bar_dict = {
                 "timestamp": bar_start,
-                "open": float(bar["open"]),
-                "high": float(bar["high"]),
-                "low": float(bar["low"]),
-                "close": float(bar["close"]),
-                "volume": float(bar["volume"]),
+                "open": float(bar.open),
+                "high": float(bar.high),
+                "low": float(bar.low),
+                "close": float(bar.close),
+                "volume": float(bar.volume),
             }
 
             # Recoger trades que caen en esta barra

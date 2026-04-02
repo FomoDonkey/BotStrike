@@ -23,23 +23,29 @@ logger = structlog.get_logger(__name__)
 
 
 class _RateLimiter:
-    """Token bucket rate limiter para requests HTTP."""
+    """Token bucket rate limiter para requests HTTP.
+
+    Usa deque con maxlen para auto-evictar timestamps viejos
+    sin reasignar la lista en cada acquire().
+    """
 
     def __init__(self, max_requests: int = 50, window_sec: float = 10.0) -> None:
+        from collections import deque
         self._max = max_requests
         self._window = window_sec
-        self._timestamps: list = []
+        self._timestamps: deque = deque()
 
     async def acquire(self) -> None:
         """Espera si es necesario para respetar el rate limit."""
         import asyncio
         while True:
             now = time.time()
-            # Limpiar timestamps fuera de la ventana
-            self._timestamps = [t for t in self._timestamps if now - t < self._window]
+            # Pop timestamps expirados desde la izquierda (O(1) cada uno)
+            cutoff = now - self._window
+            while self._timestamps and self._timestamps[0] < cutoff:
+                self._timestamps.popleft()
             if len(self._timestamps) < self._max:
                 break
-            # Esperar hasta que el timestamp más viejo expire, then re-check
             wait = self._timestamps[0] + self._window - now + 0.05
             if wait > 0:
                 logger.debug("rate_limit_wait", wait_sec=round(wait, 2))

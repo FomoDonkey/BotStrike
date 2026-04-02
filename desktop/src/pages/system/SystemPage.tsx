@@ -28,23 +28,32 @@ export function SystemPage() {
     return () => clearInterval(i);
   }, []);
 
-  // Subscribe to system channel for logs
+  // Subscribe to system channel for logs (reduced buffer 200, batched scroll)
   useEffect(() => {
+    let scrollTimer: ReturnType<typeof setTimeout> | null = null;
+    const scrollToBottom = () => {
+      if (scrollTimer) return; // debounce
+      scrollTimer = setTimeout(() => {
+        logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        scrollTimer = null;
+      }, 300);
+    };
+
     const unsub = getChannel("system").subscribe((msg) => {
       if (msg.type === "log") {
-        setLogs((prev) => [...prev.slice(-499), { timestamp: msg.timestamp, level: msg.level || "info", message: msg.message || JSON.stringify(msg) }]);
+        setLogs((prev) => [...prev.slice(-199), { timestamp: msg.timestamp, level: msg.level || "info", message: msg.message || JSON.stringify(msg) }]);
+        scrollToBottom();
       }
       if (msg.type === "engine_error") {
-        setLogs((prev) => [...prev.slice(-499), { timestamp: msg.timestamp, level: "error", message: msg.error }]);
+        setLogs((prev) => [...prev.slice(-199), { timestamp: msg.timestamp, level: "error", message: msg.error }]);
+        scrollToBottom();
       }
     });
-    return () => { unsub(); };
+    return () => {
+      unsub();
+      if (scrollTimer) clearTimeout(scrollTimer);
+    };
   }, []);
-
-  // Auto-scroll logs
-  useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs]);
 
   const handleStart = () => api.botStart("paper").catch(() => null);
   const handleStop = () => api.botStop().catch(() => null);

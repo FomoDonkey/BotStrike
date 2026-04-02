@@ -65,7 +65,7 @@ export function PerformancePage() {
       setLoading(false);
     }
     load();
-    const interval = setInterval(load, 10000);
+    const interval = setInterval(load, 30000); // 30s — less aggressive than 10s
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 

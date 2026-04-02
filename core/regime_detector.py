@@ -5,6 +5,7 @@ Usa volatilidad relativa, momentum y ADX con thresholds adaptativos.
 """
 from __future__ import annotations
 import math
+from collections import deque
 from typing import Dict
 
 import numpy as np
@@ -26,8 +27,11 @@ class RegimeDetector:
         self._regime_history: Dict[str, list] = {}
         # Régimen suavizado confirmado por símbolo
         self._current_regime: Dict[str, MarketRegime] = {}
-        # Thresholds adaptativos por símbolo
+        # Thresholds adaptativos por símbolo (cached)
         self._adaptive_thresholds: Dict[str, Dict[str, float]] = {}
+        # Cache timer: recalcular thresholds solo cada 60s (no en cada detect)
+        self._threshold_last_update: Dict[str, float] = {}
+        self._threshold_cache_sec: float = 60.0
 
     def detect(
         self, df: pd.DataFrame, symbol: str, config: SymbolConfig
@@ -132,15 +136,24 @@ class RegimeDetector:
     def _update_adaptive_thresholds(
         self, df: pd.DataFrame, symbol: str, config: SymbolConfig
     ) -> Dict[str, float]:
-        """Actualiza thresholds adaptativos basándose en el histórico del activo."""
+        """Actualiza thresholds adaptativos. Cached por 60s para evitar recalcular."""
+        import time as _time
+        now = _time.monotonic()
+        last = self._threshold_last_update.get(symbol, 0)
+        cached = self._adaptive_thresholds.get(symbol)
+        if cached and (now - last) < self._threshold_cache_sec:
+            return cached
+
         lookback = min(len(df), 500)
-        recent = df.tail(lookback)
+        recent = df.iloc[-lookback:]  # iloc es más eficiente que tail()
 
         # Calcular distribución de volatilidad para este activo
         vol_pct_series = recent.get("vol_pct", pd.Series(dtype=float)).dropna()
         if len(vol_pct_series) > 10:
-            vol_low = float(np.percentile(vol_pct_series, 30))
-            vol_high = float(np.percentile(vol_pct_series, 75))
+            # Un solo np.percentile con múltiples cuantiles
+            vol_pcts = np.percentile(vol_pct_series.values, [30, 75])
+            vol_low = float(vol_pcts[0])
+            vol_high = float(vol_pcts[1])
         else:
             vol_low = config.regime_vol_threshold_low
             vol_high = config.regime_vol_threshold_high
@@ -148,14 +161,14 @@ class RegimeDetector:
         # ADX adaptativo
         adx_series = recent.get("adx", pd.Series(dtype=float)).dropna()
         if len(adx_series) > 10:
-            adx_trend = float(np.percentile(adx_series, 60))
+            adx_trend = float(np.percentile(adx_series.values, 60))
         else:
             adx_trend = 25.0
 
         # Momentum adaptativo basado en volatilidad del activo
         mom_series = recent.get("momentum_20", pd.Series(dtype=float)).dropna().abs()
         if len(mom_series) > 10:
-            mom_threshold = float(np.percentile(mom_series, 65))
+            mom_threshold = float(np.percentile(mom_series.values, 65))
         else:
             mom_threshold = 0.02
 
@@ -166,20 +179,17 @@ class RegimeDetector:
             "mom_threshold": max(mom_threshold, 0.005),
         }
         self._adaptive_thresholds[symbol] = thresholds
+        self._threshold_last_update[symbol] = now
         return thresholds
 
     def _smooth_regime(self, symbol: str, regime: MarketRegime) -> MarketRegime:
         """Suaviza transiciones de régimen para evitar whipsaws.
         Requiere 2 detecciones consecutivas del mismo régimen para cambiar."""
         if symbol not in self._regime_history:
-            self._regime_history[symbol] = []
+            self._regime_history[symbol] = deque(maxlen=5)
 
         history = self._regime_history[symbol]
-        history.append(regime)
-
-        # Mantener solo últimas 5 detecciones
-        if len(history) > 5:
-            history.pop(0)
+        history.append(regime)  # deque auto-evicts oldest
 
         if len(history) < 2:
             return regime

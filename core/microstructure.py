@@ -174,11 +174,14 @@ class VPINCalculator:
         if n < 5:
             return VPINResult(timestamp=timestamp, bucket_count=n)
 
-        recent = list(self._completed_buckets)[-n:]
+        # Iterar directamente sobre deque sin convertir a lista
         imbalances = []
         total_buy = 0.0
         total_sell = 0.0
-        for b in recent:
+        # Iterar últimos n buckets del deque directamente
+        start = max(0, len(self._completed_buckets) - n)
+        for i in range(start, len(self._completed_buckets)):
+            b = self._completed_buckets[i]
             if b.total_volume > 0:
                 imbalance = abs(b.buy_volume - b.sell_volume) / b.total_volume
                 imbalances.append(imbalance)
@@ -192,9 +195,10 @@ class VPINCalculator:
         total_vol = total_buy + total_sell
         buy_pct = total_buy / total_vol if total_vol > 0 else 0.5
 
-        # CDF: percentil del VPIN actual en su historial (método consistente)
+        # CDF: percentil del VPIN actual en su historial
         self._vpin_history.append(vpin)
-        sorted_hist = np.sort(list(self._vpin_history))
+        # Usar array directamente del deque sin sort (searchsorted necesita sorted)
+        sorted_hist = np.sort(np.fromiter(self._vpin_history, dtype=float, count=len(self._vpin_history)))
         cdf = float(np.searchsorted(sorted_hist, vpin, side='right') / len(self._vpin_history))
 
         return VPINResult(
