@@ -40,7 +40,7 @@ export function DashboardPage() {
   const max_drawdown_pct = useRiskStore((s) => s.max_drawdown_pct);
   const circuit_breaker_active = useRiskStore((s) => s.circuit_breaker_active);
   const positions = useTradingStore(useShallow((s) => s.positions));
-  const signals = useTradingStore((s) => s.recentSignals);
+  const signals = useTradingStore(useShallow((s) => s.recentSignals));
   const micro = useMicroStore(useShallow((s) => s.snapshots));
 
   const allPositions = useMemo(() => Object.values(positions).flat(), [positions]);
@@ -72,7 +72,7 @@ export function DashboardPage() {
                   className="text-sm font-mono font-medium"
                 />
                 <AnimatedNumber
-                  value={metrics.equity > 0 ? metrics.pnl / (metrics.equity - metrics.pnl || 300) : 0}
+                  value={metrics.equity > 0 ? metrics.pnl / Math.max(metrics.equity - metrics.pnl, 1) : 0}
                   format={(v) => `${v >= 0 ? "+" : ""}${formatPct(v)}`}
                   colorize
                   className="text-sm font-mono"

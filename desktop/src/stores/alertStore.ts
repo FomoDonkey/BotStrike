@@ -119,7 +119,10 @@ export const useAlertStore = create<AlertState>((set, get) => ({
       }
 
       if (triggered) {
-        rule.lastTriggered = now;
+        // Update rule cooldown through Zustand set() — not direct mutation
+        set((s) => ({
+          rules: s.rules.map((r) => r.id === rule.id ? { ...r, lastTriggered: now } : r),
+        }));
         addAlert({
           level: rule.level,
           title: rule.name,

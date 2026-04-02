@@ -371,10 +371,9 @@ async def candle_broadcast_loop():
                         continue
 
                     rows = df.tail(60)  # Last 60 candles (1h for 1m bars)
-                    # Skip broadcast if data hasn't changed
-                    new_hash = len(rows)
-                    last_close = float(rows.iloc[-1].get("close", 0)) if len(rows) > 0 else 0
-                    cache_key = f"{new_hash}_{last_close}"
+                    # Skip broadcast if data hasn't changed (full OHLC hash)
+                    last = rows.iloc[-1]
+                    cache_key = f"{len(rows)}_{last.get('open',0)}_{last.get('high',0)}_{last.get('low',0)}_{last.get('close',0)}"
                     if _last_candle_hash.get(symbol) == cache_key:
                         continue
                     _last_candle_hash[symbol] = cache_key

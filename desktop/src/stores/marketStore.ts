@@ -53,13 +53,24 @@ interface MarketState {
 let _priceFlushTimer: ReturnType<typeof setInterval> | null = null;
 const _pendingPrices: Record<string, { price: number; prev: number }> = {};
 
+let _idleCount = 0;
+
 function startPriceThrottle() {
   if (_priceFlushTimer) return;
   _priceFlushTimer = setInterval(() => {
     const keys = Object.keys(_pendingPrices);
-    if (keys.length === 0) return;
+    if (keys.length === 0) {
+      // Auto-stop after 10s of no data (40 idle ticks)
+      _idleCount++;
+      if (_idleCount > 40 && _priceFlushTimer) {
+        clearInterval(_priceFlushTimer);
+        _priceFlushTimer = null;
+        _idleCount = 0;
+      }
+      return;
+    }
+    _idleCount = 0;
 
-    const updates: Partial<MarketState> = {};
     const prices = { ...useMarketStore.getState().prices };
     const prevPrices = { ...useMarketStore.getState().prevPrices };
 
@@ -71,7 +82,7 @@ function startPriceThrottle() {
     }
 
     useMarketStore.setState({ prices, prevPrices });
-  }, 250); // 4 updates/sec max
+  }, 250);
 }
 
 export const useMarketStore = create<MarketState>((set, get) => ({

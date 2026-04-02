@@ -1,12 +1,13 @@
 import { motion } from "framer-motion";
+import { useShallow } from "zustand/shallow";
 import { GlassPanel } from "@/components/shared/GlassPanel";
 import { useMicroStore } from "@/stores/microStore";
 import { cn } from "@/lib/utils";
 import { Waves, Activity, TrendingUp, Shield } from "lucide-react";
 
 export function OrderFlowPage() {
-  const snapshots = useMicroStore((s) => s.snapshots);
-  const history = useMicroStore((s) => s.history);
+  const snapshots = useMicroStore(useShallow((s) => s.snapshots));
+  const history = useMicroStore(useShallow((s) => s.history));
   const entries = Object.entries(snapshots);
 
   return (

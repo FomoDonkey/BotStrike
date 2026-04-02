@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useShallow } from "zustand/shallow";
 import { motion } from "framer-motion";
 import { GlassPanel } from "@/components/shared/GlassPanel";
 import { useSystemStore } from "@/stores/systemStore";
@@ -18,7 +19,7 @@ interface DatasetInfo {
 
 export function DataPage() {
   const system = useSystemStore();
-  const prices = useMarketStore((s) => s.prices);
+  const prices = useMarketStore(useShallow((s) => s.prices));
   const [catalog, setCatalog] = useState<DatasetInfo[]>([]);
   const [loading, setLoading] = useState(true);
 

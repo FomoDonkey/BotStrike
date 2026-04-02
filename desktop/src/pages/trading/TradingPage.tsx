@@ -29,7 +29,7 @@ export function TradingPage() {
   const orderbook = useMarketStore((s) => s.orderbooks[symbol] || s.orderbooks["BTC-USD"]);
   const positionsMap = useTradingStore(useShallow((s) => s.positions));
   const positions = useMemo(() => Object.values(positionsMap).flat(), [positionsMap]);
-  const signals = useTradingStore((s) => s.recentSignals);
+  const signals = useTradingStore(useShallow((s) => s.recentSignals));
   const micro = useMicroStore((s) => s.snapshots[symbol] || s.snapshots["BTC-USD"]);
 
   const priceUp = price > prevPrice;
