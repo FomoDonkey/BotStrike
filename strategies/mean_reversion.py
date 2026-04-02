@@ -54,24 +54,26 @@ TF_CONFIGS: Dict[str, TFConfig] = {
     "1d": TFConfig(
         name="1D", interval="1d", lookback=14,
         rsi_oversold=30, rsi_overbought=70, rsi_recovery=40,
-        adx_max=40, sl_mult=2.0, tp_mult=5.0,
-        risk_pct=0.03, strength_base=0.95, cache_ttl=900, min_bars=30,
+        adx_max=40, sl_mult=2.5, tp_mult=5.0,     # Wider SL for overnight gaps
+        risk_pct=0.015, strength_base=0.95,         # 1.5% risk (was 3% — too much for $300)
+        cache_ttl=900, min_bars=30,
     ),
     "4h": TFConfig(
         name="4H", interval="4h", lookback=12,
         rsi_oversold=30, rsi_overbought=70, rsi_recovery=42,
         adx_max=38, sl_mult=1.8, tp_mult=4.0,
-        risk_pct=0.02, strength_base=0.85, cache_ttl=600, min_bars=30,
+        risk_pct=0.015, strength_base=0.85,         # 1.5% (was 2%)
+        cache_ttl=600, min_bars=30,
     ),
     "1h": TFConfig(
         name="1H", interval="1h", lookback=10,
-        rsi_oversold=32, rsi_overbought=68, rsi_recovery=43,
+        rsi_oversold=28, rsi_overbought=72, rsi_recovery=43,  # Tighter than 15m (less noise)
         adx_max=36, sl_mult=1.5, tp_mult=3.5,
         risk_pct=0.015, strength_base=0.75, cache_ttl=300, min_bars=25,
     ),
     "15m": TFConfig(
         name="15m", interval="15m", lookback=10,
-        rsi_oversold=30, rsi_overbought=70, rsi_recovery=45,
+        rsi_oversold=25, rsi_overbought=75, rsi_recovery=45,  # Stricter — more noise at 15m
         adx_max=35, sl_mult=1.5, tp_mult=3.0,
         risk_pct=0.01, strength_base=0.65, cache_ttl=180, min_bars=20,
     ),

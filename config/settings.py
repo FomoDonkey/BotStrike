@@ -82,7 +82,7 @@ class TradingConfig:
     maker_fee: float = 0.0002
     taker_fee: float = 0.0005
     # Slippage — realistic for micro orders on Binance
-    slippage_bps: float = 8.0           # 8 bps (was 2.0 — underestimated 4x)
+    slippage_bps: float = 2.0           # 2 bps — realistic for Binance micro-orders ($250 notional)
     # Funding rate thresholds
     funding_rate_warn: float = 0.0001   # 1 bps/8h — reduce sizing 30%
     funding_rate_block: float = 0.0005  # 5 bps/8h — bloquear entradas contra funding
@@ -149,7 +149,7 @@ class Settings:
 
     # Símbolos a operar
     symbols: List[SymbolConfig] = field(default_factory=lambda: [
-        SymbolConfig(symbol="BTC-USD", leverage=2, max_position_usd=400,
+        SymbolConfig(symbol="BTC-USD", leverage=2, max_position_usd=200,
                      vpin_bucket_size=50_000.0),
     ])
 

@@ -70,7 +70,8 @@ class PaperPosition:
             gross = (exit_price - self.entry_price) * self.size
         else:
             gross = (self.entry_price - exit_price) * self.size
-        fee = (self.entry_price * self.size + exit_price * self.size) * fee_rate
+        # Exit fee only — entry fee already deducted at open
+        fee = exit_price * self.size * fee_rate
         return gross - fee, fee
 
     def check_sl_tp(self, price: float, high: float, low: float) -> Optional[str]:

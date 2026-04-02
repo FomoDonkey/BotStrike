@@ -36,7 +36,7 @@ logger = structlog.get_logger(__name__)
 # ── Constants ────────────────────────────────────────────────────
 COOLDOWN_SEC = 30           # Seconds between trades
 MIN_ENTRY_SCORE = 0.55      # Minimum score to enter
-EXIT_SCORE_THRESHOLD = 0.25 # Close if score drops below this
+EXIT_SCORE_THRESHOLD = 0.35 # Close if score drops below this (breathing room for noise)
 SL_SPREAD_MULT = 2.0        # SL = 2x spread
 TP_SPREAD_MULT = 4.0        # TP = 4x spread (R:R 2:1)
 MAX_SL_BPS = 25.0           # Emergency hard cap: 25 bps max loss
@@ -287,11 +287,11 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         if trend_info is not None:
             daily_trend = trend_info.macro_trend
         if daily_trend == 1:
-            long_score *= 1.1
-            short_score *= 0.3
+            long_score *= 1.15
+            short_score *= 0.7   # Mild penalty, don't kill counter-trend scalps
         elif daily_trend == -1:
-            long_score *= 0.3
-            short_score *= 1.1
+            long_score *= 0.7
+            short_score *= 1.15
 
         return long_score, short_score
 
