@@ -318,6 +318,8 @@ class HawkesEstimator:
         # Calcular intensidad de Hawkes con kernel analítico: O(1) por evento
         # excitation(t) = old * exp(-beta * dt) + alpha
         dt = timestamp - self._cached_excitation_time
+        if dt <= 0:
+            return self._result
         if dt > 0:
             self._cached_excitation = self._cached_excitation * math.exp(-self.beta * dt) + self.alpha
         else:

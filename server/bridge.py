@@ -28,6 +28,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 from config.settings import Settings
 from core.types import MarketRegime, StrategyType, Side
@@ -168,7 +171,7 @@ async def update_market_data():
 
     except Exception as e:
         # Non-critical — engine works without historical data
-        print(f"[bridge] Market data update skipped: {e}")
+        logger.warning("market_data_update_skipped", error=str(e))
 
 
 # ── Engine Integration ───────────────────────────────────────────
@@ -349,8 +352,8 @@ async def market_broadcast_loop():
                 state._market_queue.clear()
                 for tick in queue.values():
                     await state.channels.broadcast("market", tick)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("market_broadcast_error", error=str(e))
         await asyncio.sleep(0.25)  # 4/sec — matches frontend throttle
 
 
@@ -391,8 +394,8 @@ async def candle_broadcast_loop():
                         "symbol": symbol,
                         "data": candles,
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("candle_broadcast_error", error=str(e))
         await asyncio.sleep(5)
 
 
@@ -417,8 +420,8 @@ async def metrics_broadcast_loop():
                 })
                 state.equity = equity
                 state.pnl = pnl
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("metrics_broadcast_error", error=str(e))
         await asyncio.sleep(2)
 
 
@@ -439,8 +442,8 @@ async def system_broadcast_loop():
                 "ws_connected": ws_connected,
                 "clients_connected": state.channels.client_count,
             })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("system_broadcast_error", error=str(e))
         await asyncio.sleep(3)
 
 

@@ -135,6 +135,9 @@ class MicropriceCalculator:
         bids_sorted = sorted(bids, key=lambda x: x.price, reverse=True)
         asks_sorted = sorted(asks, key=lambda x: x.price)
 
+        if not bids_sorted or not asks_sorted:
+            return self._result
+
         best_bid = bids_sorted[0].price
         best_ask = asks_sorted[0].price
         best_bid_qty = bids_sorted[0].quantity

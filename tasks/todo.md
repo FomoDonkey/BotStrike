@@ -352,6 +352,19 @@
 - [ ] Tauri sidecar configuration
 - [ ] MSI installer + auto-update
 
+- [x] Defensive fixes batch: 11 surgical guards applied across 9 files (no logic/parameter changes)
+- [x] Fix: try/except in WS callbacks on_market_trade + on_order_update (main.py)
+- [x] Fix: null safety for micro.vpin — guard micro.vpin before accessing .vpin (main.py, 3 locations)
+- [x] Fix: bare except:pass → logger.debug in 4 bridge broadcast loops (server/bridge.py)
+- [x] Fix: print() → logger.warning + added structlog import (server/bridge.py)
+- [x] Cleanup: removed unused import traceback (notifications/telegram.py)
+- [x] Fix: guard empty bids_sorted/asks_sorted after sort (core/microprice.py)
+- [x] Fix: division by zero guard atr_notional <= 0 (execution/slippage.py)
+- [x] Fix: daily_eq zero guard before division in Sharpe/Sortino calc (backtesting/backtester.py, 2 locations)
+- [x] Fix: guard empty/tiny DataFrame at start of detect() (core/regime_detector.py)
+- [x] Fix: NaN guard in pnl_pct using pd.isna() (strategies/order_flow_momentum.py)
+- [x] Fix: guard non-monotonic timestamps (dt<=0) in HawkesEstimator.on_event (core/microstructure.py)
+
 ## Pendiente / Mejoras futuras
 - [x] ~~Alertas por Telegram/Discord~~ (Telegram implementado)
 - [x] ~~Multi-exchange support~~ (Binance data downloader implementado, trading pendiente)

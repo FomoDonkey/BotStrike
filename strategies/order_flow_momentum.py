@@ -318,7 +318,7 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         against_score = short_score if position.side == Side.BUY else long_score
 
         # Track best PnL for profit lock
-        current_pnl_pct = position.pnl_pct if position.pnl_pct else 0
+        current_pnl_pct = position.pnl_pct if (position.pnl_pct and not pd.isna(position.pnl_pct)) else 0
         state.best_pnl_pct = max(state.best_pnl_pct, current_pnl_pct)
 
         should_exit = False

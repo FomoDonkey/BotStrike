@@ -177,6 +177,7 @@ class BacktestResult:
                 daily_eq = eq[::max(1, len(eq) // 10)]  # at least 10 samples
 
             if len(daily_eq) > 2:
+                daily_eq = np.where(daily_eq == 0, 1e-10, daily_eq)
                 daily_returns = np.diff(daily_eq) / daily_eq[:-1]
                 daily_returns = daily_returns[np.isfinite(daily_returns)]
                 if len(daily_returns) > 1 and np.std(daily_returns) > 0:
@@ -237,6 +238,7 @@ class BacktestResult:
             bars_per_day_s = bars_per_day if 'bars_per_day' in dir() else 1440
             daily_eq_s = eq[::max(1, bars_per_day_s)]
             if len(daily_eq_s) > 2:
+                daily_eq_s = np.where(daily_eq_s == 0, 1e-10, daily_eq_s)
                 dr = np.diff(daily_eq_s) / daily_eq_s[:-1]
                 dr = dr[np.isfinite(dr)]
                 downside = dr[dr < 0]

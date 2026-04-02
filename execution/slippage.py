@@ -81,6 +81,8 @@ def compute_slippage(
         # Fallback sin depth: usar ATR como proxy de liquidez
         # Ratio: size_usd / (ATR-equivalente en USD * factor)
         atr_notional = atr * (size_usd / price)  # ATR * units = price impact proxy
+        if atr_notional <= 0:
+            atr_notional = 1.0
         if atr_notional > 0:
             impact_ratio = min(size_usd / (atr_notional * 50), 2.0)
             slip_bps += base_bps * impact_ratio

@@ -266,25 +266,28 @@ class BotStrike:
 
         # Trades de mercado → actualizar datos
         async def on_market_trade(data: Dict):
-            symbol = data.get("s", "")
-            price = float(data.get("p", 0))
-            qty = float(data.get("q", 0))
-            ts = float(data.get("T", time.time() * 1000)) / 1000.0
-            if symbol and price > 0:
-                self.market_data.on_trade(symbol, price, qty, ts)
-                # Clasificar dirección: m=True → buyer is maker → sell aggressor
-                is_buy = not data.get("m", False)
-                # Alimentar indicadores de microestructura tick-a-tick (+ Kyle Lambda)
-                self.microstructure.on_trade(symbol, price, qty, ts, is_buy=is_buy)
-                # Alimentar trade intensity model (bidireccional)
-                intensity_model = self.execution_engine.trade_intensity.get(symbol)
-                if intensity_model:
-                    intensity_model.on_trade(ts, is_buy, price * qty)
-                # Paper trading: verificar SL/TP en cada tick de precio
-                if self.paper_sim:
-                    sl_tp_trades = self.paper_sim.on_price_update(symbol, price)
-                    for trade in sl_tp_trades:
-                        self._process_paper_fill(trade)
+            try:
+                symbol = data.get("s", "")
+                price = float(data.get("p", 0))
+                qty = float(data.get("q", 0))
+                ts = float(data.get("T", time.time() * 1000)) / 1000.0
+                if symbol and price > 0:
+                    self.market_data.on_trade(symbol, price, qty, ts)
+                    # Clasificar dirección: m=True → buyer is maker → sell aggressor
+                    is_buy = not data.get("m", False)
+                    # Alimentar indicadores de microestructura tick-a-tick (+ Kyle Lambda)
+                    self.microstructure.on_trade(symbol, price, qty, ts, is_buy=is_buy)
+                    # Alimentar trade intensity model (bidireccional)
+                    intensity_model = self.execution_engine.trade_intensity.get(symbol)
+                    if intensity_model:
+                        intensity_model.on_trade(ts, is_buy, price * qty)
+                    # Paper trading: verificar SL/TP en cada tick de precio
+                    if self.paper_sim:
+                        sl_tp_trades = self.paper_sim.on_price_update(symbol, price)
+                        for trade in sl_tp_trades:
+                            self._process_paper_fill(trade)
+            except Exception as e:
+                logger.error("on_market_trade_error", error=str(e))
 
         self.websocket.on("trade", on_market_trade)
 
@@ -310,34 +313,37 @@ class BotStrike:
 
         # Order updates (fills) → procesar
         async def on_order_update(data: Dict):
-            if data.get("e") == "ORDER_TRADE_UPDATE":
-                order_data = data.get("o", data)
-                trade = self.execution_engine.on_order_update(order_data)
-                if trade:
-                    self.trading_logger.log_trade(trade)
-                    self.metrics.add_trade(trade)
-                    if trade.strategy:
-                        self.portfolio_manager.update_strategy_pnl(
-                            trade.strategy, trade.pnl
+            try:
+                if data.get("e") == "ORDER_TRADE_UPDATE":
+                    order_data = data.get("o", data)
+                    trade = self.execution_engine.on_order_update(order_data)
+                    if trade:
+                        self.trading_logger.log_trade(trade)
+                        self.metrics.add_trade(trade)
+                        if trade.strategy:
+                            self.portfolio_manager.update_strategy_pnl(
+                                trade.strategy, trade.pnl
+                            )
+                        # Register fill for Kyle Lambda adverse selection measurement
+                        self.microstructure.register_fill(
+                            trade.symbol, trade.price, time.time(),
+                            is_buy=(trade.side == Side.BUY),
                         )
-                    # Register fill for Kyle Lambda adverse selection measurement
-                    self.microstructure.register_fill(
-                        trade.symbol, trade.price, time.time(),
-                        is_buy=(trade.side == Side.BUY),
-                    )
-                    # Notificar trade por Telegram
-                    asyncio.ensure_future(self.notifier.notify_trade(trade))
-                    # Persistir en trade database
-                    regime = self._last_regime.get(trade.symbol, MarketRegime.UNKNOWN)
-                    micro = self.microstructure.get_snapshot(trade.symbol)
-                    self.trade_db.on_trade(
-                        trade,
-                        regime=regime,
-                        equity_before=self.risk_manager.current_equity,
-                        equity_after=self.risk_manager.current_equity + trade.pnl,
-                        micro_vpin=micro.vpin.vpin if micro else 0,
-                        micro_risk_score=micro.risk_score if micro else 0,
-                    )
+                        # Notificar trade por Telegram
+                        asyncio.ensure_future(self.notifier.notify_trade(trade))
+                        # Persistir en trade database
+                        regime = self._last_regime.get(trade.symbol, MarketRegime.UNKNOWN)
+                        micro = self.microstructure.get_snapshot(trade.symbol)
+                        self.trade_db.on_trade(
+                            trade,
+                            regime=regime,
+                            equity_before=self.risk_manager.current_equity,
+                            equity_after=self.risk_manager.current_equity + trade.pnl,
+                            micro_vpin=micro.vpin.vpin if micro and micro.vpin else 0,
+                            micro_risk_score=micro.risk_score if micro else 0,
+                        )
+            except Exception as e:
+                logger.error("on_order_update_error", error=str(e))
 
         self.websocket.on("ORDER_TRADE_UPDATE", on_order_update)
 
@@ -586,7 +592,7 @@ class BotStrike:
                 "type": "microstructure",
                 "timestamp": time.time(),
                 "symbol": symbol,
-                "vpin": micro.vpin.vpin,
+                "vpin": micro.vpin.vpin if micro.vpin else 0,
                 "vpin_toxic": micro.vpin.is_toxic,
                 "hawkes_intensity": micro.hawkes.intensity,
                 "hawkes_spike": micro.hawkes.is_spike,
@@ -737,7 +743,7 @@ class BotStrike:
             regime=regime,
             equity_before=equity_before,
             equity_after=new_equity,
-            micro_vpin=micro.vpin.vpin if micro else 0,
+            micro_vpin=micro.vpin.vpin if micro and micro.vpin else 0,
             micro_risk_score=micro.risk_score if micro else 0,
         )
 

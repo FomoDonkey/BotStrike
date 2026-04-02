@@ -42,6 +42,9 @@ class RegimeDetector:
         Returns:
             MarketRegime detectado
         """
+        if df.empty or len(df) < 5:
+            return MarketRegime.UNKNOWN
+
         if len(df) < config.regime_vol_lookback:
             return MarketRegime.UNKNOWN
 
