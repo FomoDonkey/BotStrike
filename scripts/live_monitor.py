@@ -103,22 +103,15 @@ class LiveDashboard:
         self._trend_color = "dim"
         self._trend_last_fetch = 0
         self._strat_panel = self._build_strat_panel()
-        # Cache compact summary for live display
-        from strategies.mean_reversion import TF_CONFIGS as _tfc
+        # Cache strategy config for live display
         from config.settings import Settings as _S
-        _tc = _S().trading
+        from strategies.order_flow_momentum import OrderFlowMomentumStrategy as _OFM
+        self._tc = _S().trading
         _s0 = _S().symbols[0] if _S().symbols else None
-        _tf = "/".join(c.name for c in _tfc.values())
-        self._strat_summary_text = (
-            f" [green]MR {_tc.allocation_mean_reversion*100:.0f}%[/] {_tf} divergence"
-            f"  |  [magenta]OFM {_tc.allocation_order_flow_momentum*100:.0f}%[/] scalp"
-            f"  |  ${_tc.initial_capital:.0f}"
-            f"  {_s0.leverage if _s0 else 1}x"
-            f"  Risk {_tc.risk_per_trade_pct*100:.1f}%"
-            f"  DD [red]{_tc.max_drawdown_pct*100:.0f}%[/]"
-            f"  Fees M:{_tc.maker_fee*10000:.1f}/T:{_tc.taker_fee*10000:.1f}bps"
-            f"  Slip {_tc.slippage_bps:.0f}bps"
-        )
+        self._lev = _s0.leverage if _s0 else 1
+        self._mr_alloc = self._tc.allocation_mean_reversion * 100
+        self._ofm_alloc = self._tc.allocation_order_flow_momentum * 100
+        self._ofm_cd = _OFM(self._tc).COOLDOWN_SEC
 
     def _fetch_trend(self):
         """Fetch real trend from Binance klines (sync, blocking but fast)."""
@@ -801,21 +794,50 @@ class LiveDashboard:
             Panel(whale_tbl, title="[bold yellow]Whale Trades >$250K[/]", border_style="yellow"),
         )
 
-        # Compact strategy summary (1 line) — detailed panel shown at startup
-        strat_summary = Table.grid(expand=True)
-        strat_summary.add_column()
-        strat_summary.add_row(self._strat_summary_text)
+        # Strategy panel — compact but complete, always visible
+        from strategies.mean_reversion import TF_CONFIGS as _tfc
 
-        return Group(top_panel, flow, charts, bottom, strat_summary)
+        strat = Table(show_header=True, box=box.SIMPLE, expand=True, padding=(0, 0),
+                      header_style="bold")
+        strat.add_column("Strategy", width=12)
+        strat.add_column("Timeframes", width=14)
+        strat.add_column("Entry", width=30)
+        strat.add_column("SL/TP", width=20)
+        strat.add_column("Risk", width=8)
+        strat.add_column("Filters", width=24)
+
+        # MR row with all TFs
+        tf_detail = " | ".join(f"{c.name}:{c.rsi_oversold:.0f}/{c.rsi_overbought:.0f}" for c in _tfc.values())
+        sl_tp_detail = " | ".join(f"{c.name}:{c.sl_mult}/{c.tp_mult}x" for c in _tfc.values())
+        risk_detail = " | ".join(f"{c.name}:{c.risk_pct*100:.0f}%" for c in _tfc.values())
+        strat.add_row(
+            f"[green]MR {self._mr_alloc:.0f}%[/]",
+            tf_detail,
+            "RSI divergence + OBV + OBI confirm",
+            sl_tp_detail,
+            risk_detail,
+            f"ADX<{list(_tfc.values())[0].adx_max:.0f} | Dip proximity",
+        )
+
+        # OFM row
+        strat.add_row(
+            f"[magenta]OFM {self._ofm_alloc:.0f}%[/]",
+            "Tick (5s eval)",
+            "OBI:40% Micro:30% Hawkes:20% Depth:10%",
+            "SL 1.5x / TP 3.0x ATR",
+            f"{self._tc.risk_per_trade_pct*100:.1f}%",
+            f"VPIN<.75 Spread<15bps CD:{self._ofm_cd}s",
+        )
+
+        strat_panel = Panel(strat, title=f"[bold white]Strategies[/] | ${self._tc.initial_capital:.0f} {self._lev}x | DD [red]{self._tc.max_drawdown_pct*100:.0f}%[/] | Fees M:{self._tc.maker_fee*10000:.1f}/T:{self._tc.taker_fee*10000:.1f}bps | Slip {self._tc.slippage_bps:.0f}bps",
+                            border_style="white", box=box.ROUNDED)
+
+        return Group(top_panel, flow, charts, bottom, strat_panel)
 
 
 async def main():
     dash = LiveDashboard()
-    # Show detailed strategy panel at startup (3 sec)
-    console.print(dash._strat_panel)
-    console.print("[dim]Starting live display in 3 seconds...[/]")
-    import time as _t
-    _t.sleep(3)
+    # Strategy panel is now always visible in the live display
 
     async def trade_ws():
         while True:
