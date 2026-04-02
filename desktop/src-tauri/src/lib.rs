@@ -23,7 +23,7 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let icon_bytes = include_bytes!("../icons/128x128.png");
                 if let Ok(icon) = tauri::image::Image::from_bytes(icon_bytes) {
-                    let _ = window.set_icon(Some(icon));
+                    let _ = window.set_icon(icon);
                 }
             }
 
