@@ -143,63 +143,122 @@ class LiveDashboard:
 
     @staticmethod
     def _build_strat_panel():
-        from config.settings import Settings, TradingConfig
+        from config.settings import Settings
         from strategies.mean_reversion import TF_CONFIGS
+        from strategies.order_flow_momentum import OrderFlowMomentumStrategy
 
         settings = Settings()
         tc = settings.trading
+        sym0 = settings.symbols[0] if settings.symbols else None
 
-        # Top: capital & risk from config
-        t = Table(show_header=False, box=None, expand=True, padding=(0, 1))
-        t.add_column(style="bold cyan", width=14, justify="right")
-        t.add_column(width=28)
-        t.add_column(style="bold cyan", width=14, justify="right")
-        t.add_column(width=28)
+        # ── Global Parameters ──
+        t = Table(show_header=True, box=box.SIMPLE_HEAVY, expand=True, padding=(0, 1),
+                  header_style="bold cyan")
+        t.add_column("Parameter", width=16)
+        t.add_column("Value", width=18)
+        t.add_column("Parameter", width=16)
+        t.add_column("Value", width=18)
+        t.add_column("Parameter", width=16)
+        t.add_column("Value", width=18)
 
         syms = ", ".join(s.symbol for s in settings.symbols)
-        lev = settings.symbols[0].leverage if settings.symbols else 1
-        t.add_row("Capital", f"${tc.initial_capital:.0f} {syms} {lev}x lev",
-                  "Risk/trade", f"{tc.risk_per_trade_pct*100:.1f}% (${tc.initial_capital * tc.risk_per_trade_pct:.2f})")
-        t.add_row("Max DD", f"{tc.max_drawdown_pct*100:.0f}%",
-                  "Vol target", f"{tc.vol_target_annual*100:.0f}% annual")
-        t.add_row("", "", "", "")
+        lev = sym0.leverage if sym0 else 1
+        max_pos = f"${sym0.max_position_usd:,.0f}" if sym0 else "N/A"
 
-        # Strategies from config
-        t2 = Table(show_header=False, box=None, expand=True, padding=(0, 1))
-        t2.add_column(style="bold", width=10, justify="right")
-        t2.add_column()
+        t.add_row(
+            "Capital", f"[bold]${tc.initial_capital:.0f}[/]",
+            "Risk/trade", f"[bold]{tc.risk_per_trade_pct*100:.1f}%[/] (${tc.initial_capital * tc.risk_per_trade_pct:.2f})",
+            "Max DD", f"[bold red]{tc.max_drawdown_pct*100:.0f}%[/] (${tc.initial_capital * tc.max_drawdown_pct:.2f})",
+        )
+        t.add_row(
+            "Symbols", f"[bold]{syms}[/]",
+            "Leverage", f"[bold]{lev}x[/]",
+            "Max position", f"[bold]{max_pos}[/]",
+        )
+        t.add_row(
+            "Vol target", f"{tc.vol_target_annual*100:.0f}% annual",
+            "Slippage", f"{tc.slippage_bps:.0f} bps",
+            "Fees", f"M:{tc.maker_fee*10000:.1f} T:{tc.taker_fee*10000:.1f} bps",
+        )
+        t.add_row(
+            "Kelly", f"[{tc.kelly_floor_pct*100:.1f}%-{tc.kelly_ceiling_pct*100:.1f}%] (min {tc.kelly_min_trades} trades)",
+            "Max exposure", f"{tc.max_total_exposure_pct*100:.0f}%",
+            "Eval interval", f"{tc.strategy_interval_sec:.0f}s",
+        )
 
-        # MR — read from TF_CONFIGS dynamically
-        mr_alloc = tc.allocation_mean_reversion * 100
-        tf_names = ", ".join(cfg.name for cfg in TF_CONFIGS.values())
-        t2.add_row(f"[green]MR {mr_alloc:.0f}%", f"[green]Multi-TF Divergence[/] -- scans {tf_names}")
+        # ── MR: Multi-TF Divergence ──
+        mr = Table(show_header=True, box=box.SIMPLE, expand=True, padding=(0, 1),
+                   header_style="bold green")
+        mr.add_column("TF", width=4)
+        mr.add_column("RSI OS/OB", width=10)
+        mr.add_column("Recovery", width=9)
+        mr.add_column("Lookback", width=9)
+        mr.add_column("ADX max", width=8)
+        mr.add_column("SL (ATR)", width=9)
+        mr.add_column("TP (ATR)", width=9)
+        mr.add_column("R:R", width=5)
+        mr.add_column("Risk %", width=7)
+        mr.add_column("Cache", width=6)
 
         for tf_key, cfg in TF_CONFIGS.items():
-            t2.add_row(
-                f"  {cfg.name}",
-                f"RSI {cfg.rsi_oversold:.0f}/{cfg.rsi_overbought:.0f} | "
-                f"SL {cfg.sl_mult}x TP {cfg.tp_mult}x ATR | "
-                f"Risk {cfg.risk_pct*100:.0f}% | ADX<{cfg.adx_max:.0f}"
+            rr = cfg.tp_mult / cfg.sl_mult if cfg.sl_mult > 0 else 0
+            mr.add_row(
+                f"[bold]{cfg.name}[/]",
+                f"{cfg.rsi_oversold:.0f}/{cfg.rsi_overbought:.0f}",
+                f">{cfg.rsi_recovery:.0f}",
+                f"{cfg.lookback} bars",
+                f"<{cfg.adx_max:.0f}",
+                f"{cfg.sl_mult}x",
+                f"{cfg.tp_mult}x",
+                f"1:{rr:.1f}",
+                f"[bold]{cfg.risk_pct*100:.0f}%[/]",
+                f"{cfg.cache_ttl}s",
             )
 
-        t2.add_row("", "")
+        mr_alloc = tc.allocation_mean_reversion * 100
+        mr_panel = Panel(mr, title=f"[bold green]Mean Reversion {mr_alloc:.0f}% -- Multi-TF RSI Divergence[/]",
+                         border_style="green", box=box.ROUNDED)
 
-        # OFM
+        # ── OFM: Order Flow Momentum ──
+        ofm_inst = OrderFlowMomentumStrategy(tc)
+        ofm = Table(show_header=True, box=box.SIMPLE, expand=True, padding=(0, 1),
+                    header_style="bold magenta")
+        ofm.add_column("Component", width=14)
+        ofm.add_column("Detail", width=50)
+        ofm.add_column("Weight", width=8)
+
+        ofm.add_row("OBI", "Imbalance >0.10 + delta >0.01 = directional pressure", "[bold]40%[/]")
+        ofm.add_row("Microprice", "Fair value divergence from mid (ATR-scaled threshold)", "[bold]30%[/]")
+        ofm.add_row("Hawkes", f"Spike ratio >2.5 (low VPIN) / >3.5 (high VPIN) + OBI confirm", "[bold]20%[/]")
+        ofm.add_row("Depth ratio", "Bid/ask depth >2.0 (long) / <0.5 (short)", "[bold]10%[/]")
+        ofm.add_row("[dim]---[/]", "[dim]---[/]", "[dim]---[/]")
+        ofm.add_row("Min score", "[bold]0.55[/] (OBI + 1 other signal minimum)", "")
+        ofm.add_row("Trend scalar", "With: x1.1 | Against: x0.3 | Neutral: x1.0 (4H+1D Binance)", "")
+        ofm.add_row("SL / TP", "[bold]1.5x / 3.0x ATR[/] (R:R 1:2.0)", "")
+        ofm.add_row("Hold time", "30s-180s (momentum scalping)", "")
+        ofm.add_row("Cooldown", f"{ofm_inst.COOLDOWN_SEC}s between trades", "")
+        ofm.add_row("Filters", "VPIN <0.75 | Spread <15bps | Hawkes count >=3 | Kyle impact <1.5", "")
+
         ofm_alloc = tc.allocation_order_flow_momentum * 100
-        t2.add_row(f"[magenta]OFM {ofm_alloc:.0f}%", "[magenta]Order Flow Momentum[/] -- weighted scoring")
+        ofm_panel = Panel(ofm, title=f"[bold magenta]Order Flow Momentum {ofm_alloc:.0f}% -- Microstructure Scalping[/]",
+                          border_style="magenta", box=box.ROUNDED)
 
-        # Disabled strategies
+        # ── Disabled ──
         disabled = []
         if tc.allocation_trend_following == 0:
-            disabled.append("Trend Following")
+            disabled.append("Trend Following (0% -- breakout 0% WR)")
         if tc.allocation_market_making == 0:
-            disabled.append("Market Making")
-        if disabled:
-            t2.add_row("", "")
-            t2.add_row("[dim]Disabled", f"[dim]{', '.join(disabled)}")
+            disabled.append("Market Making (0% -- not profitable with $300)")
 
-        return Panel(Group(t, t2), title="[bold white]Strategy Configuration[/]",
-                     border_style="white", box=box.ROUNDED)
+        disabled_text = Text()
+        for d in disabled:
+            disabled_text.append(f"  [dim]{d}[/]\n")
+
+        return Panel(
+            Group(t, mr_panel, ofm_panel, disabled_text),
+            title="[bold white]Strategy Configuration[/]",
+            border_style="white", box=box.HEAVY,
+        )
 
     def on_trade(self, data):
         self.prev_price = self.price
