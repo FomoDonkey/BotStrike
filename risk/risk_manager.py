@@ -102,6 +102,14 @@ class RiskManager:
         # Trabajar sobre copia para no mutar señal original si es rechazada
         signal = copy.copy(signal)
 
+        # Exit signals ALWAYS pass — closing a position must never be blocked
+        is_exit = (
+            signal.metadata.get("action", "").startswith("exit")
+            or signal.metadata.get("exit_reason")
+        )
+        if is_exit:
+            return signal
+
         # ── Filtro de microestructura (VPIN + Hawkes) ─────────────
         # VPIN alto para MR: no entrar (flujo informado puede romper reversión)
         # Hawkes spike para MR/MM: reducir tamaño o bloquear

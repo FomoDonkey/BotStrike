@@ -246,7 +246,12 @@ class PaperTradingSimulator:
     def _execute_one(self, signal: Signal, sym_config: SymbolConfig) -> Optional[Trade]:
         """Simula ejecucion de una senal individual."""
         pos_key = f"{signal.symbol}_{signal.strategy.value}"
-        is_exit = signal.metadata.get("action") in ("exit_mean_reversion", "trailing_stop_hit", "mm_unwind")
+        action = signal.metadata.get("action", "")
+        is_exit = (
+            action.startswith("exit")  # exit_ofm, exit_mean_reversion, etc.
+            or action in ("trailing_stop_hit", "mm_unwind")
+            or signal.metadata.get("exit_reason") is not None
+        )
 
         # ── Salida de posicion existente ─────────────────────────
         if is_exit:
