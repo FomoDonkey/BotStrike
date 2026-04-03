@@ -288,18 +288,27 @@ def _install_hooks(engine):
                 "type": "trade",
                 "data": serialized,
             })
-            # Send to live logs
-            side = trade.side.value if hasattr(trade.side, 'value') else str(trade.side)
+            # Send to live logs — show position side, not closing side
+            raw_side = trade.side.value if hasattr(trade.side, 'value') else str(trade.side)
             strat = trade.strategy.value if trade.strategy and hasattr(trade.strategy, 'value') else ""
-            pnl_str = f" PnL: ${trade.pnl:+.4f}" if trade.pnl != 0 else ""
+            is_exit = trade.pnl != 0 or trade.fee > 0
+            if is_exit:
+                pos_side = "SHORT" if raw_side == "BUY" else "LONG"
+                pnl_str = f" PnL: ${trade.pnl:+.4f}"
+                msg = f"Close {pos_side} {trade.symbol} @ ${trade.price:,.2f} [{strat}]{pnl_str}"
+                level = "info" if trade.pnl >= 0 else "warn"
+            else:
+                pos_side = "LONG" if raw_side == "BUY" else "SHORT"
+                msg = f"Open {pos_side} {trade.symbol} @ ${trade.price:,.2f} [{strat}]"
+                level = "info"
             state._pending_signals.append({
                 "type": "log_entry",
                 "channel": "system",
                 "data": {
                     "type": "log",
                     "timestamp": time.time(),
-                    "level": "info" if trade.pnl >= 0 else "warn",
-                    "message": f"Trade: {side} {trade.symbol} @ ${trade.price:,.2f} [{strat}]{pnl_str}",
+                    "level": level,
+                    "message": msg,
                 },
             })
 

@@ -82,9 +82,18 @@ def serialize_position(p: Position) -> Dict:
 
 
 def serialize_trade(t: Trade) -> Dict:
+    is_exit = t.pnl != 0 or t.fee > 0 or t.order_id.startswith("paper_exit") or t.order_id.startswith("paper_sl") or t.order_id.startswith("paper_tp")
+    # For display: show the POSITION side, not the closing side
+    # If this is an exit BUY (closing a SHORT), display_side = "SELL" (the original position)
+    if is_exit:
+        display_side = "SELL" if _enum_val(t.side) == "BUY" else "BUY"
+    else:
+        display_side = _enum_val(t.side)
+
     return {
         "symbol": t.symbol,
-        "side": _enum_val(t.side),
+        "side": display_side,
+        "trade_type": "EXIT" if is_exit else "ENTRY",
         "price": t.price,
         "quantity": t.quantity,
         "fee": t.fee,

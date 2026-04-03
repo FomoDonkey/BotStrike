@@ -150,26 +150,30 @@ class MetricsCollector:
 
     def add_trade(self, trade: Trade) -> None:
         self._trades.append(trade)  # deque auto-evicts oldest
-        # Running totals
+        # Running totals — only count EXITS (round-trip completed)
+        # Entry trades have pnl=0 and fee=0; they're not "completed trades"
+        is_exit = trade.pnl != 0 or trade.fee > 0
         self._cumulative_pnl += trade.pnl
         self._cumulative_fees += trade.fee
-        self._cumulative_trade_count += 1
-        if trade.pnl > 0:
-            self._cumulative_win_count += 1
-            self._cumulative_win_pnl += trade.pnl
-        elif trade.pnl < 0:
-            self._cumulative_loss_count += 1
-            self._cumulative_loss_pnl += trade.pnl
-        # Incremental strategy bucket
+        if is_exit:
+            self._cumulative_trade_count += 1
+            if trade.pnl > 0:
+                self._cumulative_win_count += 1
+                self._cumulative_win_pnl += trade.pnl
+            elif trade.pnl < 0:
+                self._cumulative_loss_count += 1
+                self._cumulative_loss_pnl += trade.pnl
+        # Incremental strategy bucket — also only count exits
         st_key = trade.strategy.value if trade.strategy else "UNKNOWN"
         bucket = self._by_strategy.get(st_key)
         if bucket is None:
             bucket = {"trades": 0, "pnl": 0.0, "wins": 0}
             self._by_strategy[st_key] = bucket
-        bucket["trades"] += 1
-        bucket["pnl"] += trade.pnl
-        if trade.pnl > 0:
-            bucket["wins"] += 1
+        if is_exit:
+            bucket["trades"] += 1
+            bucket["pnl"] += trade.pnl
+            if trade.pnl > 0:
+                bucket["wins"] += 1
         # Incremental daily PnL for Sharpe
         day = int(trade.timestamp // 86400)
         self._daily_pnl[day] = self._daily_pnl.get(day, 0.0) + trade.pnl

@@ -36,11 +36,14 @@ export function useWebSocketBridge() {
         // Alert on trade fill
         const t = msg.data;
         if (t) {
+          const isExit = t.trade_type === "EXIT" || (t.pnl ?? 0) !== 0;
+          const label = isExit ? `Close ${t.side}` : `Open ${t.side}`;
+          const pnlStr = isExit ? ` — PnL: $${(t.pnl ?? 0).toFixed(4)}` : "";
           useAlertStore.getState().addAlert({
-            level: (t.pnl ?? 0) >= 0 ? "info" : "warning",
-            title: "Trade Executed",
-            message: `${t.side} ${t.symbol} @ $${t.price?.toFixed(2)} — PnL: $${(t.pnl ?? 0).toFixed(2)}`,
-            sound: (t.pnl ?? 0) >= 0 ? "profit" : "loss",
+            level: isExit ? ((t.pnl ?? 0) >= 0 ? "info" : "warning") : "info",
+            title: isExit ? "Position Closed" : "Position Opened",
+            message: `${label} ${t.symbol} @ $${t.price?.toFixed(2)}${pnlStr}`,
+            sound: isExit ? ((t.pnl ?? 0) >= 0 ? "profit" : "loss") : "trade",
           });
         }
       } else if (msg.type === "signal") {
