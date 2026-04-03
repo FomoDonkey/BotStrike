@@ -407,8 +407,8 @@ async def market_broadcast_loop():
 
 
 async def candle_broadcast_loop():
-    """Broadcast 1m candles from market data collector."""
-    _last_candle_hash: Dict[str, int] = {}
+    """Broadcast candles from market data collector."""
+    _last_candle_hash: Dict[str, str] = {}
 
     while True:
         try:
@@ -416,34 +416,42 @@ async def candle_broadcast_loop():
                 for sym_config in state.engine.settings.symbols:
                     symbol = sym_config.symbol
                     df = state.engine.market_data.get_dataframe(symbol)
-                    if df is None or df.empty:
+                    if df is None or df.empty or len(df) < 2:
                         continue
 
-                    rows = df.tail(60)  # Last 60 candles (1h for 1m bars)
-                    # Skip broadcast if data hasn't changed (full OHLC hash)
+                    rows = df.tail(200)  # More history for chart
+
+                    # Hash to avoid re-sending identical data
                     last = rows.iloc[-1]
-                    cache_key = f"{len(rows)}_{last.get('open',0)}_{last.get('high',0)}_{last.get('low',0)}_{last.get('close',0)}"
+                    ts_val = last.get("timestamp", 0)
+                    cache_key = f"{len(rows)}_{ts_val}_{last.get('close',0)}"
                     if _last_candle_hash.get(symbol) == cache_key:
                         continue
                     _last_candle_hash[symbol] = cache_key
 
                     candles = []
                     for _, row in rows.iterrows():
+                        ts = float(row.get("timestamp", 0))
+                        # lightweight-charts needs time in seconds (Unix)
+                        if ts > 1e12:
+                            ts = ts / 1000  # Convert ms to s
                         candles.append({
-                            "time": float(row.get("timestamp", 0)),
+                            "time": int(ts),  # Must be integer seconds for lightweight-charts
                             "open": float(row.get("open", 0)),
                             "high": float(row.get("high", 0)),
                             "low": float(row.get("low", 0)),
                             "close": float(row.get("close", 0)),
                             "volume": float(row.get("volume", 0)),
                         })
-                    await state.channels.broadcast("market", {
-                        "type": "candles",
-                        "symbol": symbol,
-                        "data": candles,
-                    })
+
+                    if candles:
+                        await state.channels.broadcast("market", {
+                            "type": "candles",
+                            "symbol": symbol,
+                            "data": candles,
+                        })
         except Exception as e:
-            logger.debug("candle_broadcast_error", error=str(e))
+            logger.warning("candle_broadcast_error", error=str(e), error_type=type(e).__name__)
         await asyncio.sleep(5)
 
 
@@ -493,9 +501,9 @@ async def system_broadcast_loop():
                 "clients_connected": state.channels.client_count,
             })
 
-            # Send periodic engine status to Live Logs (every ~30s = 10 health cycles)
+            # Send periodic engine status to Live Logs (every ~15s = 5 health cycles)
             _log_counter += 1
-            if _log_counter >= 10 and state.engine and state.running:
+            if _log_counter >= 5 and state.engine and state.running:
                 _log_counter = 0
                 m = state.engine.metrics.get_metrics()
                 rm = state.engine.risk_manager
@@ -706,17 +714,38 @@ async def get_trades(limit: int = 100):
 
 @app.get("/api/data/catalog")
 async def get_data_catalog():
-    try:
-        catalog_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "data", "catalog.json"
-        )
-        if os.path.exists(catalog_path):
-            with open(catalog_path, "r") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {"datasets": []}
+    # Try multiple paths (project dir, cwd, exe dir)
+    candidates = [
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "catalog.json"),
+        os.path.join(os.getcwd(), "data", "catalog.json"),
+    ]
+    for catalog_path in candidates:
+        try:
+            if os.path.exists(catalog_path):
+                with open(catalog_path, "r") as f:
+                    return json.load(f)
+        except Exception:
+            continue
+
+    # Build catalog from binance klines if available
+    data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "binance", "klines")
+    if not os.path.exists(data_dir):
+        data_dir = os.path.join(os.getcwd(), "data", "binance", "klines")
+    datasets = []
+    if os.path.exists(data_dir):
+        for sym_dir in os.listdir(data_dir):
+            sym_path = os.path.join(data_dir, sym_dir)
+            if os.path.isdir(sym_path):
+                for f in os.listdir(sym_path):
+                    if f.endswith(".parquet"):
+                        fpath = os.path.join(sym_path, f)
+                        size_mb = os.path.getsize(fpath) / (1024 * 1024)
+                        datasets.append({
+                            "symbol": sym_dir, "type": f.replace(".parquet", ""),
+                            "records": 0, "size_mb": round(size_mb, 2),
+                            "date_range": "",
+                        })
+    return {"datasets": datasets}
 
 
 # ── Main ─────────────────────────────────────────────────────────
