@@ -403,19 +403,20 @@ async def metrics_broadcast_loop():
     while True:
         try:
             if state.engine and state.running:
-                m = state.engine.metrics
-                equity = float(getattr(m, "equity", 300))
-                pnl = float(getattr(m, "net_pnl", 0))
+                # MetricsCollector.get_metrics() returns a dict, not attributes
+                m = state.engine.metrics.get_metrics()
+                equity = float(state.engine.risk_manager.current_equity)
+                pnl = float(m.get("total_pnl", 0))
                 await state.channels.broadcast("trading", {
                     "type": "metrics",
                     "timestamp": time.time(),
                     "equity": equity,
                     "pnl": pnl,
-                    "total_trades": int(getattr(m, "total_trades", 0)),
-                    "win_rate": float(getattr(m, "win_rate", 0)),
-                    "sharpe_ratio": float(getattr(m, "sharpe_ratio", 0)),
-                    "max_drawdown": float(getattr(m, "max_drawdown", 0)),
-                    "total_fees": float(getattr(m, "total_fees", 0)),
+                    "total_trades": int(m.get("total_trades", 0)),
+                    "win_rate": float(m.get("win_rate", 0)),
+                    "sharpe_ratio": float(m.get("sharpe_ratio", 0)),
+                    "max_drawdown": float(m.get("max_drawdown", 0)),
+                    "total_fees": float(m.get("total_fees", 0)),
                 })
                 state.equity = equity
                 state.pnl = pnl
@@ -562,20 +563,20 @@ async def get_performance():
     if not state.engine:
         return {"error": "Engine not started"}
 
-    m = state.engine.metrics
-    equity_curve = list(getattr(m, "_equity_curve", []))[-500:]
+    m = state.engine.metrics.get_metrics()
+    equity_curve = list(state.engine.metrics._equity_curve)[-500:]
 
     return {
-        "equity": float(getattr(m, "equity", 300)),
-        "pnl": float(getattr(m, "net_pnl", 0)),
-        "total_trades": int(getattr(m, "total_trades", 0)),
-        "win_rate": float(getattr(m, "win_rate", 0)),
-        "sharpe_ratio": float(getattr(m, "sharpe_ratio", 0)),
-        "max_drawdown": float(getattr(m, "max_drawdown", 0)),
-        "total_fees": float(getattr(m, "total_fees", 0)),
-        "avg_win": float(getattr(m, "avg_win", 0)),
-        "avg_loss": float(getattr(m, "avg_loss", 0)),
-        "profit_factor": float(getattr(m, "profit_factor", 0)),
+        "equity": float(state.engine.risk_manager.current_equity),
+        "pnl": float(m.get("total_pnl", 0)),
+        "total_trades": int(m.get("total_trades", 0)),
+        "win_rate": float(m.get("win_rate", 0)),
+        "sharpe_ratio": float(m.get("sharpe_ratio", 0)),
+        "max_drawdown": float(m.get("max_drawdown", 0)),
+        "total_fees": float(m.get("total_fees", 0)),
+        "avg_win": float(m.get("avg_win", 0)),
+        "avg_loss": float(m.get("avg_loss", 0)),
+        "profit_factor": float(m.get("profit_factor", 0)),
         "equity_curve": equity_curve,
     }
 
