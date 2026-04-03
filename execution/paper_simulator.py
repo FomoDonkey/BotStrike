@@ -196,6 +196,7 @@ class PaperTradingSimulator:
 
             pnl, fee = pos.close(exit_price, fee_rate)
             close_side = Side.SELL if pos.side == Side.BUY else Side.BUY
+            hold_time = time.time() - pos.open_time if pos.open_time > 0 else 0
 
             trade = Trade(
                 symbol=symbol,
@@ -206,6 +207,13 @@ class PaperTradingSimulator:
                 order_id=f"paper_{trigger.lower()}_{uuid.uuid4().hex[:8]}",
                 strategy=pos.strategy,
                 pnl=pnl,
+                expected_price=pos.entry_price,
+                signal_features={
+                    "entry_price": pos.entry_price,
+                    "hold_time_sec": round(hold_time, 1),
+                    "action": f"exit_{trigger.lower()}",
+                    "exit_reason": trigger,
+                },
             )
             trades.append(trade)
             keys_to_close.append(key)
@@ -275,6 +283,8 @@ class PaperTradingSimulator:
             pnl, fee = pos.close(exit_price, fee_rate)
 
             close_side = Side.SELL if pos.side == Side.BUY else Side.BUY
+            import time as _time
+            hold_time = _time.time() - pos.open_time if pos.open_time > 0 else 0
             trade = Trade(
                 symbol=signal.symbol,
                 side=close_side,
@@ -284,6 +294,13 @@ class PaperTradingSimulator:
                 order_id=f"paper_exit_{uuid.uuid4().hex[:8]}",
                 strategy=signal.strategy,
                 pnl=pnl,
+                expected_price=pos.entry_price,  # Original entry price for tracking
+                signal_features={
+                    "entry_price": pos.entry_price,
+                    "hold_time_sec": round(hold_time, 1),
+                    "action": signal.metadata.get("action", "exit"),
+                    "exit_reason": signal.metadata.get("exit_reason", ""),
+                },
             )
             del self._positions[pos_key]
             self._trade_count += 1

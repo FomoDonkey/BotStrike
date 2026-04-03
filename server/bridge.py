@@ -418,6 +418,7 @@ async def market_broadcast_loop():
 async def candle_broadcast_loop():
     """Broadcast candles from market data collector."""
     _last_candle_hash: Dict[str, str] = {}
+    import math
 
     while True:
         try:
@@ -428,29 +429,45 @@ async def candle_broadcast_loop():
                     if df is None or df.empty or len(df) < 2:
                         continue
 
-                    rows = df.tail(200)  # More history for chart
+                    # Use numpy arrays directly — faster and avoids pandas NaN issues
+                    n = min(200, len(df))
+                    df_tail = df.tail(n)
 
-                    # Hash to avoid re-sending identical data
-                    last = rows.iloc[-1]
-                    ts_val = last.get("timestamp", 0)
-                    cache_key = f"{len(rows)}_{ts_val}_{last.get('close',0)}"
+                    timestamps = df_tail["timestamp"].values if "timestamp" in df_tail.columns else []
+                    if len(timestamps) == 0:
+                        continue
+
+                    last_ts = float(timestamps[-1])
+                    last_close = float(df_tail["close"].iloc[-1])
+                    cache_key = f"{n}_{last_ts}_{last_close}"
                     if _last_candle_hash.get(symbol) == cache_key:
                         continue
                     _last_candle_hash[symbol] = cache_key
 
                     candles = []
-                    for _, row in rows.iterrows():
-                        ts = float(row.get("timestamp", 0))
-                        # lightweight-charts needs time in seconds (Unix)
+                    opens = df_tail["open"].values
+                    highs = df_tail["high"].values
+                    lows = df_tail["low"].values
+                    closes = df_tail["close"].values
+                    volumes = df_tail["volume"].values if "volume" in df_tail.columns else [0] * n
+
+                    for i in range(len(timestamps)):
+                        ts = float(timestamps[i])
+                        if math.isnan(ts) or ts <= 0:
+                            continue
                         if ts > 1e12:
-                            ts = ts / 1000  # Convert ms to s
+                            ts = ts / 1000
+                        o = float(opens[i])
+                        h = float(highs[i])
+                        lo = float(lows[i])
+                        c = float(closes[i])
+                        v = float(volumes[i])
+                        if any(math.isnan(x) for x in [o, h, lo, c]):
+                            continue
                         candles.append({
-                            "time": int(ts),  # Must be integer seconds for lightweight-charts
-                            "open": float(row.get("open", 0)),
-                            "high": float(row.get("high", 0)),
-                            "low": float(row.get("low", 0)),
-                            "close": float(row.get("close", 0)),
-                            "volume": float(row.get("volume", 0)),
+                            "time": int(ts),
+                            "open": o, "high": h, "low": lo, "close": c,
+                            "volume": v if not math.isnan(v) else 0,
                         })
 
                     if candles:
@@ -461,6 +478,8 @@ async def candle_broadcast_loop():
                         })
         except Exception as e:
             logger.warning("candle_broadcast_error", error=str(e), error_type=type(e).__name__)
+            import traceback
+            traceback.print_exc()
         await asyncio.sleep(5)
 
 
