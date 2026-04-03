@@ -617,10 +617,16 @@ class BotStrike:
                 continue
             # Verificar si la estrategia debe operar
             if not strategy.should_activate(regime):
+                logger.debug("strategy_regime_skip",
+                             strategy=strategy.strategy_type.value,
+                             regime=regime.value, symbol=symbol)
                 continue
             if not self.portfolio_manager.should_strategy_trade(
                 strategy.strategy_type, regime
             ):
+                logger.debug("strategy_portfolio_skip",
+                             strategy=strategy.strategy_type.value,
+                             regime=regime.value, symbol=symbol)
                 continue
 
             # Obtener capital asignado

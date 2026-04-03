@@ -23,6 +23,13 @@
 - Timestamp del auth debe estar dentro de ±3 minutos del servidor.
 - Rate limit details en `/v2/exchangeInfo`, no en página separada.
 
+## Defensive Coding
+- Bare `except: pass` in async loops silently swallows real bugs. Always at least `logger.debug()` so issues surface in dev logs.
+- Chained attribute access like `micro.vpin.vpin` needs null checks at each level — `micro` can be non-None while `micro.vpin` is None.
+- Hawkes timestamps can arrive non-monotonically (WS reconnect, clock skew). Guard `dt <= 0` to avoid negative exponentials.
+- Division by zero in equity curves happens when equity drops to exactly 0 (e.g., liquidation in backtest). `np.where(eq == 0, 1e-10, eq)` is safer than checking afterwards.
+- `position.pnl_pct` can be NaN from division by zero in position tracking — always guard with `pd.isna()` before using in comparisons.
+
 ## Arquitectura
 - Separar completamente market data de estrategias permite cambiar exchange sin tocar lógica.
 - El régimen detector con suavizado (requiere 2 detecciones consecutivas) evita whipsaws costosos.
@@ -283,3 +290,10 @@
 - **Font loading**: `@import url()` must come BEFORE `@import "tailwindcss"` in CSS or the Tailwind layer rules override it.
 - **TypeScript strict + path aliases**: `@/*` mapped to `./src/*` via tsconfig `paths` + vite `resolve.alias`. Both must be configured for it to work.
 - **verbatimModuleSyntax**: Disable in tsconfig when using barrel re-exports or type imports without explicit `type` keyword.
+
+## Signal Generation Calibration (2026-04-03)
+- OFM thresholds were calibrated for Binance/CME liquidity. Strike Finance has much less activity → Hawkes never spiked above 2.5x, OBI never exceeded 0.10, scores never reached 0.55. Solution: recalibrate all thresholds for the actual exchange.
+- MR relied ONLY on RSI divergence (rare pattern, can be absent for days). Added z-score mode as frequent fallback for RANGING regime.
+- Hawkes event count filter of 3/min was too strict for less liquid venues. Lowered to 1.
+- CRITICAL: when strategies evaluate but generate zero signals, there was NO logging. Impossible to diagnose. Added debug logs at every filter/score computation point.
+- With $300 capital, need more trade frequency for statistical feedback. Rare high-conviction signals don't give enough data to calibrate Kelly/RoR.

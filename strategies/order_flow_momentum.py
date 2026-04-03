@@ -35,8 +35,8 @@ logger = structlog.get_logger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────
 COOLDOWN_SEC = 30           # Seconds between trades
-MIN_ENTRY_SCORE = 0.55      # Minimum score to enter
-EXIT_SCORE_THRESHOLD = 0.35 # Close if score drops below this (breathing room for noise)
+MIN_ENTRY_SCORE = 0.40      # Lowered: Strike has less liquidity than Binance/CME
+EXIT_SCORE_THRESHOLD = 0.25 # Proportional to entry threshold
 SL_SPREAD_MULT = 2.0        # SL = 2x spread
 TP_SPREAD_MULT = 4.0        # TP = 4x spread (R:R 2:1)
 MAX_SL_BPS = 25.0           # Emergency hard cap: 25 bps max loss
@@ -96,6 +96,7 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         kelly_pct = kwargs.get("kelly_risk_pct")
 
         if not micro or not obi:
+            logger.debug("ofm_no_microstructure", symbol=symbol, has_micro=bool(micro), has_obi=bool(obi))
             return signals
 
         obi_imbalance = obi.weighted_imbalance if obi else 0
@@ -147,13 +148,18 @@ class OrderFlowMomentumStrategy(BaseStrategy):
 
         # ── Quality filters ──────────────────────────────────────
         if vpin > 0.75:
+            logger.debug("ofm_filtered", symbol=symbol, reason="vpin_toxic", vpin=round(vpin, 3))
             return signals
-        if hawkes_count < 3:
+        # Hawkes count: lowered from 3→1 for less liquid exchanges
+        if hawkes_count < 1:
+            logger.debug("ofm_filtered", symbol=symbol, reason="no_hawkes_events", count=hawkes_count)
             return signals
         if micro.kyle_lambda and micro.kyle_lambda.is_valid:
             if micro.kyle_lambda.impact_stress > 1.5:
+                logger.debug("ofm_filtered", symbol=symbol, reason="impact_stress", stress=round(micro.kyle_lambda.impact_stress, 2))
                 return signals
-        if spread_bps > 15:
+        if spread_bps > 20:  # Widened from 15→20 bps for less liquid venues
+            logger.debug("ofm_filtered", symbol=symbol, reason="spread_wide", spread_bps=round(spread_bps, 1))
             return signals
 
         # ── SL/TP based on spread (microstructure-calibrated) ────
@@ -161,6 +167,14 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         tp_bps = effective_spread * TP_SPREAD_MULT
         sl_distance = price * sl_bps / 10000
         tp_distance = price * tp_bps / 10000
+
+        # Log scores for diagnostics (every evaluation)
+        logger.debug("ofm_scores", symbol=symbol,
+                     long=round(long_score, 3), short=round(short_score, 3),
+                     threshold=MIN_ENTRY_SCORE,
+                     obi=round(obi_imbalance, 3), microprice=round(microprice_adj_bps, 2),
+                     hawkes=round(hawkes_ratio, 2), depth=round(depth_ratio, 2),
+                     vpin=round(vpin, 3), spread=round(spread_bps, 1))
 
         # ── LONG ─────────────────────────────────────────────────
         if long_score >= MIN_ENTRY_SCORE and long_score > short_score + 0.10:
@@ -256,31 +270,31 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         long_score = 0.0
         short_score = 0.0
 
-        # Signal 1: OBI (40%)
-        if obi_imbalance > 0.10 and obi_delta > 0.01:
-            long_score += 0.40
-        elif obi_imbalance < -0.10 and obi_delta < -0.01:
-            short_score += 0.40
+        # Signal 1: OBI (35%) — lowered imbalance threshold for less liquid venue
+        if obi_imbalance > 0.06 and obi_delta > 0.005:
+            long_score += 0.35
+        elif obi_imbalance < -0.06 and obi_delta < -0.005:
+            short_score += 0.35
 
         # Signal 2: Microprice (30%)
-        microprice_threshold = max(1.5, atr / price * 5000) if price > 0 else 2.0
+        microprice_threshold = max(0.8, atr / price * 3000) if price > 0 else 1.5
         if microprice_adj_bps > microprice_threshold:
             long_score += 0.30
         elif microprice_adj_bps < -microprice_threshold:
             short_score += 0.30
 
-        # Signal 3: Hawkes (20%)
-        hawkes_threshold = 2.5 if vpin < 0.4 else 3.5
-        if hawkes_ratio > hawkes_threshold and obi_imbalance > 0.05:
+        # Signal 3: Hawkes (20%) — lowered threshold for Strike Finance activity levels
+        hawkes_threshold = 1.8 if vpin < 0.4 else 2.5
+        if hawkes_ratio > hawkes_threshold and obi_imbalance > 0.03:
             long_score += 0.20
-        elif hawkes_ratio > hawkes_threshold and obi_imbalance < -0.05:
+        elif hawkes_ratio > hawkes_threshold and obi_imbalance < -0.03:
             short_score += 0.20
 
-        # Signal 4: Depth (10%)
-        if depth_ratio > 2.0:
-            long_score += 0.10
-        elif depth_ratio < 0.5:
-            short_score += 0.10
+        # Signal 4: Depth (15%) — increased weight, reliable signal on less liquid books
+        if depth_ratio > 1.5:
+            long_score += 0.15
+        elif depth_ratio < 0.67:
+            short_score += 0.15
 
         # Trend scalar
         daily_trend = 0

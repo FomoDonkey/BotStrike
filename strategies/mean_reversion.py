@@ -306,7 +306,16 @@ class MeanReversionStrategy(BaseStrategy):
         kelly_pct = kwargs.get("kelly_risk_pct")
         obi = kwargs.get("obi")
 
-        # Scan all timeframes — highest TF first (priority)
+        # ── Mode 1: Z-Score Mean Reversion (frequent, base signal) ──
+        zscore_signal = self._check_zscore_entry(
+            symbol, df, price, regime, sym_config, allocated_capital,
+            kelly_pct, obi,
+        )
+        if zscore_signal:
+            signals.append(zscore_signal)
+            return signals  # Z-score fires fast; don't also scan divergences
+
+        # ── Mode 2: Multi-TF RSI Divergence (rare, high conviction) ──
         best_signal = None
         best_tf_priority = -1
 
@@ -469,6 +478,112 @@ class MeanReversionStrategy(BaseStrategy):
                 ))
 
         return signals
+
+    def _check_zscore_entry(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        price: float,
+        regime: MarketRegime,
+        allocated_capital: float,
+        kelly_pct: Optional[float],
+        obi,
+    ) -> Optional[Signal]:
+        """Z-score mean reversion: buy when price is N std below SMA, sell when above.
+
+        This is the bread-and-butter MR signal — fires more frequently than
+        RSI divergence, with tighter stops and smaller position sizes.
+        Only activates in RANGING regime (highest edge for MR).
+        """
+        if regime != MarketRegime.RANGING:
+            return None
+
+        if len(df) < 50:
+            return None
+
+        current = df.iloc[-1]
+        atr = float(current.get("atr", 0))
+        adx = float(current.get("adx", 0))
+        rsi = float(current.get("rsi", 50))
+
+        if pd.isna(atr) or atr <= 0 or pd.isna(adx):
+            return None
+
+        # Only in low-trend environment (ADX < 30)
+        if adx > 30:
+            return None
+
+        # Z-score: (price - SMA) / std
+        close = df["close"].values
+        lookback = min(100, len(close))
+        window = close[-lookback:]
+        sma = float(np.mean(window))
+        std = float(np.std(window))
+        if std <= 0:
+            return None
+
+        zscore = (price - sma) / std
+
+        # Entry thresholds
+        entry_z = 2.0     # Enter at 2 std deviation
+        exit_z = 0.5      # TP at 0.5 std (mean reversion target)
+
+        # RSI confirmation: don't buy if RSI not oversold, don't sell if not overbought
+        bull = zscore < -entry_z and rsi < 35
+        bear = zscore > entry_z and rsi > 65
+
+        if not bull and not bear:
+            logger.debug("mr_zscore_skip", symbol=symbol,
+                         zscore=round(zscore, 2), rsi=round(rsi, 1), adx=round(adx, 1))
+            return None
+
+        # Position sizing — conservative for z-score (smaller than divergence)
+        risk_pct = 0.01  # 1% risk per z-score trade
+        sl_mult = 1.5     # Tighter SL than divergence
+        tp_mult = 2.5     # Mean reversion target
+
+        if bull:
+            stop_loss = price - sl_mult * atr
+            take_profit = price + tp_mult * atr
+            side = Side.BUY
+            trigger = "zscore_bull"
+        else:
+            stop_loss = price + sl_mult * atr
+            take_profit = price - tp_mult * atr
+            side = Side.SELL
+            trigger = "zscore_bear"
+
+        size = self._calc_position_size(
+            allocated_capital, price, stop_loss,
+            2,  # Conservative leverage for z-score
+            kelly_risk_pct=risk_pct,
+        )
+        size_usd = size * price
+        if size_usd < 10:
+            return None
+
+        strength = min(abs(zscore) / 3.0, 1.0)  # Normalize strength
+
+        logger.info("mr_zscore_entry", symbol=symbol, side=side.value,
+                    zscore=round(zscore, 2), rsi=round(rsi, 1), adx=round(adx, 1),
+                    size_usd=round(size_usd, 2))
+
+        return Signal(
+            strategy=self.strategy_type, symbol=symbol,
+            side=side, strength=strength,
+            entry_price=price, stop_loss=stop_loss, take_profit=take_profit,
+            size_usd=size_usd,
+            metadata={
+                "trigger": trigger,
+                "zscore": round(zscore, 2),
+                "rsi": round(rsi, 1),
+                "adx": round(adx, 1),
+                "sma": round(sma, 2),
+                "std": round(std, 4),
+                "risk_pct": risk_pct,
+                "obi": round(obi.weighted_imbalance, 3) if obi else 0,
+            },
+        )
 
     def _get_tf_data(
         self, symbol: str, df: pd.DataFrame, tf_key: str, cfg: TFConfig,
