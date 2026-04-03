@@ -183,9 +183,11 @@ async def start_engine(mode: str = "paper"):
     from main import BotStrike
 
     settings = Settings()
+    settings.use_testnet = False  # Always mainnet for real price data
     is_paper = mode == "paper"
     is_dry_run = mode == "dry_run"
 
+    # Identical config to: python main.py --paper --binance --no-testnet
     state.engine = BotStrike(
         settings=settings,
         dry_run=is_dry_run,
@@ -302,6 +304,33 @@ def _install_hooks(engine):
             })
 
         engine._process_paper_fill = patched_paper_fill
+
+    # Intercept signal logging to broadcast to desktop
+    original_log_signal = engine.trading_logger.log_signal
+
+    def patched_log_signal(signal):
+        original_log_signal(signal)
+        state._pending_signals.append({
+            "type": "signal",
+            "data": serialize_signal(signal),
+        })
+        # Also send to live logs
+        side = signal.side.value if hasattr(signal.side, 'value') else str(signal.side)
+        strat = signal.strategy.value if signal.strategy and hasattr(signal.strategy, 'value') else ""
+        is_exit = signal.metadata.get("action", "").startswith("exit") or signal.metadata.get("exit_reason")
+        if not is_exit:
+            state._pending_signals.append({
+                "type": "log_entry",
+                "channel": "system",
+                "data": {
+                    "type": "log",
+                    "timestamp": time.time(),
+                    "level": "info",
+                    "message": f"Signal: {side} {signal.symbol} @ ${signal.entry_price:,.2f} str={signal.strength:.2f} [{strat}]",
+                },
+            })
+
+    engine.trading_logger.log_signal = patched_log_signal
 
 
 async def _broadcast_symbol_state(engine, symbol: str):
