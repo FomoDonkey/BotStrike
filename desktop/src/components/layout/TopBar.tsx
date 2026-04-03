@@ -60,11 +60,14 @@ export function TopBar() {
     pnl: s.metrics.pnl,
     win_rate: s.metrics.win_rate,
   })));
-  const { mode, wsConnected, uptimeSec } = useSystemStore(useShallow((s) => ({
+  const { mode, wsConnected, bridgeConnected, uptimeSec } = useSystemStore(useShallow((s) => ({
     mode: s.mode,
     wsConnected: s.wsConnected,
+    bridgeConnected: s.bridgeConnected,
     uptimeSec: s.uptimeSec,
   })));
+  const hasPrices = useMarketStore((s) => Object.keys(s.prices).length > 0);
+  const isConnected = bridgeConnected && (wsConnected || hasPrices);
   const regime = useRiskStore((s) => s.regime);
 
   return (
@@ -116,8 +119,8 @@ export function TopBar() {
           {mode}
         </span>
         <div className="flex items-center gap-1.5">
-          <PulsingDot active={wsConnected} />
-          {wsConnected ? <Wifi className="w-3 h-3 text-accent" /> : <WifiOff className="w-3 h-3 text-loss" />}
+          <PulsingDot active={isConnected} />
+          {isConnected ? <Wifi className="w-3 h-3 text-accent" /> : <WifiOff className="w-3 h-3 text-loss" />}
         </div>
         <div className="flex items-center gap-1 text-text-muted">
           <Clock className="w-3 h-3" />

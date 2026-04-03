@@ -6,6 +6,7 @@ import { useSystemStore } from "@/stores/systemStore";
 import { formatDuration, cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { getChannel } from "@/lib/ws";
+import { useMarketStore } from "@/stores/marketStore";
 import { Monitor, Cpu, Wifi, WifiOff, Clock, Users, Activity, Play, Square, RefreshCw } from "lucide-react";
 
 interface LogEntry {
@@ -149,7 +150,7 @@ export function SystemPage() {
           <div className="space-y-3">
             {[
               { name: "Bridge Server", connected: system.bridgeConnected, detail: "localhost:9420" },
-              { name: "Market Data (Binance)", connected: system.wsConnected, detail: "stream.binance.com" },
+              { name: "Market Data (Binance)", connected: system.wsConnected || Object.keys(useMarketStore.getState().prices).length > 0, detail: "stream.binance.com" },
             ].map((c) => (
               <div key={c.name} className="flex items-center justify-between p-3 rounded-lg bg-white/[0.02]">
                 <div className="flex items-center gap-3">

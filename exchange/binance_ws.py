@@ -39,6 +39,7 @@ class BinanceWebSocket:
         self.symbols = symbols or ["BTC-USD", "ETH-USD", "ADA-USD"]
         self._callbacks: Dict[str, List[Callable]] = {}
         self._running = False
+        self._connected = False  # Bridge reads this for health status
         self._ws = None
         self._reconnect_delay = 1
         self._max_reconnect_delay = 30
@@ -81,6 +82,7 @@ class BinanceWebSocket:
                 async with websockets.connect(url, ping_interval=20) as ws:
                     self._ws = ws
                     self._reconnect_delay = 1
+                    self._connected = True
                     logger.info("binance_ws_connected", streams=len(streams))
                     await self._emit("connected", {})
                     if self._on_market_connect_cb:
@@ -102,6 +104,7 @@ class BinanceWebSocket:
                             continue
 
             except (websockets.exceptions.ConnectionClosed, OSError) as e:
+                self._connected = False
                 if not self._running:
                     break
                 logger.warning("binance_ws_disconnected", error=str(e),

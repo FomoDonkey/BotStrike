@@ -10,12 +10,12 @@ export function ConnectionOverlay() {
 
   // Hide overlay once bridge connects
   useEffect(() => {
-    if (bridgeConnected && engineRunning) {
+    if (bridgeConnected) {
       const t = setTimeout(() => setShow(false), 800);
       return () => clearTimeout(t);
     }
     if (!dismissed) setShow(true);
-  }, [bridgeConnected, engineRunning, dismissed]);
+  }, [bridgeConnected, dismissed]);
 
   if (!show) return null;
 

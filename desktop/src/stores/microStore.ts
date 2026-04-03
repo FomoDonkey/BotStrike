@@ -33,7 +33,7 @@ export const useMicroStore = create<MicroState>((set) => ({
         arr = [data];
       } else if (prev.length >= MAX_MICRO_HISTORY) {
         // Reuse array, shift out oldest, push new
-        arr = prev.slice(-(MAX_MICRO_HISTORY - 1));
+        arr = prev.slice(1); // Remove oldest item
         arr.push(data);
       } else {
         arr = [...prev, data];
