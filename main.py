@@ -611,6 +611,16 @@ class BotStrike:
         # 2. Generar señales de cada estrategia (MR + TF — MM en _mm_loop)
         all_signals: List[Signal] = []
 
+        # Check if ANY strategy already has a position on this symbol
+        # to prevent multiple strategies from trading the same symbol simultaneously
+        symbol_has_position = False
+        if self.paper_sim:
+            for strat_type in [StrategyType.MEAN_REVERSION, StrategyType.ORDER_FLOW_MOMENTUM,
+                               StrategyType.TREND_FOLLOWING]:
+                if self.paper_sim.get_position(symbol, strat_type) is not None:
+                    symbol_has_position = True
+                    break
+
         for strategy in self.strategies:
             # MM se maneja en _mm_loop (refresh 500ms, no aqui cada 5s)
             if strategy.strategy_type == StrategyType.MARKET_MAKING:
@@ -640,6 +650,14 @@ class BotStrike:
             else:
                 # Live: exchange has one aggregate position per symbol
                 current_pos = self._positions.get(symbol)
+
+            # Block new entries if another strategy already has a position on this symbol
+            # (exits are always allowed — must be able to close existing positions)
+            if symbol_has_position and current_pos is None:
+                logger.debug("strategy_symbol_locked",
+                             strategy=strategy.strategy_type.value,
+                             symbol=symbol, reason="another_strategy_has_position")
+                continue
 
             # Kelly risk fraction para esta estrategia
             kelly_pct = self.risk_manager.get_kelly_risk_pct(strategy.strategy_type)
@@ -727,6 +745,13 @@ class BotStrike:
         asyncio.ensure_future(self.notifier.notify_trade(trade))
         if trade.strategy:
             self.portfolio_manager.update_strategy_pnl(trade.strategy, trade.pnl)
+        # Notify strategies about SL/TP exits so they can update cooldowns
+        # (strategy-generated exits already track this internally)
+        is_sl_tp = trade.signal_features.get("exit_reason") in ("SL", "TP")
+        if is_sl_tp:
+            for strategy in self.strategies:
+                if strategy.strategy_type == trade.strategy and hasattr(strategy, "notify_external_exit"):
+                    strategy.notify_external_exit(trade.symbol, time.time())
         # Capturar equity ANTES de actualizar
         equity_before = self.risk_manager.current_equity
         new_equity = equity_before + trade.pnl

@@ -252,10 +252,17 @@ def _install_hooks(engine):
             is_buy = not data.get("m", False)
             ts = float(data.get("T", time.time() * 1000)) / 1000.0
 
+            # Normalize Binance symbol format to match config (BTCUSDT → BTC-USD)
+            normalized = symbol
+            if symbol.endswith("USDT"):
+                normalized = symbol[:-4] + "-USD"
+            elif symbol.endswith("USD") and "-" not in symbol:
+                normalized = symbol[:-3] + "-USD"
+
             # Atomic swap: latest tick per symbol
-            state._market_queue[symbol] = {
+            state._market_queue[normalized] = {
                 "type": "tick",
-                "symbol": symbol,
+                "symbol": normalized,
                 "price": price,
                 "quantity": qty,
                 "side": "BUY" if is_buy else "SELL",
@@ -429,9 +436,23 @@ async def candle_broadcast_loop():
                     if df is None or df.empty or len(df) < 2:
                         continue
 
-                    # Use numpy arrays directly — faster and avoids pandas NaN issues
-                    n = min(200, len(df))
-                    df_tail = df.tail(n)
+                    # Filter to recent candles only (last 4 hours of 1m data = 240 candles)
+                    # This prevents showing days-old historical data with gaps
+                    now_ts = time.time()
+                    max_age_sec = 4 * 3600  # 4 hours
+                    if "timestamp" in df.columns:
+                        ts_col = df["timestamp"].copy()
+                        # Normalize timestamps to seconds (handle both ms and s formats per-element)
+                        ts_col = ts_col.where(ts_col <= 1e12, ts_col / 1000)
+                        cutoff = now_ts - max_age_sec
+                        df_recent = df[ts_col >= cutoff]
+                        if df_recent.empty or len(df_recent) < 2:
+                            df_recent = df.tail(60)  # Fallback: at least last 60 candles
+                    else:
+                        df_recent = df.tail(240)
+
+                    n = min(240, len(df_recent))
+                    df_tail = df_recent.tail(n)
 
                     timestamps = df_tail["timestamp"].values if "timestamp" in df_tail.columns else []
                     if len(timestamps) == 0:
@@ -464,6 +485,9 @@ async def candle_broadcast_loop():
                         v = float(volumes[i])
                         if any(math.isnan(x) for x in [o, h, lo, c]):
                             continue
+                        # Skip candles with gaps > 5 minutes (missing data periods)
+                        if candles and (int(ts) - candles[-1]["time"]) > 300:
+                            continue  # Skip gap candle, keep continuous history
                         candles.append({
                             "time": int(ts),
                             "open": o, "high": h, "low": lo, "close": c,

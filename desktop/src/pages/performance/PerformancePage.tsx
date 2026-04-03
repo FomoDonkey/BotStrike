@@ -202,7 +202,7 @@ export function PerformancePage() {
                     <td className="py-1 text-text-muted">{t.exit_time ? new Date(t.exit_time).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "---"}</td>
                     <td className="font-mono">{t.symbol}</td>
                     <td className={t.side === "BUY" ? "text-profit" : "text-loss"}>
-                      {t.side}{(t as any).trade_type === "EXIT" ? " (close)" : ""}
+                      {t.side}{t.pnl !== 0 ? " (close)" : ""}
                     </td>
                     <td className="text-right font-mono">${(t.entry_price || 0).toFixed(2)}</td>
                     <td className="text-right font-mono">${(t.exit_price || 0).toFixed(2)}</td>

@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { GlassPanel } from "@/components/shared/GlassPanel";
 import { formatUSD, formatPct, cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+import { BRIDGE_URL } from "@/lib/constants";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -29,7 +30,7 @@ export function BacktestPage() {
     setError(null);
     setResult(null);
     try {
-      const res = await fetch("http://127.0.0.1:9420/api/backtest/run", {
+      const res = await fetch(`${BRIDGE_URL}/api/backtest/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol, strategy }),

@@ -1,17 +1,45 @@
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { GlassPanel } from "@/components/shared/GlassPanel";
 import { STRATEGY_COLORS, STRATEGY_LABELS } from "@/lib/constants";
 import { Brain, ToggleLeft, ToggleRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { api } from "@/lib/api";
 
-const STRATEGIES = [
-  { type: "MEAN_REVERSION", active: true, allocation: 0.40, desc: "RSI + Bollinger + OBI convergence on 15m bars" },
-  { type: "ORDER_FLOW_MOMENTUM", active: true, allocation: 0.60, desc: "OBI + Hawkes + Microprice scalping (30-180s hold)" },
-  { type: "TREND_FOLLOWING", active: false, allocation: 0, desc: "Disabled — breakout generates 0% win rate" },
-  { type: "MARKET_MAKING", active: false, allocation: 0, desc: "Disabled — not profitable with $300 capital" },
+interface StrategyInfo {
+  type: string;
+  active: boolean;
+  allocation: number;
+  name: string;
+}
+
+const FALLBACK_STRATEGIES: StrategyInfo[] = [
+  { type: "MEAN_REVERSION", active: true, allocation: 0.40, name: "MeanReversionStrategy" },
+  { type: "ORDER_FLOW_MOMENTUM", active: true, allocation: 0.60, name: "OrderFlowMomentumStrategy" },
+  { type: "TREND_FOLLOWING", active: false, allocation: 0, name: "TrendFollowingStrategy" },
+  { type: "MARKET_MAKING", active: false, allocation: 0, name: "MarketMakingStrategy" },
 ];
 
+const STRATEGY_DESCS: Record<string, string> = {
+  MEAN_REVERSION: "Multi-timeframe RSI divergence + OBV + OBI confirmation",
+  ORDER_FLOW_MOMENTUM: "OBI + Hawkes + Microprice scalping (15-1800s hold)",
+  TREND_FOLLOWING: "EMA crossover + ADX confirmation (disabled)",
+  MARKET_MAKING: "Avellaneda-Stoikov dynamic spreads (disabled)",
+};
+
 export function StrategiesPage() {
+  const [strategies, setStrategies] = useState<StrategyInfo[]>(FALLBACK_STRATEGIES);
+
+  useEffect(() => {
+    api.strategies()
+      .then((data) => {
+        if (data?.strategies?.length > 0) {
+          setStrategies(data.strategies);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   return (
     <motion.div
       className="space-y-4"
@@ -23,7 +51,7 @@ export function StrategiesPage() {
       </h1>
 
       <div className="grid grid-cols-2 gap-4">
-        {STRATEGIES.map((s) => (
+        {strategies.map((s) => (
           <GlassPanel
             key={s.type}
             className="p-5"
@@ -36,7 +64,7 @@ export function StrategiesPage() {
                   style={{ backgroundColor: STRATEGY_COLORS[s.type] }}
                 />
                 <span className="font-semibold text-text-primary">
-                  {STRATEGY_LABELS[s.type]}
+                  {STRATEGY_LABELS[s.type] || s.type}
                 </span>
               </div>
               {s.active ? (
@@ -45,7 +73,9 @@ export function StrategiesPage() {
                 <ToggleLeft className="w-6 h-6 text-text-muted" />
               )}
             </div>
-            <p className="text-xs text-text-secondary mb-4">{s.desc}</p>
+            <p className="text-xs text-text-secondary mb-4">
+              {STRATEGY_DESCS[s.type] || s.name}
+            </p>
             <div className="flex items-center justify-between text-xs">
               <span className="text-text-muted">Allocation</span>
               <div className="flex items-center gap-2">

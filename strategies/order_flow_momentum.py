@@ -34,16 +34,19 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────
-COOLDOWN_SEC = 60           # Seconds between trades
+COOLDOWN_SEC = 60           # Seconds between trades (applies to strategy exits AND SL/TP exits)
 MIN_ENTRY_SCORE = 0.50      # Needs 2+ microstructure signals confirming
 EXIT_SCORE_THRESHOLD = 0.15 # Exit when signal is mostly gone
-CONFIRM_TICKS = 5           # Score must persist 5 consecutive evals (25s)
+CONFIRM_TICKS = 3           # Score must persist 3 consecutive evals (15s) — was 5 (25s), too slow for scalping
 OBI_DELTA_EMA_ALPHA = 0.05  # Slow EMA: filters noise, only passes sustained flow (alpha=0.05 → ~20 tick halflife)
 SL_SPREAD_MULT = 3.0        # SL = 3x spread
 TP_SPREAD_MULT = 6.0        # TP = 6x spread (R:R 2:1)
 MAX_SL_BPS = 30.0           # Emergency hard cap: 30 bps max loss
 MIN_SPREAD_BPS = 3.0        # Minimum spread for SL/TP calc (floor)
+MIN_SL_ATR_MULT = 0.3       # ATR-based SL floor: SL >= 0.3x ATR (prevents tiny SLs during low spread)
 PROFIT_LOCK_MULT = 2.0      # Lock profit at 2x spread gain
+MAX_HOLD_SEC = 1800          # 30 min max hold — prevent indefinite exposure
+MIN_HOLD_BEFORE_MICRO_EXIT = 30  # Seconds: don't exit on microprice reversal until 30s held (avoids noise exits)
 
 
 @dataclass
@@ -73,6 +76,16 @@ class OrderFlowMomentumStrategy(BaseStrategy):
     def should_activate(self, regime: MarketRegime) -> bool:
         return regime != MarketRegime.UNKNOWN
 
+    def notify_external_exit(self, symbol: str, ts: float) -> None:
+        """Called when paper_sim closes position via SL/TP (not strategy-generated exit).
+
+        Updates cooldown and cleans up state so OFM doesn't re-enter immediately.
+        """
+        self._last_exit_time[symbol] = ts
+        self._states.pop(symbol, None)
+        self._confirm_long[symbol] = 0
+        self._confirm_short[symbol] = 0
+
     def generate_signals(
         self,
         symbol: str,
@@ -92,6 +105,8 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         import time as _time
         current = df.iloc[-1]
         price = snapshot.price if snapshot.price > 0 else float(current["close"])
+        if price <= 0:
+            return signals
         atr = current.get("atr", 0)
         ts = _time.time()
 
@@ -175,8 +190,11 @@ class OrderFlowMomentumStrategy(BaseStrategy):
             return signals
 
         # ── SL/TP based on spread (microstructure-calibrated) ────
-        sl_bps = min(effective_spread * SL_SPREAD_MULT, MAX_SL_BPS)
-        tp_bps = effective_spread * TP_SPREAD_MULT
+        # ATR floor prevents tiny SLs during calm markets or gap vulnerability
+        atr_bps = (atr / price * 10000) if price > 0 else 10.0
+        atr_sl_floor = atr_bps * MIN_SL_ATR_MULT
+        sl_bps = min(max(effective_spread * SL_SPREAD_MULT, atr_sl_floor), MAX_SL_BPS)
+        tp_bps = sl_bps * 2.0  # Maintain 2:1 R:R regardless of SL source
         sl_distance = price * sl_bps / 10000
         tp_distance = price * tp_bps / 10000
 
@@ -364,7 +382,7 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         microprice_adj_bps: float,
         current_spread_bps: float,
     ) -> Optional[Signal]:
-        """Exit based on setup invalidation — no time-based exits."""
+        """Exit based on setup invalidation + max hold time safety."""
         state = self._states.get(symbol)
         if state is None:
             # Position exists but no state (legacy) — use fallback
@@ -381,28 +399,38 @@ class OrderFlowMomentumStrategy(BaseStrategy):
 
         should_exit = False
         exit_reason = ""
+        hold_secs = ts - state.entry_time if state.entry_time > 0 else 0
 
         # Exit 1: Setup invalidated — score fully collapsed
-        # With EMA-smoothed OBI delta, score changes are gradual, not spiky.
-        # No time-based hold — exit purely on setup invalidation.
-        if our_score < EXIT_SCORE_THRESHOLD:
+        # Requires minimum hold time to avoid noise exits in the first few evaluations
+        # after entry. Score can temporarily dip due to EMA lag then recover.
+        if our_score < EXIT_SCORE_THRESHOLD and hold_secs >= MIN_HOLD_BEFORE_MICRO_EXIT:
             should_exit = True
             exit_reason = "score_invalidated"
 
         # Exit 2: Counter-signal — opposing score is now strong
-        elif against_score >= MIN_ENTRY_SCORE and against_score > our_score + 0.15:
+        # Also requires minimum hold time — counter signals can be noise
+        elif against_score >= MIN_ENTRY_SCORE and against_score > our_score + 0.15 and hold_secs >= MIN_HOLD_BEFORE_MICRO_EXIT:
             should_exit = True
             exit_reason = "counter_signal"
 
         # Exit 3: Microprice reversal — fair value shifted against us
-        elif position.side == Side.BUY and microprice_adj_bps < -current_spread_bps:
-            should_exit = True
-            exit_reason = "microprice_reversal"
-        elif position.side == Side.SELL and microprice_adj_bps > current_spread_bps:
-            should_exit = True
-            exit_reason = "microprice_reversal"
+        # Requires minimum hold time to avoid noise exits from tick-level microprice fluctuation
+        if not should_exit and hold_secs >= MIN_HOLD_BEFORE_MICRO_EXIT:
+            if position.side == Side.BUY and microprice_adj_bps < -current_spread_bps:
+                should_exit = True
+                exit_reason = "microprice_reversal"
+            elif position.side == Side.SELL and microprice_adj_bps > current_spread_bps:
+                should_exit = True
+                exit_reason = "microprice_reversal"
 
-        # Exit 4: Profit lock — if we gained > spread, and now giving back
+        # Exit 4: Max hold time — prevent indefinite exposure
+        hold_time = ts - state.entry_time if state.entry_time > 0 else 0
+        if hold_time > MAX_HOLD_SEC:
+            should_exit = True
+            exit_reason = "max_hold_time"
+
+        # Exit 5: Profit lock — if we gained > spread, and now giving back
         profit_lock_bps = state.entry_spread_bps * PROFIT_LOCK_MULT
         profit_lock_pct = profit_lock_bps / 10000
         if state.best_pnl_pct > profit_lock_pct and current_pnl_pct < profit_lock_pct * 0.3:

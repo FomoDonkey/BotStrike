@@ -24,14 +24,14 @@ function Panel({ className, children }: { className?: string; children: React.Re
 
 export function TradingPage() {
   const symbol = "BTC-USD";
-  const price = useMarketStore((s) => s.prices[symbol] || s.prices["BTC-USD"] || 0);
-  const prevPrice = useMarketStore((s) => s.prevPrices[symbol] || s.prevPrices["BTC-USD"] || 0);
-  const orderbook = useMarketStore((s) => s.orderbooks[symbol] || s.orderbooks["BTC-USD"]);
+  const price = useMarketStore((s) => s.prices[symbol] || 0);
+  const prevPrice = useMarketStore((s) => s.prevPrices[symbol] || 0);
+  const orderbook = useMarketStore((s) => s.orderbooks[symbol]);
   const positionsMap = useTradingStore(useShallow((s) => s.positions));
   const positions = useMemo(() => Object.values(positionsMap).flat(), [positionsMap]);
   const signals = useTradingStore(useShallow((s) => s.recentSignals));
   const recentSignals = useMemo(() => [...signals].reverse().slice(0, 10), [signals]);
-  const micro = useMicroStore((s) => s.snapshots[symbol] || s.snapshots["BTC-USD"]);
+  const micro = useMicroStore((s) => s.snapshots[symbol]);
 
   const priceUp = price > prevPrice;
 

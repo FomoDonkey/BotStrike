@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
@@ -15,7 +15,7 @@ import {
   ChevronRight,
   Zap,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 const NAV_ITEMS = [
   { path: "/", icon: LayoutDashboard, label: "Dashboard", shortcut: "1" },
@@ -32,6 +32,25 @@ const NAV_ITEMS = [
 
 export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
+  const navigate = useNavigate();
+
+  // Wire keyboard shortcuts (Alt+1..0 to navigate)
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      // Only with Alt key, and not when typing in an input/textarea
+      if (!e.altKey) return;
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+
+      const item = NAV_ITEMS.find((n) => n.shortcut === e.key);
+      if (item) {
+        e.preventDefault();
+        navigate(item.path);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [navigate]);
 
   return (
     <aside
@@ -77,7 +96,7 @@ export function Sidebar() {
             )}
             {!collapsed && (
               <kbd className="hidden group-hover:inline text-[10px] text-text-muted bg-white/5 rounded px-1.5 py-0.5 font-mono">
-                {item.shortcut}
+                Alt+{item.shortcut}
               </kbd>
             )}
           </NavLink>

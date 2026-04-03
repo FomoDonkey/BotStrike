@@ -17,6 +17,7 @@ export interface PositionData {
 export interface TradeData {
   symbol: string;
   side: string;
+  trade_type: "ENTRY" | "EXIT";
   price: number;
   quantity: number;
   fee: number;

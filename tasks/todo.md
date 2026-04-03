@@ -365,6 +365,45 @@
 - [x] Fix: NaN guard in pnl_pct using pd.isna() (strategies/order_flow_momentum.py)
 - [x] Fix: guard non-monotonic timestamps (dt<=0) in HawkesEstimator.on_event (core/microstructure.py)
 
+## Audit profundo #14: Coherencia terminal↔desktop + OFM strategy fixes (2026-04-03)
+- [x] Fix CRITICAL: Bridge symbol mismatch — Binance ticks sent as "BTCUSDT", normalized to "BTC-USD" (server/bridge.py)
+- [x] Fix CRITICAL: OFM CONFIRM_TICKS 5→3 — 25s confirmation too slow for scalping, now 15s (order_flow_momentum.py)
+- [x] Fix CRITICAL: OFM no max hold time — added MAX_HOLD_SEC=1800 (30min) exit (order_flow_momentum.py)
+- [x] Fix HIGH: OFM SL purely spread-based — added ATR floor (MIN_SL_ATR_MULT=0.3) prevents tiny SLs (order_flow_momentum.py)
+- [x] Fix HIGH: TP now derived from actual SL (sl_bps*2.0) to maintain 2:1 R:R regardless of SL source
+- [x] Fix HIGH: TradeData interface missing trade_type field — caused (t as any) casts (tradingStore.ts)
+- [x] Fix HIGH: StrategiesPage 100% hardcoded — now loads from /api/strategies dynamically (StrategiesPage.tsx)
+- [x] Fix MEDIUM: TopBar dual symbol format hack removed — normalized format only (TopBar.tsx)
+- [x] Fix MEDIUM: DashboardPage dual symbol lookups removed (DashboardPage.tsx)
+- [x] Fix MEDIUM: TradingPage redundant symbol lookups removed (TradingPage.tsx)
+- [x] Fix MEDIUM: PerformancePage (t as any).trade_type → proper t.pnl check (PerformancePage.tsx)
+- [x] Fix MEDIUM: Sidebar keyboard shortcuts wired with Alt+1..0 navigation (Sidebar.tsx)
+- [x] TypeScript: zero errors, Vite build passes
+- [x] Python: all modules compile, 56/57 tests pass (1 pre-existing SL slippage test)
+
+## Audit profundo #15: Rapid open/close root cause — 3 critical bugs found & fixed (2026-04-03)
+- [x] Fix CRITICAL: OFM cooldown NEVER updated on SL/TP exits — paper_sim closes via on_price_update() but OFM._last_exit_time stays stale → immediate re-entry allowed. Added notify_external_exit() callback from _process_paper_fill() (main.py + order_flow_momentum.py)
+- [x] Fix CRITICAL: Microprice reversal exit too sensitive — raw microprice fluctuates ±5-10 bps/sec, but exit threshold was spread_bps (3-5 bps). Added MIN_HOLD_BEFORE_MICRO_EXIT=30s: don't allow microprice reversal exit until position held 30s (order_flow_momentum.py)
+- [x] Fix HIGH: Multiple strategies could open positions on same symbol simultaneously — MR and OFM used separate keys (BTC-USD_MEAN_REVERSION vs BTC-USD_ORDER_FLOW_MOMENTUM). Added symbol-level position lock: if ANY strategy has a position, block new entries from other strategies (main.py)
+- [x] Also resets OFM confirmation counters on external exit to prevent stale score buildup
+- [x] All modules compile, 56/57 tests pass (1 pre-existing), TypeScript zero errors
+
+## Audit profundo #16: Entry-exit timing asymmetry fix (2026-04-03)
+- [x] Fix CRITICAL: Score invalidation exit (Exit 1) had NO minimum hold time — score could temporarily dip below 0.15 in first eval after entry due to EMA lag, causing exit in 5s. Added MIN_HOLD_BEFORE_MICRO_EXIT guard to Exit 1 and Exit 2 (order_flow_momentum.py)
+- [x] Fix HIGH: Counter-signal exit (Exit 2) also had no minimum hold time — opposing score noise triggered instant reversal. Now requires 30s hold
+- [x] Verified: Binance WS already normalizes symbols via SYMBOL_MAP_REVERSE before emitting to handlers — bridge normalization is redundant but harmless
+- [x] Verified: SL/TP checks in paper_sim use correct symbol format (BTC-USD) from normalized WS data
+- [x] Verified: serialize_trade sends trade_type field, desktop TradeData interface includes it
+- [x] All modules compile, 56/57 tests pass (1 pre-existing), TypeScript zero errors
+
+## Audit profundo #17: Final verification + minor fixes (2026-04-03)
+- [x] Fix MEDIUM: OFM early return if price <= 0 — defensive guard prevents division-by-zero edge case (order_flow_momentum.py)
+- [x] Fix MEDIUM: BacktestPage hardcoded URL "http://127.0.0.1:9420" → uses BRIDGE_URL constant (BacktestPage.tsx)
+- [x] Fix MEDIUM: Bridge candle gap detection — changed from clear() to continue (skip gap candle, keep history) (server/bridge.py)
+- [x] Fix MEDIUM: Bridge timestamp filtering — per-element normalization with .where() instead of dividing ALL (server/bridge.py)
+- [x] Verified FALSE POSITIVES from audit: Exit 3 logic is correct (if not should_exit), asyncio has no race conditions (single-threaded), notify_external_exit correctly only for SL/TP (strategy exits already update cooldown)
+- [x] All modules compile, 56/57 tests pass (1 pre-existing), TypeScript zero errors
+
 ## Pendiente / Mejoras futuras
 - [x] ~~Alertas por Telegram/Discord~~ (Telegram implementado)
 - [x] ~~Multi-exchange support~~ (Binance data downloader implementado, trading pendiente)

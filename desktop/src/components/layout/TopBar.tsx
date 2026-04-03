@@ -26,9 +26,8 @@ const ClockDisplay = memo(function ClockDisplay() {
 
 // Price ticker with flash
 const PriceTicker = memo(function PriceTicker({ symbol, label }: { symbol: string; label: string }) {
-  // Support both "BTC-USD" and "BTCUSDT" symbol formats
-  const price = useMarketStore((s) => s.prices[symbol] || s.prices[symbol.replace("USDT", "-USD")] || 0);
-  const prev = useMarketStore((s) => s.prevPrices[symbol] || s.prevPrices[symbol.replace("USDT", "-USD")] || 0);
+  const price = useMarketStore((s) => s.prices[symbol] || 0);
+  const prev = useMarketStore((s) => s.prevPrices[symbol] || 0);
   const [flash, setFlash] = useState<"up" | "down" | null>(null);
   const lastPrice = useRef(0);
 
@@ -75,8 +74,8 @@ export function TopBar() {
     <header className="flex items-center justify-between h-11 px-4 bg-bg-surface/30 backdrop-blur-xl border-b border-white/5 text-xs select-none">
       {/* Left: Prices + Regime */}
       <div className="flex items-center gap-4">
-        <PriceTicker symbol="BTCUSDT" label="BTC" />
-        <PriceTicker symbol="ETHUSDT" label="ETH" />
+        <PriceTicker symbol="BTC-USD" label="BTC" />
+        <PriceTicker symbol="ETH-USD" label="ETH" />
         <div className="w-px h-4 bg-white/5" />
         <div className="flex items-center gap-1.5">
           <span className="text-text-muted">Regime</span>
