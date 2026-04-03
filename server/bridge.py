@@ -472,15 +472,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="BotStrike Bridge", version="1.0.0", lifespan=lifespan)
 
-# Fix #29: Restrict CORS to localhost only
+# CORS: allow all localhost origins (Tauri uses varying origin formats)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:1420",
-        "http://localhost:1420",
-        "https://tauri.localhost",
-        "tauri://localhost",
-    ],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|tauri\.localhost)(:\d+)?$|^tauri://localhost$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
