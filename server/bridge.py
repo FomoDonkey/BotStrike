@@ -668,26 +668,39 @@ async def get_trades(limit: int = 100):
     if not state.engine:
         return {"trades": []}
     try:
-        records = state.engine.trade_repo.get_recent(limit=limit)
+        records = state.engine.trade_repo.get_trades(
+            source="paper", limit=limit,
+        )
         trades = []
         for r in records:
+            # Format timestamps for display
+            import datetime
+            entry_time = datetime.datetime.fromtimestamp(r.timestamp).isoformat() if r.timestamp else None
+            exit_time = None
+            if r.trade_type == "EXIT" and r.duration_sec and r.duration_sec > 0:
+                exit_time = datetime.datetime.fromtimestamp(r.timestamp).isoformat()
+                entry_time = datetime.datetime.fromtimestamp(r.timestamp - r.duration_sec).isoformat()
+
             trades.append({
-                "id": r.id,
+                "id": r.id if hasattr(r, 'id') else 0,
                 "symbol": r.symbol,
                 "side": r.side,
                 "strategy": r.strategy,
-                "entry_price": r.entry_price,
-                "exit_price": r.exit_price,
+                "entry_price": r.entry_price or r.price,
+                "exit_price": r.exit_price or (r.price if r.trade_type == "EXIT" else 0),
                 "quantity": r.quantity,
                 "pnl": r.pnl,
                 "fee": r.fee,
-                "duration_sec": r.duration_sec,
-                "entry_time": r.entry_time,
-                "exit_time": r.exit_time,
-                "regime": r.regime,
+                "duration_sec": r.duration_sec or 0,
+                "entry_time": entry_time,
+                "exit_time": exit_time,
+                "regime": r.regime or "",
             })
-        return {"trades": trades}
-    except Exception:
+        # Return most recent first
+        trades.reverse()
+        return {"trades": trades[:limit]}
+    except Exception as e:
+        logger.debug("trades_api_error", error=str(e))
         return {"trades": list(state.recent_trades)}
 
 
