@@ -32,6 +32,8 @@ export function TradingPage() {
   const signals = useTradingStore(useShallow((s) => s.recentSignals));
   const recentSignals = useMemo(() => [...signals].reverse().slice(0, 10), [signals]);
   const micro = useMicroStore((s) => s.snapshots[symbol]);
+  const allTrades = useTradingStore(useShallow((s) => s.recentTrades));
+  const symbolTrades = useMemo(() => allTrades.filter(t => t.symbol === symbol), [allTrades, symbol]);
 
   const priceUp = price > prevPrice;
 
@@ -68,7 +70,7 @@ export function TradingPage() {
                 </div>
               }
             >
-              <CandlestickChart symbol={symbol} />
+              <CandlestickChart symbol={symbol} trades={symbolTrades} />
             </ErrorBoundary>
           </div>
         </Panel>

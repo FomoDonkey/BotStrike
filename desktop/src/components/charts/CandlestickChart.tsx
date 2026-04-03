@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { useMarketStore, type Candle } from "@/stores/marketStore";
+import { type TradeData } from "@/stores/tradingStore";
 
 interface CandlestickChartProps {
   symbol: string;
   className?: string;
+  trades?: TradeData[];
 }
 
-export function CandlestickChart({ symbol, className }: CandlestickChartProps) {
+export function CandlestickChart({ symbol, className, trades }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const seriesRef = useRef<any>(null);
   const volumeSeriesRef = useRef<any>(null);
   const lastCandleHash = useRef("");
+  const lastMarkersHash = useRef("");
   const [error, setError] = useState<string | null>(null);
   const [chartReady, setChartReady] = useState(false);
 
@@ -141,6 +144,64 @@ export function CandlestickChart({ symbol, className }: CandlestickChartProps) {
     updateChart(); // Load existing data
     return () => { unsub(); };
   }, [symbol, chartReady]);
+
+  // Step 3: Update trade markers on chart when trades change
+  useEffect(() => {
+    if (!chartReady || !seriesRef.current || !trades?.length) {
+      // Clear markers if no trades
+      if (seriesRef.current && lastMarkersHash.current !== "") {
+        try { seriesRef.current.setMarkers([]); } catch {}
+        lastMarkersHash.current = "";
+      }
+      return;
+    }
+
+    // Dedupe check
+    const hash = `${trades.length}_${trades[trades.length - 1]?.timestamp}`;
+    if (hash === lastMarkersHash.current) return;
+    lastMarkersHash.current = hash;
+
+    try {
+      const markers: any[] = [];
+
+      for (const t of trades) {
+        if (!t.timestamp || !t.price) continue;
+        // Convert unix timestamp to chart time (seconds, floored to minute for 1m candles)
+        const time = Math.floor(t.timestamp / 60) * 60;
+
+        if (t.trade_type === "ENTRY") {
+          // Entry marker: arrow pointing in trade direction
+          const isBuy = t.side === "BUY";
+          markers.push({
+            time,
+            position: isBuy ? "belowBar" : "aboveBar",
+            color: isBuy ? "#00D4AA" : "#FF4757",
+            shape: isBuy ? "arrowUp" : "arrowDown",
+            text: `${isBuy ? "L" : "S"} $${t.price.toFixed(0)}`,
+          });
+        } else {
+          // Exit marker: circle with PnL
+          const isWin = t.pnl > 0;
+          const pnlStr = t.pnl >= 0 ? `+${t.pnl.toFixed(2)}` : t.pnl.toFixed(2);
+          // Position opposite to likely entry side (exit BUY = was short, exit SELL = was long)
+          const wasLong = t.side === "SELL"; // Closing a long = sell
+          markers.push({
+            time,
+            position: wasLong ? "aboveBar" : "belowBar",
+            color: isWin ? "#00D4AA" : "#FF4757",
+            shape: "circle",
+            text: `$${pnlStr}`,
+          });
+        }
+      }
+
+      // lightweight-charts requires markers sorted by time
+      markers.sort((a, b) => a.time - b.time);
+      seriesRef.current.setMarkers(markers);
+    } catch (e) {
+      console.error("[Chart] markers error:", e);
+    }
+  }, [trades, chartReady]);
 
   if (error) {
     return (
