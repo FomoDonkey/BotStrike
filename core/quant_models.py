@@ -503,11 +503,11 @@ class MonteCarloBootstrap:
         final_eq = np.array(final_equities)
         max_dds = np.array(max_drawdowns)
 
-        # Sharpe distribution (annualized, approximate)
-        # Calcular Sharpe por path no es trivial sin daily returns,
-        # asi que usamos return/risk como proxy
+        # Calmar ratio distribution (return / max_drawdown)
+        # Not Sharpe (which requires daily returns), but Calmar is meaningful
+        # for evaluating drawdown-adjusted return per simulation path
         returns_pct = (final_eq - initial_equity) / initial_equity
-        sharpe_proxy = returns_pct / (max_dds + 1e-10)
+        sharpe_proxy = returns_pct / (max_dds + 1e-10)  # Actually Calmar ratio
 
         return MonteCarloResult(
             median_final_equity=float(np.median(final_eq)),
@@ -605,13 +605,16 @@ class CorrelationRegime:
                 elif j > i:
                     r1 = np.array(matrix[s1])
                     r2 = np.array(matrix[s2])
-                    if np.std(r1) > 0 and np.std(r2) > 0:
+                    if np.std(r1) > 1e-8 and np.std(r2) > 1e-8:
                         corr = float(np.corrcoef(r1, r2)[0, 1])
-                    else:
-                        corr = 0.0
-                    corr_matrix[s1][s2] = corr
-                    corr_matrix.setdefault(s2, {})[s1] = corr
-                    pairwise_corrs.append(corr)
+                        if not np.isnan(corr):
+                            corr_matrix[s1][s2] = corr
+                            corr_matrix.setdefault(s2, {})[s1] = corr
+                            pairwise_corrs.append(corr)
+                            continue
+                    # Flat series: skip from average (don't bias toward 0)
+                    corr_matrix[s1][s2] = 0.0
+                    corr_matrix.setdefault(s2, {})[s1] = 0.0
 
         if not pairwise_corrs:
             return CorrelationRegimeResult(timestamp=timestamp)
@@ -726,19 +729,10 @@ class CovarianceTracker:
         for k in valid_keys:
             weights[k] = inv_vols[k] / total_inv
 
-        # Keys sin vol valida reciben peso uniforme residual
+        # Keys sin vol valida reciben peso 0 (no apostar en volatilidad desconocida)
         invalid_keys = [k for k in keys if k not in valid_keys]
-        if invalid_keys:
-            # Distribuir el peso residual uniformemente
-            residual_weight = len(invalid_keys) / (len(keys))
-            for k in invalid_keys:
-                weights[k] = residual_weight / len(invalid_keys)
-            # Re-normalizar valid keys
-            valid_sum = sum(weights[k] for k in valid_keys)
-            if valid_sum > 0:
-                scale = (1.0 - residual_weight) / valid_sum
-                for k in valid_keys:
-                    weights[k] *= scale
+        for k in invalid_keys:
+            weights[k] = 0.0
 
         return RiskParityResult(
             weights=weights,

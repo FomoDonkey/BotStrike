@@ -192,12 +192,15 @@ class MetricsCollector:
 
         avg_win = self._cumulative_win_pnl / self._cumulative_win_count if self._cumulative_win_count > 0 else 0
         avg_loss = self._cumulative_loss_pnl / self._cumulative_loss_count if self._cumulative_loss_count > 0 else 0
-        profit_factor = abs(self._cumulative_win_pnl / self._cumulative_loss_pnl) if self._cumulative_loss_pnl != 0 else 9999.99
+        profit_factor = abs(self._cumulative_win_pnl / self._cumulative_loss_pnl) if self._cumulative_loss_pnl != 0 else 0.0
 
-        # Sharpe from incremental daily_pnl dict
+        # Sharpe from incremental daily_pnl dict (last 60 days max)
         sharpe = 0.0
-        if len(self._daily_pnl) > 1:
-            daily_arr = np.array(list(self._daily_pnl.values()))
+        daily_values = list(self._daily_pnl.values())
+        if len(daily_values) > 60:
+            daily_values = daily_values[-60:]
+        if len(daily_values) > 1:
+            daily_arr = np.array(daily_values)
             std = float(np.std(daily_arr))
             if std > 0:
                 sharpe = float(np.mean(daily_arr) / std * (252 ** 0.5))

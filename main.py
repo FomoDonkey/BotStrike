@@ -806,8 +806,14 @@ class BotStrike:
             try:
                 if self.paper and self.paper_sim:
                     # Paper mode: sync posiciones desde el simulador
+                    paper_symbols = set()
                     for key, pos in self.paper_sim.get_all_positions().items():
                         self.risk_manager.update_position(pos.symbol, pos)
+                        paper_symbols.add(pos.symbol)
+                    # Clear closed positions from risk_manager
+                    for sym in list(self.risk_manager._positions.keys()):
+                        if sym not in paper_symbols:
+                            self.risk_manager.update_position(sym, None)
                 elif not self.dry_run and self.settings.api_private_key:
                     # Live: actualizar posiciones desde exchange
                     positions_data = await self.client.get_positions()

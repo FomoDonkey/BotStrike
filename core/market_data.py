@@ -36,7 +36,7 @@ class MarketDataCollector:
 
     # ── Tick quality config ──────────────────────────────────────
     WARMUP_SEC = 5.0          # Segundos post-conexión donde los ticks se descartan
-    STALE_TICK_MAX_PCT = 0.05 # Max delta % vs último precio para aceptar tick (5%)
+    STALE_TICK_MAX_PCT = 0.15 # Max delta % vs último precio para aceptar tick (15% — crypto is volatile)
     JITTER_EMA_ALPHA = 0.1    # Factor de suavizado para EMA de jitter inter-tick
 
     def __init__(

@@ -352,6 +352,10 @@ async def market_broadcast_loop():
                 state._market_queue.clear()
                 for tick in queue.values():
                     await state.channels.broadcast("market", tick)
+            # Drain pending signals/trades even if _broadcast_symbol_state wasn't called
+            while state._pending_signals:
+                msg = state._pending_signals.popleft()
+                await state.channels.broadcast("trading", msg)
         except Exception as e:
             logger.debug("market_broadcast_error", error=str(e))
         await asyncio.sleep(0.25)  # 4/sec — matches frontend throttle
