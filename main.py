@@ -746,6 +746,7 @@ class BotStrike:
         # Persistir en trade database
         regime = self._last_regime.get(trade.symbol, MarketRegime.UNKNOWN)
         micro = self.microstructure.get_snapshot(trade.symbol)
+        is_exit = trade.pnl != 0 or trade.signal_features.get("action", "").startswith("exit")
         self.trade_db.on_trade(
             trade,
             regime=regime,
@@ -753,6 +754,9 @@ class BotStrike:
             equity_after=new_equity,
             micro_vpin=micro.vpin.vpin if micro and micro.vpin else 0,
             micro_risk_score=micro.risk_score if micro else 0,
+            trade_type="EXIT" if is_exit else "ENTRY",
+            entry_price=trade.expected_price if not is_exit else trade.signal_features.get("entry_price", 0),
+            duration_sec=trade.signal_features.get("hold_time_sec", 0),
         )
 
     async def _unwind_mm_inventory(self, symbol: str, sym_config: SymbolConfig) -> None:

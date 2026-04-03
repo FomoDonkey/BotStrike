@@ -34,15 +34,16 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────
-COOLDOWN_SEC = 30           # Seconds between trades
-MIN_ENTRY_SCORE = 0.50      # Raised back: 0.40 let in noise. 0.50 = needs 2+ signals
-EXIT_SCORE_THRESHOLD = 0.30 # Proportional to entry threshold
-CONFIRM_TICKS = 3           # Score must be above threshold for N consecutive evals
-SL_SPREAD_MULT = 2.0        # SL = 2x spread
-TP_SPREAD_MULT = 4.0        # TP = 4x spread (R:R 2:1)
-MAX_SL_BPS = 25.0           # Emergency hard cap: 25 bps max loss
+COOLDOWN_SEC = 60           # Seconds between trades (was 30 — too fast)
+MIN_ENTRY_SCORE = 0.50      # Needs 2+ microstructure signals confirming
+EXIT_SCORE_THRESHOLD = 0.10 # Low: only exit when signal FULLY gone (was 0.30 — too trigger-happy)
+MIN_HOLD_SEC = 30           # Minimum hold time before score-exit allowed (let trade breathe)
+CONFIRM_TICKS = 3           # Score must persist 3 consecutive evals (15s)
+SL_SPREAD_MULT = 3.0        # SL = 3x spread (was 2x — too tight, stopped out by noise)
+TP_SPREAD_MULT = 6.0        # TP = 6x spread (R:R 2:1 maintained)
+MAX_SL_BPS = 30.0           # Emergency hard cap: 30 bps max loss
 MIN_SPREAD_BPS = 3.0        # Minimum spread for SL/TP calc (floor)
-PROFIT_LOCK_MULT = 1.0      # Lock profit at 1x spread gain
+PROFIT_LOCK_MULT = 2.0      # Lock profit at 2x spread gain (was 1x — too aggressive)
 
 
 @dataclass
@@ -374,13 +375,15 @@ class OrderFlowMomentumStrategy(BaseStrategy):
 
         should_exit = False
         exit_reason = ""
+        hold_time = ts - state.entry_time if state.entry_time > 0 else 0
 
-        # Exit 1: Setup invalidated — our score dropped below threshold
-        if our_score < EXIT_SCORE_THRESHOLD:
+        # Exit 1: Setup invalidated — but only after minimum hold time
+        # Let the trade breathe — microstructure scores fluctuate tick-to-tick
+        if our_score < EXIT_SCORE_THRESHOLD and hold_time >= MIN_HOLD_SEC:
             should_exit = True
             exit_reason = "score_invalidated"
 
-        # Exit 2: Counter-signal — opposing score is now strong
+        # Exit 2: Counter-signal — opposing score is now strong (no hold minimum)
         elif against_score >= MIN_ENTRY_SCORE and against_score > our_score + 0.15:
             should_exit = True
             exit_reason = "counter_signal"
