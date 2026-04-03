@@ -306,16 +306,10 @@ class MeanReversionStrategy(BaseStrategy):
         kelly_pct = kwargs.get("kelly_risk_pct")
         obi = kwargs.get("obi")
 
-        # ── Mode 1: Z-Score Mean Reversion (frequent, base signal) ──
-        zscore_signal = self._check_zscore_entry(
-            symbol, df, price, regime, sym_config, allocated_capital,
-            kelly_pct, obi,
-        )
-        if zscore_signal:
-            signals.append(zscore_signal)
-            return signals  # Z-score fires fast; don't also scan divergences
+        # Z-score MR disabled — does not work on BTC 1m (not stationary).
+        # See tasks/lessons.md line 11. Only RSI divergence is viable for MR.
 
-        # ── Mode 2: Multi-TF RSI Divergence (rare, high conviction) ──
+        # ── Multi-TF RSI Divergence (rare, high conviction) ──
         best_signal = None
         best_tf_priority = -1
 

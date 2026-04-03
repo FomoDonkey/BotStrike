@@ -35,8 +35,9 @@ logger = structlog.get_logger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────
 COOLDOWN_SEC = 30           # Seconds between trades
-MIN_ENTRY_SCORE = 0.40      # Lowered: Strike has less liquidity than Binance/CME
-EXIT_SCORE_THRESHOLD = 0.25 # Proportional to entry threshold
+MIN_ENTRY_SCORE = 0.50      # Raised back: 0.40 let in noise. 0.50 = needs 2+ signals
+EXIT_SCORE_THRESHOLD = 0.30 # Proportional to entry threshold
+CONFIRM_TICKS = 3           # Score must be above threshold for N consecutive evals
 SL_SPREAD_MULT = 2.0        # SL = 2x spread
 TP_SPREAD_MULT = 4.0        # TP = 4x spread (R:R 2:1)
 MAX_SL_BPS = 25.0           # Emergency hard cap: 25 bps max loss
@@ -61,6 +62,10 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         super().__init__(StrategyType.ORDER_FLOW_MOMENTUM, trading_config)
         self._states: Dict[str, OFMState] = {}
         self._last_exit_time: Dict[str, float] = {}
+        # Confirmation tracker: signal must persist N consecutive evaluations
+        self._confirm_long: Dict[str, int] = {}   # symbol → consecutive count
+        self._confirm_short: Dict[str, int] = {}
+        self._confirm_side: Dict[str, str] = {}    # symbol → "LONG" or "SHORT"
 
     def should_activate(self, regime: MarketRegime) -> bool:
         return regime != MarketRegime.UNKNOWN
@@ -168,16 +173,36 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         sl_distance = price * sl_bps / 10000
         tp_distance = price * tp_bps / 10000
 
+        # ── Persistence filter: score must hold for N consecutive evals ──
+        long_ok = long_score >= MIN_ENTRY_SCORE and long_score > short_score + 0.10
+        short_ok = short_score >= MIN_ENTRY_SCORE and short_score > long_score + 0.10
+
+        if long_ok:
+            self._confirm_long[symbol] = self._confirm_long.get(symbol, 0) + 1
+            self._confirm_short[symbol] = 0
+        elif short_ok:
+            self._confirm_short[symbol] = self._confirm_short.get(symbol, 0) + 1
+            self._confirm_long[symbol] = 0
+        else:
+            self._confirm_long[symbol] = 0
+            self._confirm_short[symbol] = 0
+
+        long_confirmed = self._confirm_long.get(symbol, 0) >= CONFIRM_TICKS
+        short_confirmed = self._confirm_short.get(symbol, 0) >= CONFIRM_TICKS
+
         # Log scores for diagnostics (every evaluation)
         logger.debug("ofm_scores", symbol=symbol,
                      long=round(long_score, 3), short=round(short_score, 3),
                      threshold=MIN_ENTRY_SCORE,
+                     confirm_l=self._confirm_long.get(symbol, 0),
+                     confirm_s=self._confirm_short.get(symbol, 0),
+                     need=CONFIRM_TICKS,
                      obi=round(obi_imbalance, 3), microprice=round(microprice_adj_bps, 2),
                      hawkes=round(hawkes_ratio, 2), depth=round(depth_ratio, 2),
                      vpin=round(vpin, 3), spread=round(spread_bps, 1))
 
         # ── LONG ─────────────────────────────────────────────────
-        if long_score >= MIN_ENTRY_SCORE and long_score > short_score + 0.10:
+        if long_confirmed:
             stop_loss = price - sl_distance
             take_profit = price + tp_distance
 
@@ -189,6 +214,8 @@ class OrderFlowMomentumStrategy(BaseStrategy):
             strength = min(long_score, 1.0)
 
             if size_usd > 10:
+                self._confirm_long[symbol] = 0  # Reset after entry
+                self._confirm_short[symbol] = 0
                 self._states[symbol] = OFMState(
                     entry_time=ts,
                     entry_score=long_score,
@@ -215,7 +242,7 @@ class OrderFlowMomentumStrategy(BaseStrategy):
                 ))
 
         # ── SHORT ────────────────────────────────────────────────
-        elif short_score >= MIN_ENTRY_SCORE and short_score > long_score + 0.10:
+        elif short_confirmed:
             stop_loss = price + sl_distance
             take_profit = price - tp_distance
 
@@ -227,6 +254,8 @@ class OrderFlowMomentumStrategy(BaseStrategy):
             strength = min(short_score, 1.0)
 
             if size_usd > 10:
+                self._confirm_long[symbol] = 0  # Reset after entry
+                self._confirm_short[symbol] = 0
                 self._states[symbol] = OFMState(
                     entry_time=ts,
                     entry_score=short_score,
