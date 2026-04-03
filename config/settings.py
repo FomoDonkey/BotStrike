@@ -15,7 +15,7 @@ load_dotenv()
 class SymbolConfig:
     """Configuración específica por símbolo/activo."""
     symbol: str
-    leverage: int = 10
+    leverage: int = 2   # Safe default (was 10 — exceeded max_leverage=5)
     max_position_usd: float = 200.0  # Safe default for small accounts (was 10k)
     # Mean Reversion
     mr_zscore_entry: float = 2.0
@@ -70,6 +70,7 @@ class TradingConfig:
     initial_capital: float = 300.0
     # Riesgo global — calibrado para $300 micro account
     max_drawdown_pct: float = 0.10      # $30 max loss before circuit break (was 0.15)
+    max_daily_loss_pct: float = 0.05    # $15 max daily loss — prevents single bad day from hitting drawdown limit
     max_leverage: int = 5               # Safer for micro account (was 20)
     max_total_exposure_pct: float = 0.6  # 60% max exposure (was 0.8)
     risk_per_trade_pct: float = 0.015   # 1.5% = $4.50 risk budget (was 1%)
@@ -91,7 +92,7 @@ class TradingConfig:
     data_stale_block_sec: float = 300.0  # no operar si datos > 5min stale
     # Intervalos
     data_interval_sec: float = 1.0
-    strategy_interval_sec: float = 5.0   # evaluar cada 5s (OFM signals decay fast)
+    strategy_interval_sec: float = 3.0   # evaluar cada 3s — OFM alpha decays <10s, 5s was too slow
     mm_interval_sec: float = 0.5       # Market Making quote refresh (mas rapido)
     risk_check_interval_sec: float = 2.0
     # Volatility Targeting

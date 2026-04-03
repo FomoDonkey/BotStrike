@@ -15,7 +15,7 @@ class Indicators:
     @staticmethod
     def sma(series: pd.Series, period: int) -> pd.Series:
         """Simple Moving Average."""
-        return series.rolling(window=period, min_periods=1).mean()
+        return series.rolling(window=period, min_periods=period).mean()
 
     @staticmethod
     def ema(series: pd.Series, period: int) -> pd.Series:
@@ -57,20 +57,21 @@ class Indicators:
         series: pd.Series, period: int = 20, num_std: float = 2.0
     ) -> tuple[pd.Series, pd.Series, pd.Series]:
         """Bandas de Bollinger: (upper, middle, lower)."""
-        middle = series.rolling(window=period, min_periods=1).mean()
-        std = series.rolling(window=period, min_periods=2).std().fillna(0)
+        middle = series.rolling(window=period, min_periods=period).mean()
+        std = series.rolling(window=period, min_periods=period).std().fillna(0)
         upper = middle + num_std * std
         lower = middle - num_std * std
         return upper, middle, lower
 
     @staticmethod
     def rsi(series: pd.Series, period: int = 14) -> pd.Series:
-        """Relative Strength Index."""
+        """Relative Strength Index (Wilder's smoothing)."""
         delta = series.diff()
         gain = delta.where(delta > 0, 0.0)
         loss = (-delta).where(delta < 0, 0.0)
-        avg_gain = gain.ewm(span=period, adjust=False).mean()
-        avg_loss = loss.ewm(span=period, adjust=False).mean()
+        # Wilder's smoothing: span = 2*period - 1 (consistent with ATR)
+        avg_gain = gain.ewm(span=2 * period - 1, adjust=False).mean()
+        avg_loss = loss.ewm(span=2 * period - 1, adjust=False).mean()
         rs = avg_gain / avg_loss.replace(0, np.nan)
         rsi = 100 - (100 / (1 + rs))
         # NaN cases: avg_loss=0 (all gains → RSI=100) or first bar (diff=NaN → RSI=50 neutral)
@@ -84,7 +85,7 @@ class Indicators:
     @staticmethod
     def volume_ratio(volume: pd.Series, period: int = 20) -> pd.Series:
         """Ratio de volumen actual vs media móvil."""
-        avg_vol = volume.rolling(window=period, min_periods=1).mean()
+        avg_vol = volume.rolling(window=period, min_periods=max(period // 2, 2)).mean()
         return volume / avg_vol.replace(0, np.nan)
 
     @staticmethod
@@ -221,7 +222,7 @@ class Indicators:
         df["plus_di"], df["minus_di"] = Indicators.directional_indicators(high, low, close, 14)
 
         # N-bar breakout levels
-        df["high_20"] = high.rolling(20, min_periods=1).max()
-        df["low_20"] = low.rolling(20, min_periods=1).min()
+        df["high_20"] = high.rolling(20, min_periods=20).max()
+        df["low_20"] = low.rolling(20, min_periods=20).min()
 
         return df

@@ -37,17 +37,17 @@ logger = structlog.get_logger(__name__)
 COOLDOWN_SEC = 60           # Seconds between trades (applies to strategy exits AND SL/TP exits)
 MIN_ENTRY_SCORE = 0.50      # Needs 2+ microstructure signals confirming
 EXIT_SCORE_THRESHOLD = 0.15 # Exit when signal is mostly gone
-CONFIRM_TICKS = 3           # Score must persist 3 consecutive evals (15s) — was 5 (25s), too slow for scalping
-OBI_DELTA_EMA_ALPHA = 0.05  # Slow EMA: filters noise, only passes sustained flow (alpha=0.05 → ~20 tick halflife)
+CONFIRM_TICKS = 2           # Score must persist 2 consecutive evals (10s) — was 3 (15s), alpha decays in <10s
+OBI_DELTA_EMA_ALPHA = 0.15  # Faster EMA: ~7 tick halflife (was 0.05/20 ticks — too slow, signal already arbitraged)
 SL_SPREAD_MULT = 3.0        # SL = 3x spread
-TP_RR_MULT = 2.0            # TP = SL * 2 (R:R 2:1)
-MAX_SL_BPS = 50.0           # Emergency hard cap: 50 bps max loss (was 30 — too tight after fee-floor fix)
+TP_RR_MULT = 3.0            # TP = SL * 3 (R:R 3:1 gross → ~1.67:1 net after 14bps fees, breakeven WR=37.5%)
+MAX_SL_BPS = 50.0           # Emergency hard cap: 50 bps max loss
 MIN_SPREAD_BPS = 3.0        # Minimum spread for SL/TP calc (floor)
 MIN_SL_ATR_MULT = 0.3       # ATR-based SL floor: SL >= 0.3x ATR (prevents tiny SLs during low spread)
-FEE_SL_MULT = 2.0           # SL must be >= 2x round-trip cost (ensures net R:R >= 1:1 after fees)
-PROFIT_LOCK_MULT = 2.0      # Lock profit at 2x spread gain
-MAX_HOLD_SEC = 1800          # 30 min max hold — prevent indefinite exposure
-MIN_HOLD_BEFORE_MICRO_EXIT = 30  # Seconds: don't exit on microprice reversal until 30s held (avoids noise exits)
+FEE_SL_MULT = 2.0           # SL must be >= 2x round-trip cost (ensures net R:R > 1:1 after fees)
+PROFIT_LOCK_MULT = 1.5      # Lock profit at 1.5x SL gain (was 2.0 — activated too late)
+MAX_HOLD_SEC = 600           # 10 min max hold — scalping alpha decays in minutes, not 30min
+MIN_HOLD_BEFORE_MICRO_EXIT = 20  # Seconds: don't exit on microprice reversal until 20s held (was 30 — too slow)
 
 
 @dataclass
@@ -76,7 +76,9 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         self._obi_delta_ema: Dict[str, float] = {}
 
     def should_activate(self, regime: MarketRegime) -> bool:
-        return regime != MarketRegime.UNKNOWN
+        # OFM scalping should NOT run during BREAKOUT (directional momentum
+        # makes microstructure signals unreliable — everything looks like flow)
+        return regime not in (MarketRegime.UNKNOWN, MarketRegime.BREAKOUT)
 
     def notify_external_exit(self, symbol: str, ts: float) -> None:
         """Called when paper_sim closes position via SL/TP (not strategy-generated exit).
@@ -460,7 +462,7 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         # Use SL-based threshold (not spread) — matches actual risk/reward
         profit_lock_bps = (state.entry_sl_bps if state.entry_sl_bps > 0 else state.entry_spread_bps * SL_SPREAD_MULT) * PROFIT_LOCK_MULT
         profit_lock_pct = profit_lock_bps / 10000
-        if state.best_pnl_pct > profit_lock_pct and current_pnl_pct < profit_lock_pct * 0.3:
+        if state.best_pnl_pct > profit_lock_pct and current_pnl_pct < profit_lock_pct * 0.5:
             should_exit = True
             exit_reason = "profit_lock"
 
@@ -470,7 +472,7 @@ class OrderFlowMomentumStrategy(BaseStrategy):
             close_side = Side.SELL if position.side == Side.BUY else Side.BUY
             exit_size = abs(position.size * price) if position.size else 0
             if exit_size <= 0:
-                exit_size = position.notional if position.notional > 0 else 100
+                exit_size = position.notional if position.notional > 0 else 20  # min viable, not $100
 
             hold_time = ts - state.entry_time if state.entry_time > 0 else 0
 

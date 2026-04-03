@@ -78,32 +78,40 @@ export function TradingPage() {
           {/* Order Book */}
           <Panel className="flex-1 p-3 overflow-hidden">
             <h3 className="text-[10px] text-text-muted uppercase tracking-wider mb-2">Order Book</h3>
-            {orderbook ? (
-              <div className="space-y-0.5 text-xs font-mono">
-                {[...(orderbook.asks || [])].reverse().slice(0, 8).map((lvl, i) => (
-                  <div key={`a${i}`} className="flex justify-between relative">
-                    <div
-                      className="absolute inset-y-0 right-0 bg-loss/5"
-                      style={{ width: `${Math.min((lvl.quantity || 0) * 10, 100)}%` }}
-                    />
-                    <span className="text-loss relative z-10">{formatPrice(lvl.price)}</span>
-                    <span className="text-text-muted relative z-10">{(lvl.quantity || 0).toFixed(4)}</span>
+            {orderbook && (orderbook.bids?.length > 0 || orderbook.asks?.length > 0) ? (
+              (() => {
+                const asks = [...(orderbook.asks || [])].reverse().slice(0, 8);
+                const bids = (orderbook.bids || []).slice(0, 8);
+                const allQty = [...asks, ...bids].map(l => l.quantity || 0);
+                const maxQty = Math.max(...allQty, 0.001); // normalize bars by max quantity
+                return (
+                  <div className="space-y-0.5 text-xs font-mono">
+                    {asks.map((lvl, i) => (
+                      <div key={`a${i}`} className="flex justify-between relative">
+                        <div
+                          className="absolute inset-y-0 right-0 bg-loss/10"
+                          style={{ width: `${Math.min((lvl.quantity || 0) / maxQty * 100, 100)}%` }}
+                        />
+                        <span className="text-loss relative z-10">{formatPrice(lvl.price)}</span>
+                        <span className="text-text-muted relative z-10">{(lvl.quantity || 0).toFixed(4)}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-center py-1 text-text-muted text-[10px]">
+                      {orderbook.spread_bps ? `${formatBps(orderbook.spread_bps)} spread` : "---"}
+                    </div>
+                    {bids.map((lvl, i) => (
+                      <div key={`b${i}`} className="flex justify-between relative">
+                        <div
+                          className="absolute inset-y-0 right-0 bg-profit/10"
+                          style={{ width: `${Math.min((lvl.quantity || 0) / maxQty * 100, 100)}%` }}
+                        />
+                        <span className="text-profit relative z-10">{formatPrice(lvl.price)}</span>
+                        <span className="text-text-muted relative z-10">{(lvl.quantity || 0).toFixed(4)}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-                <div className="flex justify-center py-1 text-text-muted text-[10px]">
-                  {orderbook.spread_bps ? `${formatBps(orderbook.spread_bps)} spread` : "---"}
-                </div>
-                {(orderbook.bids || []).slice(0, 8).map((lvl, i) => (
-                  <div key={`b${i}`} className="flex justify-between relative">
-                    <div
-                      className="absolute inset-y-0 right-0 bg-profit/5"
-                      style={{ width: `${Math.min((lvl.quantity || 0) * 10, 100)}%` }}
-                    />
-                    <span className="text-profit relative z-10">{formatPrice(lvl.price)}</span>
-                    <span className="text-text-muted relative z-10">{(lvl.quantity || 0).toFixed(4)}</span>
-                  </div>
-                ))}
-              </div>
+                );
+              })()
             ) : (
               <p className="text-text-muted text-xs">Waiting for data...</p>
             )}

@@ -156,6 +156,11 @@ class BotStrike:
         # Inicializar datos de mercado
         await self.market_data.initialize()
 
+        # Seed with Binance klines for immediate chart data (6h of 1m candles)
+        if self.use_binance:
+            for sym_config in self.settings.symbols:
+                await self.market_data.seed_from_binance(sym_config.symbol, sym_config, hours=6)
+
         # Iniciar sesión de trade database
         self.trade_db.start_session(
             initial_equity=self.settings.trading.initial_capital,
@@ -835,10 +840,29 @@ class BotStrike:
             try:
                 if self.paper and self.paper_sim:
                     # Paper mode: sync posiciones desde el simulador
-                    paper_symbols = set()
+                    # Aggregate by symbol (paper_sim keys by symbol_STRATEGY,
+                    # risk_manager keys by symbol — must sum notional to avoid
+                    # one strategy overwriting another)
+                    symbol_positions: Dict[str, list] = {}
                     for key, pos in self.paper_sim.get_all_positions().items():
-                        self.risk_manager.update_position(pos.symbol, pos)
-                        paper_symbols.add(pos.symbol)
+                        symbol_positions.setdefault(pos.symbol, []).append(pos)
+
+                    paper_symbols = set()
+                    for sym, pos_list in symbol_positions.items():
+                        paper_symbols.add(sym)
+                        # Use first position as base, aggregate notional/size
+                        base = pos_list[0]
+                        if len(pos_list) > 1:
+                            total_size = sum(p.size for p in pos_list)
+                            total_notional = sum(p.notional for p in pos_list)
+                            total_unrealized = sum(p.unrealized_pnl for p in pos_list)
+                            base = Position(
+                                symbol=sym, side=base.side, size=total_size,
+                                entry_price=base.entry_price, mark_price=base.mark_price,
+                                unrealized_pnl=total_unrealized, strategy=base.strategy,
+                            )
+                        self.risk_manager.update_position(sym, base)
+
                     # Clear closed positions from risk_manager
                     for sym in list(self.risk_manager._positions.keys()):
                         if sym not in paper_symbols:
@@ -947,10 +971,17 @@ class BotStrike:
 
         while self._running:
             try:
-                # Recopilar datos
+                # Recopilar datos from trade database (metrics.get_metrics() has no recent_trades key)
                 trades = []
-                for t in self.metrics.get_metrics().get("recent_trades", []):
-                    trades.append(t)
+                if hasattr(self, 'trade_repo') and self.trade_repo:
+                    try:
+                        db_trades = self.trade_repo.get_trades(limit=50)
+                        trades = [{"pnl": t.pnl, "strategy": t.strategy, "symbol": t.symbol,
+                                   "side": t.side, "entry_price": t.entry_price,
+                                   "exit_price": t.exit_price, "duration_sec": t.duration_sec}
+                                  for t in db_trades if t.pnl is not None]
+                    except Exception:
+                        pass
 
                 sym = self.settings.symbols[0]
                 df = self.market_data.get_dataframe(sym.symbol)

@@ -107,6 +107,8 @@ class BaseStrategy(ABC):
         adjusted_risk = max(risk_amount - friction_cost, risk_amount * 0.5)
 
         size_units = adjusted_risk / risk_per_unit
+        # Enforce max_leverage safety limit
+        leverage = min(leverage, self.trading_config.max_leverage)
         # Cap by leveraged capital
         max_units = (capital * leverage) / price
         final_size = min(size_units, max_units)

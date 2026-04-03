@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { connectAll, disconnectAll, getChannel } from "@/lib/ws";
 import { useMarketStore } from "@/stores/marketStore";
 import { useTradingStore } from "@/stores/tradingStore";
@@ -8,12 +8,7 @@ import { useSystemStore } from "@/stores/systemStore";
 import { useAlertStore } from "@/stores/alertStore";
 
 export function useWebSocketBridge() {
-  const initialized = useRef(false);
-
   useEffect(() => {
-    if (initialized.current) return;
-    initialized.current = true;
-
     connectAll();
 
     // Market channel

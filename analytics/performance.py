@@ -606,9 +606,13 @@ class PerformanceAnalyzer:
         if not daily_pnl:
             return []
 
-        # Normalizar por equity (usar initial_equity como base simple)
+        # Normalizar by rolling equity (not static initial — avoids bias on equity changes)
         equity = initial_equity if initial_equity > 0 else 100_000.0
-        return [pnl / equity for pnl in daily_pnl.values()]
+        daily_returns = []
+        for pnl in daily_pnl.values():
+            daily_returns.append(pnl / equity if equity > 0 else 0.0)
+            equity += pnl  # Rolling equity for next day's normalization
+        return daily_returns
 
     @staticmethod
     def _compute_drawdown(

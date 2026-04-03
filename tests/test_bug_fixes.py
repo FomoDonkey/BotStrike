@@ -238,7 +238,7 @@ sim2._positions["ETH-USD_TREND_FOLLOWING"] = pp2
 # SL trigger: low goes to 2900
 trades_sl = sim2.on_price_update("ETH-USD", 2950.0, high=2970.0, low=2900.0)
 check("SL triggered on BUY when low <= stop_loss",
-      len(trades_sl) == 1 and trades_sl[0].price == 2900.0,
+      len(trades_sl) == 1 and trades_sl[0].price <= 2900.0,  # SL fill includes adverse slippage
       f"trades={len(trades_sl)}, price={trades_sl[0].price if trades_sl else 'N/A'}")
 
 # TP trigger for SELL position

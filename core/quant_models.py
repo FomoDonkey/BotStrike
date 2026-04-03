@@ -54,7 +54,7 @@ class VolatilityTargeting:
         lookback_days: int = 20,
         min_scalar: float = 0.5,
         max_scalar: float = 2.0,
-        annualization: float = 252.0,
+        annualization: float = 365.0,  # Crypto trades 365 days/year (was 252 — equity convention)
     ) -> None:
         self.target_vol = target_vol
         self.lookback_days = lookback_days

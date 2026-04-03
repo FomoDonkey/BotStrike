@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { HashRouter, Routes, Route } from "react-router-dom";
+import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "@/app/Layout";
 import { DashboardPage } from "@/pages/dashboard/DashboardPage";
 import { TradingPage } from "@/pages/trading/TradingPage";
@@ -39,6 +39,7 @@ if (root) {
             <Route path="/data" element={<DataPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/system" element={<SystemPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
       </HashRouter>

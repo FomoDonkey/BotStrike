@@ -270,7 +270,7 @@ export function SettingsPage() {
                   >
                     <span className={cn(
                       "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all",
-                      soundEnabled ? "left-5.5" : "left-0.5"
+                      soundEnabled ? "left-[22px]" : "left-0.5"
                     )} />
                   </button>
                 </div>

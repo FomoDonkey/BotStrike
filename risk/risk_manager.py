@@ -196,7 +196,15 @@ class RiskManager:
                 return None
             self._circuit_breaker_active = False
 
-        # 1. Verificar drawdown máximo
+        # 1a. Verificar daily loss limit
+        max_daily_loss = self._current_equity * self.config.max_daily_loss_pct
+        if self._daily_pnl < 0 and abs(self._daily_pnl) >= max_daily_loss:
+            logger.warning("daily_loss_limit_reached",
+                           daily_pnl=round(self._daily_pnl, 2),
+                           limit=round(-max_daily_loss, 2))
+            return None
+
+        # 1b. Verificar drawdown máximo
         if self._check_max_drawdown():
             logger.warning("max_drawdown_reached",
                            drawdown=self.current_drawdown_pct)
@@ -391,6 +399,7 @@ class RiskManager:
             "drawdown_pct": round(self.current_drawdown_pct, 4),
             "total_exposure": self.total_exposure,
             "daily_pnl": self._daily_pnl,
+            "max_daily_loss": round(self._current_equity * self.config.max_daily_loss_pct, 2),
             "total_pnl": self._total_pnl,
             "consecutive_losses": self._consecutive_losses,
             "circuit_breaker": self._circuit_breaker_active,

@@ -54,27 +54,27 @@ TF_CONFIGS: Dict[str, TFConfig] = {
     "1d": TFConfig(
         name="1D", interval="1d", lookback=14,
         rsi_oversold=30, rsi_overbought=70, rsi_recovery=40,
-        adx_max=40, sl_mult=2.5, tp_mult=5.0,     # Wider SL for overnight gaps
-        risk_pct=0.015, strength_base=0.95,         # 1.5% risk (was 3% — too much for $300)
+        adx_max=55, sl_mult=2.5, tp_mult=5.0,     # ADX 55: divergences at trend exhaustion are strongest
+        risk_pct=0.015, strength_base=0.95,
         cache_ttl=900, min_bars=30,
     ),
     "4h": TFConfig(
         name="4H", interval="4h", lookback=12,
         rsi_oversold=30, rsi_overbought=70, rsi_recovery=42,
-        adx_max=38, sl_mult=1.8, tp_mult=4.0,
-        risk_pct=0.015, strength_base=0.85,         # 1.5% (was 2%)
+        adx_max=50, sl_mult=1.8, tp_mult=4.0,     # ADX 50: allow exhaustion divergences
+        risk_pct=0.015, strength_base=0.85,
         cache_ttl=600, min_bars=30,
     ),
     "1h": TFConfig(
         name="1H", interval="1h", lookback=10,
-        rsi_oversold=28, rsi_overbought=72, rsi_recovery=43,  # Tighter than 15m (less noise)
-        adx_max=36, sl_mult=1.5, tp_mult=3.5,
+        rsi_oversold=28, rsi_overbought=72, rsi_recovery=43,
+        adx_max=50, sl_mult=1.5, tp_mult=3.5,     # ADX 50: allow divergences in strong trends (exhaustion)
         risk_pct=0.015, strength_base=0.75, cache_ttl=300, min_bars=25,
     ),
     "15m": TFConfig(
         name="15m", interval="15m", lookback=10,
-        rsi_oversold=25, rsi_overbought=75, rsi_recovery=45,  # Stricter — more noise at 15m
-        adx_max=35, sl_mult=1.5, tp_mult=3.0,
+        rsi_oversold=28, rsi_overbought=72, rsi_recovery=42,  # Wilder RSI is smoother — adjusted from 25/75/45
+        adx_max=40, sl_mult=1.5, tp_mult=3.0,     # ADX 40: was 35, too tight
         risk_pct=0.01, strength_base=0.65, cache_ttl=180, min_bars=20,
     ),
 }
@@ -89,6 +89,7 @@ _SYMBOL_MAP = {
 
 # ── Kline Cache ──────────────────────────────────────────────────
 _kline_cache: Dict[str, Tuple[float, pd.DataFrame]] = {}  # key -> (timestamp, df)
+_kline_fetch_failures: Dict[str, int] = {}  # key -> consecutive failure count
 
 
 async def _fetch_binance_klines(symbol: str, interval: str, limit: int = 100) -> Optional[pd.DataFrame]:
@@ -137,10 +138,18 @@ async def _fetch_binance_klines(symbol: str, interval: str, limit: int = 100) ->
         df["obv"] = (np.sign(df["close"].diff()) * df["volume"]).cumsum()
 
         _kline_cache[cache_key] = (now, df)
+        _kline_fetch_failures[cache_key] = 0  # Reset on success
         return df
 
     except Exception as e:
-        logger.debug("kline_fetch_failed", symbol=symbol, interval=interval, error=str(e))
+        _kline_fetch_failures[cache_key] = _kline_fetch_failures.get(cache_key, 0) + 1
+        fail_count = _kline_fetch_failures[cache_key]
+        if fail_count >= 12:  # ~1 hour of failures at 5min TTL
+            logger.warning("kline_fetch_persistent_failure",
+                           symbol=symbol, interval=interval,
+                           consecutive_failures=fail_count, error=str(e))
+        else:
+            logger.debug("kline_fetch_failed", symbol=symbol, interval=interval, error=str(e))
         # Return cached if available
         if cache_key in _kline_cache:
             return _kline_cache[cache_key][1]
@@ -212,22 +221,25 @@ def _detect_divergence(
     prev_rsi_at_low = w_rsi[prev_low_idx]
     prev_rsi_at_high = w_rsi[prev_high_idx]
 
-    # Bull: price lower low, RSI was oversold at prior low, now recovering
+    # Bull divergence: price makes LOWER low, but RSI makes HIGHER low
+    # Classic textbook divergence — momentum weakening despite new price extreme
+    # Entry condition: RSI at current low > RSI at prior low (divergence confirmed)
+    # Both lows must be in oversold territory for the signal to be meaningful
     bull = (
-        lows[i] < w_lows[prev_low_idx]
+        lows[i] < w_lows[prev_low_idx]              # Price: new lower low
         and not np.isnan(prev_rsi_at_low)
-        and prev_rsi_at_low < cfg.rsi_oversold
-        and cur_rsi > prev_rsi_at_low + 5
-        and cur_rsi > cfg.rsi_recovery
+        and prev_rsi_at_low < cfg.rsi_oversold       # Prior low was oversold
+        and cur_rsi > prev_rsi_at_low + 3             # RSI higher at current low (divergence)
+        and cur_rsi < cfg.rsi_recovery                # Still in oversold zone (not already recovered)
     )
 
-    # Bear: price higher high, RSI was overbought at prior high, now falling
+    # Bear divergence: price makes HIGHER high, but RSI makes LOWER high
     bear = (
-        highs[i] > w_highs[prev_high_idx]
+        highs[i] > w_highs[prev_high_idx]            # Price: new higher high
         and not np.isnan(prev_rsi_at_high)
-        and prev_rsi_at_high > cfg.rsi_overbought
-        and cur_rsi < prev_rsi_at_high - 5
-        and cur_rsi < (100 - cfg.rsi_recovery)
+        and prev_rsi_at_high > cfg.rsi_overbought    # Prior high was overbought
+        and cur_rsi < prev_rsi_at_high - 3            # RSI lower at current high (divergence)
+        and cur_rsi > (100 - cfg.rsi_recovery)        # Still in overbought zone
     )
 
     # OBV confirmation
@@ -268,7 +280,8 @@ def _resample(df: pd.DataFrame, target_minutes: int) -> Optional[pd.DataFrame]:
         return None  # Already at or above target
 
     bars_per_target = max(1, int(round(target_minutes / bar_minutes)))
-    max_input = bars_per_target * 60
+    # Use up to 200 output bars (enough for lookback + divergence scanning)
+    max_input = bars_per_target * 200
     df_tail = df.tail(max_input)
 
     if len(df_tail) < bars_per_target * 15:
@@ -290,14 +303,22 @@ def _resample(df: pd.DataFrame, target_minutes: int) -> Optional[pd.DataFrame]:
 
 
 # ── Strategy ─────────────────────────────────────────────────────
+MR_COOLDOWN_SEC = 300  # 5 min cooldown between MR trades on same symbol
+
+
 class MeanReversionStrategy(BaseStrategy):
     """Multi-Timeframe RSI Divergence — scans 1D, 4H, 1H, 15m simultaneously."""
 
     def __init__(self, trading_config: TradingConfig) -> None:
         super().__init__(StrategyType.MEAN_REVERSION, trading_config)
+        self._last_exit_time: Dict[str, float] = {}
 
     def should_activate(self, regime: MarketRegime) -> bool:
         return regime != MarketRegime.BREAKOUT
+
+    def notify_external_exit(self, symbol: str, ts: float) -> None:
+        """Called when paper_sim closes position via SL/TP."""
+        self._last_exit_time[symbol] = ts
 
     def generate_signals(
         self,
@@ -316,6 +337,11 @@ class MeanReversionStrategy(BaseStrategy):
             return signals
 
         if current_position is not None:
+            return signals
+
+        # Cooldown: prevent rapid-fire re-entry after SL exit
+        last_exit = self._last_exit_time.get(symbol, 0)
+        if last_exit > 0 and (_time.time() - last_exit) < MR_COOLDOWN_SEC:
             return signals
 
         price = snapshot.price if snapshot.price > 0 else float(df.iloc[-1]["close"])

@@ -181,7 +181,7 @@ class BacktestResult:
                 daily_returns = np.diff(daily_eq) / daily_eq[:-1]
                 daily_returns = daily_returns[np.isfinite(daily_returns)]
                 if len(daily_returns) > 1 and np.std(daily_returns) > 0:
-                    sharpe = float(np.mean(daily_returns) / np.std(daily_returns) * (252 ** 0.5))
+                    sharpe = float(np.mean(daily_returns) / np.std(daily_returns) * (365 ** 0.5))  # Crypto: 365 days
 
         # Calmar ratio (annualized)
         calmar = 0.0
@@ -243,7 +243,7 @@ class BacktestResult:
                 dr = dr[np.isfinite(dr)]
                 downside = dr[dr < 0]
                 if len(downside) > 0 and np.std(downside) > 0:
-                    sortino = float(np.mean(dr) / np.std(downside) * (252 ** 0.5))
+                    sortino = float(np.mean(dr) / np.std(downside) * (365 ** 0.5))  # Crypto: 365 days
 
         return {
             "total_trades": len(self.trades),
@@ -340,11 +340,13 @@ class Backtester:
         for i in range(start_idx, len(df)):
             bar = df.iloc[i]
             price = float(bar["close"])
+            open_ = float(bar["open"])
             high = float(bar["high"])
             low = float(bar["low"])
 
-            # Slice del DataFrame hasta barra actual
-            df_slice = df.iloc[:i + 1]
+            # Windowed slice: last 500 bars (avoids O(n^2) full-prefix copy)
+            window_start = max(0, i - 500)
+            df_slice = df.iloc[window_start:i + 1]
 
             # Detectar régimen
             regime = regime_detector.detect(df_slice, symbol, sym_config)
@@ -362,6 +364,8 @@ class Backtester:
                     del positions[key]
 
             # Check SL/TP on existing positions
+            # When both SL and TP could trigger on the same bar,
+            # use distance from open to determine which hit first (reduces bias)
             for key in list(positions.keys()):
                 pos = positions[key]
                 if pos.stop_loss <= 0 and pos.take_profit <= 0:
@@ -370,23 +374,34 @@ class Backtester:
                 exit_price_sltp = 0.0
                 exit_side_sltp = ""
                 if pos.side == Side.BUY:
-                    if pos.stop_loss > 0 and low <= pos.stop_loss:
-                        exit_price_sltp = pos.stop_loss
-                        exit_side_sltp = "SL_LONG"
-                        hit = True
-                    elif pos.take_profit > 0 and high >= pos.take_profit:
-                        exit_price_sltp = pos.take_profit
-                        exit_side_sltp = "TP_LONG"
-                        hit = True
+                    sl_hit = pos.stop_loss > 0 and low <= pos.stop_loss
+                    tp_hit = pos.take_profit > 0 and high >= pos.take_profit
+                    if sl_hit and tp_hit:
+                        # Both hit — closer to open wins
+                        sl_dist = abs(open_ - pos.stop_loss)
+                        tp_dist = abs(open_ - pos.take_profit)
+                        if sl_dist <= tp_dist:
+                            exit_price_sltp, exit_side_sltp, hit = pos.stop_loss, "SL_LONG", True
+                        else:
+                            exit_price_sltp, exit_side_sltp, hit = pos.take_profit, "TP_LONG", True
+                    elif sl_hit:
+                        exit_price_sltp, exit_side_sltp, hit = pos.stop_loss, "SL_LONG", True
+                    elif tp_hit:
+                        exit_price_sltp, exit_side_sltp, hit = pos.take_profit, "TP_LONG", True
                 else:
-                    if pos.stop_loss > 0 and high >= pos.stop_loss:
-                        exit_price_sltp = pos.stop_loss
-                        exit_side_sltp = "SL_SHORT"
-                        hit = True
-                    elif pos.take_profit > 0 and low <= pos.take_profit:
-                        exit_price_sltp = pos.take_profit
-                        exit_side_sltp = "TP_SHORT"
-                        hit = True
+                    sl_hit = pos.stop_loss > 0 and high >= pos.stop_loss
+                    tp_hit = pos.take_profit > 0 and low <= pos.take_profit
+                    if sl_hit and tp_hit:
+                        sl_dist = abs(open_ - pos.stop_loss)
+                        tp_dist = abs(open_ - pos.take_profit)
+                        if sl_dist <= tp_dist:
+                            exit_price_sltp, exit_side_sltp, hit = pos.stop_loss, "SL_SHORT", True
+                        else:
+                            exit_price_sltp, exit_side_sltp, hit = pos.take_profit, "TP_SHORT", True
+                    elif sl_hit:
+                        exit_price_sltp, exit_side_sltp, hit = pos.stop_loss, "SL_SHORT", True
+                    elif tp_hit:
+                        exit_price_sltp, exit_side_sltp, hit = pos.take_profit, "TP_SHORT", True
                 if hit:
                     pnl = pos.close(exit_price_sltp, trading_config.taker_fee)
                     equity += pnl
@@ -428,10 +443,19 @@ class Backtester:
             micro_snap = micro_engine.get_snapshot(symbol)
 
             # Generar señales de cada estrategia activa
+            # MR only evaluates every 15 bars (15m at 1m resolution) — no point running divergence
+            # detection on every 1m bar since 15m is the minimum timeframe
             all_signals: List[Signal] = []
             for strat in active_strategies:
                 if not strat.should_activate(regime):
                     continue
+
+                # Skip MR on non-15m boundaries (massive speedup)
+                if strat.strategy_type == StrategyType.MEAN_REVERSION and i % 15 != 0:
+                    # Still need to check if we have a position to manage
+                    pos_key = f"{symbol}_{strat.strategy_type.value}"
+                    if pos_key not in positions:
+                        continue
 
                 # Capital asignado (simplificado)
                 alloc = equity / len(active_strategies) / len(self.settings.symbols)

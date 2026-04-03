@@ -348,3 +348,92 @@
 - **MR kline fetch blocked event loop**: `_fetch_klines_sync()` used `future.result(timeout=15)` which blocks the ENTIRE asyncio event loop for up to 15 seconds. During this time: no SL/TP processing, no WS messages, no market data updates. Fix: fire-and-forget `ensure_future()` — returns stale cache immediately, fresh data appears on next call.
 - **Dead constant TP_SPREAD_MULT=6.0**: Never used in code (code used `sl_bps * 2.0` directly). Renamed and clarified to TP_RR_MULT=2.0 which IS used.
 - **Alert sound type mismatch**: `useWebSocket.ts` sent `sound: "circuitBreaker"` but Alert type only allowed 4 values. Added to union type.
+
+## Execution/Risk Architecture (Audit #17)
+- Risk manager positions keyed by symbol, paper simulator by symbol+strategy. When two strategies hold same asset, risk manager only sees one — total exposure check underestimates real exposure.
+- _daily_pnl is tracked but never enforced as a limit. Drawdown check alone is insufficient for intraday blowup protection.
+- Paper simulator charges round-trip fees only at close (entry fee=0). This is mathematically correct but creates misleading real-time metrics and loses entry fees if system crashes with open positions.
+- SL execution in paper sim adds fixed slippage (0.5x base_bps) but does not model gap risk (candle opens past SL). Real SL on volatile crypto can gap 50+ bps past stop price.
+- Circuit breaker at 80% max drawdown pauses 5 minutes then resumes. No escalation = bot can yo-yo between pause and trade repeatedly in volatile markets.
+- Paper simulator does not model partial fills, cancel/replace cycles for MM, or order queue dynamics. Paper PnL will diverge from live.
+- Portfolio manager stores "current weight" per strategy but only from the last symbol queried — misleading in multi-symbol setups.
+
+## Audit #20 — Deep Full-Stack Quant Audit (2026-04-03)
+
+### OFM Economics Were Fundamentally Broken
+- TP_RR_MULT=2.0 with SL=28bps and fees=14bps gave NET R:R of 1:1 (coin flip)
+- CONFIRM_TICKS=3 at 5s interval = 15s delay killed microstructure alpha (decays in <10s)
+- Combined: strategy was mathematically guaranteed to lose or break even at best
+- Fix: 3:1 gross → 1.67:1 net, breakeven WR=37.5%, confirmation to 2 ticks (10s)
+- **LESSON: Always compute NET R:R after fees, not gross. Small account fees dominate.**
+
+### Vol Targeting Used Equity Convention for 24/7 Crypto
+- 252 annualization (stock market days) vs 365 (crypto) = 17% overestimate
+- Directly oversized positions during high vol — exactly when you should size DOWN
+- **LESSON: Every annualization factor must match the asset class trading calendar.**
+
+### Position Tracking Key Mismatch Was Silent
+- Paper sim keyed by `symbol_STRATEGY`, risk manager by `symbol`
+- With MR + OFM on same symbol, one position overwrote the other in risk checks
+- Total exposure could be 2x what risk manager thought
+- **LESSON: Verify key consistency across all position tracking systems.**
+
+### RSI Formula Was Non-Standard
+- Used `span=period` instead of Wilder's `span=2*period-1`
+- RSI values diverged from TradingView/Binance charts by 5-15 points
+- Thresholds (25, 30, 75) were calibrated against wrong reference
+- **LESSON: Indicator formulas must match reference platforms exactly.**
+
+### Daily Analysis Was Running Blind
+- `get_metrics().get("recent_trades", [])` — key never existed, always returned []
+- AI analyst ran every 24h with zero trade data for its entire lifetime
+- **LESSON: Test data pipelines end-to-end, not just the consumer.**
+
+### ML Filter Threshold Was Overfit
+- Training threshold on same data used for model training = textbook overfitting
+- Fixed with time-series CV (train on first 70%, validate on last 30%)
+- **LESSON: Never optimize hyperparameters on training data.**
+
+### Divergence Logic Was Logically Impossible (2026-04-03)
+- The bull divergence required `cur_rsi > cfg.rsi_recovery` (e.g., 45) at the SAME bar as a new price low
+- When price is at a new low, RSI is always near oversold (20-30), never at 45
+- This means the condition was IMPOSSIBLE to satisfy — MR had 0 trades for months
+- Correct logic: at the new low, RSI should be HIGHER than at the previous low (divergence)
+- **LESSON: Walk through conditions with actual numbers. "RSI > 45 at price new low" is obvious nonsense if you think about it for 5 seconds.**
+
+### Resample Only Produced 60 Bars From 137k Input
+- `max_input = bars_per_target * 60` limited to 60 output bars regardless of input size
+- For 15m (15 bars per target), max_input = 900 → only 60 bars of 15m data
+- With lookback=10, that's only 50 bars to scan for divergences — too few
+- Fixed to 200 output bars (enough for lookback + full scan)
+- **LESSON: Verify data pipeline end-to-end with actual sizes, not just "does it not crash".**
+
+### ADX Thresholds Were Blocking All Divergences
+- ADX_max was 35-40, but BTC divergences happen at ADX 40-60 (end of strong trends)
+- This is by design in textbooks — divergences SHOULD appear during strong trends
+- Raised to 40-55 — still filters choppy markets (ADX < 20) but allows trend exhaustion
+- **LESSON: ADX filter for mean reversion should not be "low ADX only" — the best MR setups come at trend exhaustion (high ADX + divergence).**
+
+### Standard Backtester Cannot Test OFM
+- OFM requires real orderbook data (OBI, microprice, depth ratio)
+- The standard backtester creates 1-level synthetic orderbook → OBI=0, microprice=mid
+- OFM score maxes at 0.20 (from Hawkes only), below 0.50 threshold → never fires
+- Need RealisticBacktester with tick data or real orderbook snapshots
+- **LESSON: Microstructure strategies cannot be backtested on bar data. Use tick replay or live forward-test.**
+
+### Chart Vacío al Arrancar — No Había Seed de Datos Históricos (2026-04-03)
+- MarketDataCollector.initialize() usaba StrikeClient.get_recent_trades() que falla en modo Binance
+- El chart empezaba vacío y construía 1 barra por minuto tick a tick
+- Fix: seed_from_binance() carga 360 candles de 1m via REST antes de arrancar WS
+- **LESSON: Siempre verificar que la UI tenga datos iniciales, no asumir que el streaming los proveerá.**
+
+### Orderbook Invisible por Hardcoded Multiplier (2026-04-03)
+- `quantity * 10` para BTC con orders de 0.01 BTC = barras de 0.1% = invisibles
+- Fix: normalizar por max quantity del book visible
+- **LESSON: Nunca hardcodear scaling para assets con rangos de cantidad de 4+ órdenes de magnitud.**
+
+### Bridge Broadcast Bloqueaba el Trading Loop (2026-04-03)
+- `await _broadcast_symbol_state()` dentro de `_process_symbol` esperaba a que TODOS los clientes WS recibieran antes de continuar
+- Con OFM evaluando cada 3s, 200-500ms de broadcast delay degradaba el alpha
+- Fix: asyncio.ensure_future() — fire-and-forget
+- **LESSON: Never await I/O operations inside a latency-sensitive trading loop.**

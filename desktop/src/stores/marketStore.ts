@@ -50,9 +50,6 @@ interface MarketState {
   regime: Record<string, string>;
   marketInfo: Record<string, MarketInfo>;
 
-  // Throttled tick buffer — NOT in state to avoid re-renders
-  _tickBuffer: Record<string, Tick[]>;
-
   onTick: (tick: Tick) => void;
   onCandles: (symbol: string, candles: Candle[]) => void;
   onSnapshot: (data: any) => void;
@@ -115,7 +112,6 @@ export const useMarketStore = create<MarketState>((set, get) => ({
   orderbooks: {},
   regime: {},
   marketInfo: {},
-  _tickBuffer: {},
 
   onTick: (tick) => {
     // Buffer price — don't trigger React re-render on every tick

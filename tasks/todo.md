@@ -443,3 +443,84 @@
 - [ ] HMM regime transition model (probabilidades de cambio de regimen)
 - [ ] Execution analytics cross-venue (comparar fills con Binance/Bybit via API publica)
 - [ ] Warm-start backtester con posiciones abiertas persistentes
+
+## Audit #17: Execution/Risk/Portfolio Deep Analysis (2026-04-03)
+### CRITICAL — must fix before live trading
+- [ ] Add daily loss limit enforcement in RiskManager.validate_signal() (no max_daily_loss check exists)
+- [ ] Fix RiskManager._positions keyed by symbol only — two strategies can exceed exposure limit on same symbol
+- [ ] Add SL gap risk protection: bound max loss per trade, model gap-through-SL in paper simulator
+
+### HIGH — should fix soon
+- [ ] Add max_open_positions limit in RiskManager
+- [ ] Paper simulator entry trades report fee=0 — misleading real-time metrics; consider charging entry fee at entry
+- [ ] Paper simulator does not model partial fills — overstates fill quality
+- [ ] Circuit breaker needs escalation (5min -> 15min -> 1h -> kill) instead of fixed 5min reset
+- [ ] Order engine latency_ms calculation is fragile (assumes exchange timestamp in milliseconds)
+
+### MEDIUM — fix when convenient
+- [ ] MM order refresh race condition: old order can fill between cancel and new placement
+- [ ] _active_orders dict never cleaned for stale orders after WS disconnect
+- [ ] Paper simulator SL/TP both-hit-same-candle always picks SL first for longs (pessimistic bias)
+- [ ] _check_total_exposure uses notional (fluctuates with price) — consider using entry_price * size
+- [ ] Portfolio manager _current_weights stores last-symbol-queried weight, not global
+- [ ] Paper simulator MM signals processed as position entry/exit, not cancel/replace cycle
+
+### LOW — nice to have
+- [ ] Replace _recent_trades list trimming with deque(maxlen=500)
+- [ ] Add time-of-day liquidity component to slippage model
+- [ ] Legacy compute_slippage uses linear size impact vs advanced model's sqrt (concave)
+- [ ] Portfolio _performance_factor sigmoid sensitivity too high (avg_pnl*100 makes it a step function)
+
+## v2.5.0 — Deep Quant Audit (2026-04-03)
+- [x] CRITICAL: OFM TP_RR_MULT 2.0→3.0 (net R:R 1.67:1, breakeven WR=37.5% vs old 50%)
+- [x] CRITICAL: OFM CONFIRM_TICKS 3→2, OBI_DELTA_EMA_ALPHA 0.05→0.15 (faster signal capture)
+- [x] CRITICAL: OFM MAX_HOLD_SEC 1800→600 (scalping alpha decays in minutes)
+- [x] CRITICAL: Vol targeting annualization 252→365 (crypto 24/7, was oversizing 17%)
+- [x] CRITICAL: Added daily loss limit enforcement (5% = $15)
+- [x] CRITICAL: Fixed position tracking key mismatch (risk manager vs paper sim — double exposure possible)
+- [x] CRITICAL: Enforce max_leverage in base strategy position sizing
+- [x] CRITICAL: SymbolConfig default leverage 10→2 (safe default)
+- [x] HIGH: RSI formula fixed to Wilder's smoothing (span=2*period-1, consistent with ATR)
+- [x] HIGH: SMA min_periods=1→period (prevents fake early values triggering false signals)
+- [x] HIGH: Trend provider neutral zone (0.15% dead zone when EMAs close together)
+- [x] HIGH: ML filter threshold selection now uses time-series CV (was in-sample overfitting)
+- [x] HIGH: OFM disabled during BREAKOUT regime
+- [x] HIGH: MR cooldown 5min between trades (prevents rapid-fire re-entry after SL)
+- [x] HIGH: Kline fetch failure tracking and warning after 12 consecutive failures
+- [x] HIGH: Daily AI analysis now reads from trade database (was reading nonexistent metrics key)
+- [x] HIGH: Sharpe annualization 252→365 in logger.py
+- [x] HIGH: Sharpe normalization uses rolling equity (was static initial — introduced bias)
+- [x] MEDIUM: Profit lock threshold improved (giveback 0.3→0.5, activates at 1.5x SL vs 2x)
+- [x] MEDIUM: Exit size fallback 100→20 (appropriate for $300 account)
+- [x] MEDIUM: Metrics file rotation at 50MB
+- [x] MEDIUM: Backtester SL/TP ordering uses distance-from-open (reduces systematic bias)
+- [x] DESKTOP: Added /api/backtest/run endpoint (BacktestPage was completely broken)
+- [x] DESKTOP: Fixed useWebSocket StrictMode cleanup (WS leak during dev hot reload)
+- [x] DESKTOP: Fixed SystemPage stale getState() → proper selector
+- [x] DESKTOP: Removed unused TopBar prev price subscription
+- [x] DESKTOP: Removed dead _tickBuffer from marketStore
+- [x] DESKTOP: Fixed SettingsPage toggle invalid Tailwind class left-5.5→left-[22px]
+- [x] DESKTOP: Added catch-all route (blank page on undefined routes)
+- [x] TEST: Fixed SL fill test to account for adverse slippage
+- [x] TEST: Fixed Hawkes spike test to match adaptive baseline behavior
+
+## Pendiente
+- [ ] Backtest OFM with new 3:1 R:R to validate breakeven WR achievable
+- [ ] Monitor paper trading PnL with new economics for 48+ hours
+- [ ] Consider reducing strategy_interval_sec from 5s to 2-3s for OFM
+
+## v2.5.1 — Backtest Validation & Fixes (2026-04-03)
+- [x] Fix backtester Sharpe/Sortino annualization 252→365
+- [x] Reduce strategy_interval_sec 5s→3s (OFM now evaluates every 3s, confirms in 6s)
+- [x] Fix backtester O(n^2) df_slice → 500-bar window (~15x faster)
+- [x] Add MR evaluation skip (only every 15 bars — 15m is minimum TF)
+- [x] Fix _resample max_input: 60→200 output bars (was producing only 60 bars from 137k input)
+- [x] Fix divergence detection logic: was requiring RSI>recovery at new low (impossible), now correctly detects higher RSI at lower price
+- [x] Raise ADX thresholds (15m: 35→40, 1h: 36→50, 4h: 38→50, 1d: 40→55) — divergences at trend exhaustion are the strongest
+- [x] Adjust 15m RSI thresholds for Wilder's smoothing (oversold 25→28, overbought 75→72)
+
+## v2.5.2 — Chart/Orderbook/Bridge fixes (2026-04-03)
+- [x] Chart: seed 6h de klines Binance al arrancar (market_data.seed_from_binance)
+- [x] Orderbook: normalizar barras por max quantity (no hardcoded *10)
+- [x] Bridge: broadcast fire-and-forget (no bloquea trading loop)
+- [x] Verificar terminal vs desktop idénticos en lógica de trading

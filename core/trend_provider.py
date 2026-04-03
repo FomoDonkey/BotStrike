@@ -105,15 +105,22 @@ class TrendProvider:
         if not closes_4h or not closes_1d:
             return TrendInfo()
 
-        # 4H trend: EMA20 vs EMA50
+        # 4H trend: EMA20 vs EMA50 (with neutral dead zone)
         ema20_4h = self._ema(closes_4h, 20)
         ema50_4h = self._ema(closes_4h, 50)
-        trend_4h = 1 if ema20_4h > ema50_4h else -1
+        # Neutral zone: EMAs within 0.15% = no clear trend
+        if ema50_4h > 0 and abs(ema20_4h - ema50_4h) / ema50_4h < 0.0015:
+            trend_4h = 0
+        else:
+            trend_4h = 1 if ema20_4h > ema50_4h else -1
 
-        # 1D trend: EMA7 vs EMA21
+        # 1D trend: EMA7 vs EMA21 (with neutral dead zone)
         ema7_1d = self._ema(closes_1d, 7)
         ema21_1d = self._ema(closes_1d, 21)
-        trend_1d = 1 if ema7_1d > ema21_1d else -1
+        if ema21_1d > 0 and abs(ema7_1d - ema21_1d) / ema21_1d < 0.0015:
+            trend_1d = 0
+        else:
+            trend_1d = 1 if ema7_1d > ema21_1d else -1
 
         return TrendInfo(
             trend_4h=trend_4h,

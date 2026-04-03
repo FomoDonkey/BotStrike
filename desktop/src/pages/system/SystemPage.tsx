@@ -11,6 +11,7 @@ import { Monitor, Cpu, Wifi, WifiOff, Clock, Users, Activity, Play, Square, Refr
 export function SystemPage() {
   const system = useSystemStore();
   const logs = useSystemStore((s) => s.logs);
+  const hasPriceData = useMarketStore((s) => Object.keys(s.prices).length > 0);
   const [botStatus, setBotStatus] = useState<any>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
@@ -124,7 +125,7 @@ export function SystemPage() {
           <div className="space-y-3">
             {[
               { name: "Bridge Server", connected: system.bridgeConnected, detail: "localhost:9420" },
-              { name: "Market Data (Binance)", connected: system.wsConnected || Object.keys(useMarketStore.getState().prices).length > 0, detail: "stream.binance.com" },
+              { name: "Market Data (Binance)", connected: system.wsConnected || hasPriceData, detail: "stream.binance.com" },
             ].map((c) => (
               <div key={c.name} className="flex items-center justify-between p-3 rounded-lg bg-white/[0.02]">
                 <div className="flex items-center gap-3">
@@ -149,7 +150,7 @@ export function SystemPage() {
             <div className="space-y-1 text-xs">
               <div className="flex justify-between">
                 <span className="text-text-muted">Version</span>
-                <span className="font-mono text-text-secondary">2.4.0</span>
+                <span className="font-mono text-text-secondary">2.5.0</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-text-muted">Framework</span>

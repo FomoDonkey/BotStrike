@@ -279,7 +279,9 @@ def _install_hooks(engine):
 
     async def patched_process(symbol, sym_config):
         await original_process(symbol, sym_config)
-        await _broadcast_symbol_state(engine, symbol)
+        # Fire-and-forget: broadcast MUST NOT block the trading loop
+        # OFM evaluates every 3s — even 200ms broadcast latency degrades alpha
+        asyncio.ensure_future(_broadcast_symbol_state(engine, symbol))
 
     engine._process_symbol = patched_process
 
@@ -806,6 +808,53 @@ async def get_data_catalog():
                             "date_range": "",
                         })
     return {"datasets": datasets}
+
+
+# ── Backtest ─────────────────────────────────────────────────────
+@app.post("/api/backtest/run")
+async def run_backtest(body: dict = {}):
+    """Run a backtest with the specified parameters."""
+    try:
+        from backtesting.backtester import Backtester
+        from config.settings import Settings
+
+        symbol = body.get("symbol", "BTC-USD")
+        start_date = body.get("start_date", "")
+        end_date = body.get("end_date", "")
+        strategies_filter = body.get("strategies", [])
+
+        settings = Settings()
+        bt = Backtester(settings)
+
+        # Try to load Binance data
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "data", "binance", "klines")
+        binance_sym = symbol.replace("-", "")
+        parquet_path = os.path.join(data_dir, binance_sym, "1m.parquet")
+
+        if not os.path.exists(parquet_path):
+            return {"error": f"No data available for {symbol}. Download data first."}
+
+        import pandas as pd
+        df = pd.read_parquet(parquet_path)
+        if start_date:
+            df = df[df["timestamp"] >= pd.Timestamp(start_date).timestamp()]
+        if end_date:
+            df = df[df["timestamp"] <= pd.Timestamp(end_date).timestamp()]
+
+        if len(df) < 100:
+            return {"error": f"Insufficient data: {len(df)} bars (need 100+)"}
+
+        result = bt.run(df, symbol=symbol)
+        summary = result.summary()
+        return {
+            "summary": summary,
+            "equity_curve": result.equity_curve[-200:] if len(result.equity_curve) > 200 else result.equity_curve,
+            "total_trades": summary.get("total_trades", 0),
+        }
+    except Exception as e:
+        logger.error("backtest_api_error", error=str(e))
+        return {"error": str(e)}
 
 
 # ── Main ─────────────────────────────────────────────────────────

@@ -112,6 +112,67 @@ class MarketDataCollector:
             logger.error("init_symbol_error", symbol=symbol, error=str(e))
             self._dataframes[symbol] = pd.DataFrame()
 
+    async def seed_from_binance(self, symbol: str, sym_config: SymbolConfig, hours: int = 6) -> None:
+        """Load recent klines from Binance REST API to seed the chart on startup.
+
+        Without this, the chart starts empty and builds 1 bar per minute.
+        This loads the last N hours of 1m candles so the chart is immediately useful.
+        """
+        try:
+            import aiohttp
+            _SYMBOL_MAP = {"BTC-USD": "BTCUSDT", "ETH-USD": "ETHUSDT", "ADA-USD": "ADAUSDT"}
+            binance_sym = _SYMBOL_MAP.get(symbol, symbol.replace("-", ""))
+            limit = hours * 60  # 1m bars
+            url = f"https://api.binance.com/api/v3/klines?symbol={binance_sym}&interval=1m&limit={limit}"
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status != 200:
+                        logger.warning("binance_seed_failed", symbol=symbol, status=resp.status)
+                        return
+                    data = await resp.json()
+
+            if not data:
+                return
+
+            rows = []
+            for k in data:
+                rows.append({
+                    "timestamp": int(k[0]) / 1000,  # ms → seconds
+                    "open": float(k[1]),
+                    "high": float(k[2]),
+                    "low": float(k[3]),
+                    "close": float(k[4]),
+                    "volume": float(k[5]),
+                })
+
+            df = pd.DataFrame(rows)
+            df = Indicators.compute_all(df, {
+                "ema_fast": sym_config.tf_ema_fast,
+                "ema_slow": sym_config.tf_ema_slow,
+                "zscore_lookback": sym_config.mr_lookback,
+            })
+            self._dataframes[symbol] = df
+
+            # Set last bar time so new ticks continue from here
+            if len(df) > 0:
+                self._last_bar_time[symbol] = float(df["timestamp"].iloc[-1])
+                # Initialize snapshot price from last candle
+                last_price = float(df["close"].iloc[-1])
+                if symbol not in self._snapshots:
+                    from core.types import MarketSnapshot
+                    self._snapshots[symbol] = MarketSnapshot(
+                        symbol=symbol, timestamp=self._last_bar_time[symbol],
+                        price=last_price, mark_price=last_price, index_price=last_price,
+                    )
+                else:
+                    self._snapshots[symbol].price = last_price
+
+            logger.info("binance_seed_loaded", symbol=symbol, bars=len(df), hours=hours)
+
+        except Exception as e:
+            logger.warning("binance_seed_error", symbol=symbol, error=str(e))
+
     def _trades_to_ohlcv(self, trades: List[dict], symbol: str) -> pd.DataFrame:
         """Convierte trades crudos a barras OHLCV de 1 minuto."""
         records = []

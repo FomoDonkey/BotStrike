@@ -149,19 +149,25 @@ class MLSignalFilter:
             )
             model.fit(X, y)
 
-            # Calcular threshold óptimo en training data
-            probs = model.predict_proba(X)[:, 1]
-            best_threshold = 0.55
-            best_metric = -999
-            for t in np.arange(0.4, 0.75, 0.05):
-                preds = (probs >= t).astype(int)
-                if preds.sum() < 3:
-                    continue
-                # Metric: profit of filtered trades
-                filtered_pnl = df.loc[preds == 1, "pnl"].sum()
-                if filtered_pnl > best_metric:
-                    best_metric = filtered_pnl
-                    best_threshold = t
+            # Threshold selection via time-series cross-validation (not in-sample)
+            # Split chronologically: train on first 70%, validate on last 30%
+            split_idx = int(len(df) * 0.7)
+            if split_idx >= 20 and len(df) - split_idx >= 10:
+                X_val = df.iloc[split_idx:][FEATURE_NAMES].fillna(0)
+                df_val = df.iloc[split_idx:]
+                probs_val = model.predict_proba(X_val)[:, 1]
+                best_threshold = 0.55
+                best_metric = -999
+                for t in np.arange(0.4, 0.75, 0.05):
+                    preds = (probs_val >= t).astype(int)
+                    if preds.sum() < 2:
+                        continue
+                    filtered_pnl = df_val.loc[preds == 1, "pnl"].sum()
+                    if filtered_pnl > best_metric:
+                        best_metric = filtered_pnl
+                        best_threshold = t
+            else:
+                best_threshold = 0.55  # Safe default when not enough data for CV
 
             self._model = model
             self.threshold = best_threshold

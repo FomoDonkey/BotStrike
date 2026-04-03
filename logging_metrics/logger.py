@@ -110,10 +110,19 @@ class TradingLogger:
             self._flush_metrics()
 
     def _flush_metrics(self) -> None:
-        """Escribe buffer de métricas a disco de una sola vez."""
+        """Escribe buffer de métricas a disco de una sola vez. Rotates at 50MB."""
         if not self._metric_buffer:
             return
         try:
+            # Rotate if file exceeds 50MB
+            if os.path.exists(self.metrics_file):
+                size_mb = os.path.getsize(self.metrics_file) / (1024 * 1024)
+                if size_mb > 50:
+                    rotated = self.metrics_file + ".old"
+                    if os.path.exists(rotated):
+                        os.remove(rotated)
+                    os.rename(self.metrics_file, rotated)
+
             with open(self.metrics_file, "a") as f:
                 f.write("\n".join(self._metric_buffer) + "\n")
             self._metric_buffer.clear()
@@ -207,7 +216,7 @@ class MetricsCollector:
             daily_arr = np.array(daily_values)
             std = float(np.std(daily_arr))
             if std > 0:
-                sharpe = float(np.mean(daily_arr) / std * (252 ** 0.5))
+                sharpe = float(np.mean(daily_arr) / std * (365 ** 0.5))  # Crypto: 365 days/year
 
         # Strategy breakdown from incremental buckets
         by_strategy: Dict[str, Dict] = {}
