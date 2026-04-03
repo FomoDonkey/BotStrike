@@ -37,8 +37,8 @@ logger = structlog.get_logger(__name__)
 COOLDOWN_SEC = 60           # Seconds between trades
 MIN_ENTRY_SCORE = 0.50      # Needs 2+ microstructure signals confirming
 EXIT_SCORE_THRESHOLD = 0.15 # Exit when signal is mostly gone
-CONFIRM_TICKS = 3           # Score must persist 3 consecutive evals (15s)
-OBI_DELTA_EMA_ALPHA = 0.15  # EMA smoothing for OBI delta (lower = smoother, less noise)
+CONFIRM_TICKS = 5           # Score must persist 5 consecutive evals (25s)
+OBI_DELTA_EMA_ALPHA = 0.05  # Slow EMA: filters noise, only passes sustained flow (alpha=0.05 → ~20 tick halflife)
 SL_SPREAD_MULT = 3.0        # SL = 3x spread
 TP_SPREAD_MULT = 6.0        # TP = 6x spread (R:R 2:1)
 MAX_SL_BPS = 30.0           # Emergency hard cap: 30 bps max loss
