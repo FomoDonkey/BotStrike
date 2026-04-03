@@ -274,7 +274,7 @@ def _install_hooks(engine):
 
     engine._process_symbol = patched_process
 
-    # Intercept paper fills for trade broadcast
+    # Intercept paper fills for trade broadcast + live logs
     if hasattr(engine, '_process_paper_fill'):
         original_paper_fill = engine._process_paper_fill
 
@@ -282,10 +282,23 @@ def _install_hooks(engine):
             original_paper_fill(trade)
             serialized = serialize_trade(trade)
             state.recent_trades.append(serialized)
-            # Queue for broadcast (will be picked up by metrics loop)
             state._pending_signals.append({
                 "type": "trade",
                 "data": serialized,
+            })
+            # Send to live logs
+            side = trade.side.value if hasattr(trade.side, 'value') else str(trade.side)
+            strat = trade.strategy.value if trade.strategy and hasattr(trade.strategy, 'value') else ""
+            pnl_str = f" PnL: ${trade.pnl:+.4f}" if trade.pnl != 0 else ""
+            state._pending_signals.append({
+                "type": "log_entry",
+                "channel": "system",
+                "data": {
+                    "type": "log",
+                    "timestamp": time.time(),
+                    "level": "info" if trade.pnl >= 0 else "warn",
+                    "message": f"Trade: {side} {trade.symbol} @ ${trade.price:,.2f} [{strat}]{pnl_str}",
+                },
             })
 
         engine._process_paper_fill = patched_paper_fill
@@ -352,10 +365,13 @@ async def market_broadcast_loop():
                 state._market_queue.clear()
                 for tick in queue.values():
                     await state.channels.broadcast("market", tick)
-            # Drain pending signals/trades even if _broadcast_symbol_state wasn't called
+            # Drain pending signals/trades/logs
             while state._pending_signals:
                 msg = state._pending_signals.popleft()
-                await state.channels.broadcast("trading", msg)
+                if msg.get("type") == "log_entry":
+                    await state.channels.broadcast("system", msg["data"])
+                else:
+                    await state.channels.broadcast("trading", msg)
         except Exception as e:
             logger.debug("market_broadcast_error", error=str(e))
         await asyncio.sleep(0.25)  # 4/sec — matches frontend throttle
@@ -430,7 +446,8 @@ async def metrics_broadcast_loop():
 
 
 async def system_broadcast_loop():
-    """Broadcast system health every 3 seconds."""
+    """Broadcast system health every 3 seconds + periodic status logs."""
+    _log_counter = 0
     while True:
         try:
             ws_connected = False
@@ -446,6 +463,21 @@ async def system_broadcast_loop():
                 "ws_connected": ws_connected,
                 "clients_connected": state.channels.client_count,
             })
+
+            # Send periodic engine status to Live Logs (every ~30s = 10 health cycles)
+            _log_counter += 1
+            if _log_counter >= 10 and state.engine and state.running:
+                _log_counter = 0
+                m = state.engine.metrics.get_metrics()
+                rm = state.engine.risk_manager
+                regime = list(state.engine._last_regime.values())
+                regime_str = regime[0].value if regime else "UNKNOWN"
+                await state.channels.broadcast("system", {
+                    "type": "log",
+                    "timestamp": time.time(),
+                    "level": "info",
+                    "message": f"Engine: {m.get('total_trades', 0)} trades | PnL ${m.get('total_pnl', 0):+.2f} | DD {rm.current_drawdown_pct:.2%} | Regime {regime_str}",
+                })
         except Exception as e:
             logger.debug("system_broadcast_error", error=str(e))
         await asyncio.sleep(3)

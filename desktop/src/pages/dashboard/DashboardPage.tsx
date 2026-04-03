@@ -33,9 +33,9 @@ const ALLOCATION_DATA = [
 ].filter((d) => d.value > 0);
 
 export function DashboardPage() {
-  const btcPrice = useMarketStore((s) => s.prices["BTCUSDT"] || 0);
-  const btcPrev = useMarketStore((s) => s.prevPrices["BTCUSDT"] || 0);
-  const ethPrice = useMarketStore((s) => s.prices["ETHUSDT"] || 0);
+  const btcPrice = useMarketStore((s) => s.prices["BTC-USD"] || s.prices["BTCUSDT"] || 0);
+  const btcPrev = useMarketStore((s) => s.prevPrices["BTC-USD"] || s.prevPrices["BTCUSDT"] || 0);
+  const ethPrice = useMarketStore((s) => s.prices["ETH-USD"] || s.prices["ETHUSDT"] || 0);
   const metrics = useTradingStore(useShallow((s) => s.metrics));
   const drawdown_pct = useRiskStore((s) => s.drawdown_pct);
   const max_drawdown_pct = useRiskStore((s) => s.max_drawdown_pct);

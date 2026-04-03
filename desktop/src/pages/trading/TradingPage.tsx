@@ -23,7 +23,7 @@ function Panel({ className, children }: { className?: string; children: React.Re
 }
 
 export function TradingPage() {
-  const symbol = "BTCUSDT";
+  const symbol = "BTC-USD";
   const price = useMarketStore((s) => s.prices[symbol] || s.prices["BTC-USD"] || 0);
   const prevPrice = useMarketStore((s) => s.prevPrices[symbol] || s.prevPrices["BTC-USD"] || 0);
   const orderbook = useMarketStore((s) => s.orderbooks[symbol] || s.orderbooks["BTC-USD"]);
