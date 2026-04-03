@@ -295,14 +295,20 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         price: float,
         trend_info,
     ) -> tuple:
-        """Compute long/short scores from microstructure signals."""
+        """Compute long/short scores from microstructure signals.
+
+        Uses DELTA (change) for OBI, not absolute level — absolute OBI has
+        persistent structural bias in BTC (more ask depth than bid depth).
+        Delta captures actual shifts in pressure, not static book shape.
+        """
         long_score = 0.0
         short_score = 0.0
 
-        # Signal 1: OBI (35%) — lowered imbalance threshold for less liquid venue
-        if obi_imbalance > 0.06 and obi_delta > 0.005:
+        # Signal 1: OBI DELTA (35%) — change in imbalance is predictive, level is not
+        # Positive delta = buying pressure increasing, negative = selling increasing
+        if obi_delta > 0.02:
             long_score += 0.35
-        elif obi_imbalance < -0.06 and obi_delta < -0.005:
+        elif obi_delta < -0.02:
             short_score += 0.35
 
         # Signal 2: Microprice (30%)
@@ -312,17 +318,19 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         elif microprice_adj_bps < -microprice_threshold:
             short_score += 0.30
 
-        # Signal 3: Hawkes (20%) — lowered threshold for Strike Finance activity levels
+        # Signal 3: Hawkes (20%) — activity spike + delta confirmation
         hawkes_threshold = 1.8 if vpin < 0.4 else 2.5
-        if hawkes_ratio > hawkes_threshold and obi_imbalance > 0.03:
+        if hawkes_ratio > hawkes_threshold and obi_delta > 0.01:
             long_score += 0.20
-        elif hawkes_ratio > hawkes_threshold and obi_imbalance < -0.03:
+        elif hawkes_ratio > hawkes_threshold and obi_delta < -0.01:
             short_score += 0.20
 
-        # Signal 4: Depth (15%) — increased weight, reliable signal on less liquid books
-        if depth_ratio > 1.5:
+        # Signal 4: Depth ratio (15%) — relative to neutral (1.0), not absolute
+        # Use deviation from 1.0 to avoid structural bias
+        depth_dev = depth_ratio - 1.0
+        if depth_dev > 0.3:
             long_score += 0.15
-        elif depth_ratio < 0.67:
+        elif depth_dev < -0.3:
             short_score += 0.15
 
         # Trend scalar
@@ -331,9 +339,9 @@ class OrderFlowMomentumStrategy(BaseStrategy):
             daily_trend = trend_info.macro_trend
         if daily_trend == 1:
             long_score *= 1.15
-            short_score *= 0.7   # Mild penalty, don't kill counter-trend scalps
+            short_score *= 0.85
         elif daily_trend == -1:
-            long_score *= 0.7
+            long_score *= 0.85
             short_score *= 1.15
 
         return long_score, short_score
