@@ -7,7 +7,13 @@ interface RiskState {
   circuit_breaker_active: boolean;
   regime: string;
 
-  onUpdate: (data: any) => void;
+  onUpdate: (data: Record<string, unknown>) => void;
+}
+
+/** Safe numeric extraction — returns fallback if value is null, undefined, NaN, or non-number */
+function safeNum(val: unknown, fallback: number): number {
+  if (typeof val !== "number" || Number.isNaN(val)) return fallback;
+  return val;
 }
 
 export const useRiskStore = create<RiskState>((set) => ({
@@ -19,10 +25,14 @@ export const useRiskStore = create<RiskState>((set) => ({
 
   onUpdate: (data) =>
     set((s) => ({
-      equity: data.equity ?? s.equity,
-      drawdown_pct: data.drawdown_pct ?? s.drawdown_pct,
-      max_drawdown_pct: data.max_drawdown_pct ?? s.max_drawdown_pct,
-      circuit_breaker_active: data.circuit_breaker_active ?? s.circuit_breaker_active,
-      regime: data.regime ?? s.regime,
+      equity: safeNum(data.equity, s.equity),
+      drawdown_pct: safeNum(data.drawdown_pct, s.drawdown_pct),
+      max_drawdown_pct: safeNum(data.max_drawdown_pct, s.max_drawdown_pct),
+      circuit_breaker_active: typeof data.circuit_breaker_active === "boolean"
+        ? data.circuit_breaker_active
+        : s.circuit_breaker_active,
+      regime: typeof data.regime === "string" && data.regime
+        ? data.regime
+        : s.regime,
     })),
 }));

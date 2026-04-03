@@ -30,6 +30,7 @@ export interface OrderBookData {
   best_bid: number | null;
   best_ask: number | null;
   mid_price: number | null;
+  spread: number;
   spread_bps: number;
   microprice: number | null;
 }

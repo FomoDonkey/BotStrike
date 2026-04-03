@@ -98,8 +98,9 @@ class WebSocketClient {
   private scheduleReconnect() {
     if (this.reconnectTimer) return;
     this._reconnectAttempts++;
-    // Start at 3s, max 30s — much slower than before to avoid flooding
-    const delay = Math.min(3000 * Math.pow(2, Math.min(this._reconnectAttempts - 1, 4)), 30000);
+    // Start at 3s, max 30s with jitter to prevent thundering herd
+    const base = Math.min(3000 * Math.pow(2, Math.min(this._reconnectAttempts - 1, 4)), 30000);
+    const delay = base * (0.5 + Math.random()); // 50-150% of base delay
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
