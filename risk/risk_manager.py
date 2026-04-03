@@ -43,6 +43,7 @@ class RiskManager:
         self._max_consecutive_losses: int = 0
         self._circuit_breaker_active: bool = False
         self._circuit_breaker_until: float = 0.0
+        self._last_daily_reset_date: str = ""  # ISO date of last daily reset (e.g. "2026-04-03")
 
         # ── Modelos cuantitativos avanzados ──────────────────────────
         # Risk of Ruin: probabilidad de alcanzar max drawdown
@@ -190,11 +191,26 @@ class RiskManager:
                         factor=round(corr_result.stress_factor, 3), symbol=signal.symbol)
 
         # Circuit breaker: pausa trading tras drawdown severo
+        # Recovery requires BOTH: cooldown elapsed AND drawdown recovered below 50% of max
         if self._circuit_breaker_active:
-            if time.time() < self._circuit_breaker_until:
-                logger.warning("circuit_breaker_active", symbol=signal.symbol)
+            cooldown_elapsed = time.time() >= self._circuit_breaker_until
+            drawdown_recovered = self.current_drawdown_pct < self.config.max_drawdown_pct * 0.5
+            if not cooldown_elapsed:
+                logger.warning("circuit_breaker_active",
+                               symbol=signal.symbol,
+                               drawdown_pct=round(self.current_drawdown_pct, 4),
+                               cooldown_remaining_sec=round(self._circuit_breaker_until - time.time(), 1))
                 return None
+            if not drawdown_recovered:
+                logger.warning("circuit_breaker_drawdown_still_high",
+                               symbol=signal.symbol,
+                               drawdown_pct=round(self.current_drawdown_pct, 4),
+                               recovery_threshold=round(self.config.max_drawdown_pct * 0.5, 4))
+                return None
+            # Both conditions met — deactivate
             self._circuit_breaker_active = False
+            logger.info("circuit_breaker_deactivated",
+                        drawdown_pct=round(self.current_drawdown_pct, 4))
 
         # 1a. Verificar daily loss limit
         max_daily_loss = self._current_equity * self.config.max_daily_loss_pct
@@ -275,6 +291,10 @@ class RiskManager:
         max_for_symbol = sym_config.max_position_usd
         remaining = max_for_symbol - current_exposure
         if remaining <= 0:
+            logger.info("position_size_rejected_symbol_limit",
+                        symbol=signal.symbol,
+                        current_exposure=round(current_exposure, 2),
+                        max_position_usd=max_for_symbol)
             return 0.0
 
         size = min(size, remaining)
@@ -283,7 +303,16 @@ class RiskManager:
         kelly_pct = self.get_kelly_risk_pct(signal.strategy)
         max_risk = self._current_equity * kelly_pct
         risk_per_unit = abs(signal.entry_price - signal.stop_loss)
-        if risk_per_unit > 0 and signal.entry_price > 0:
+        if risk_per_unit < 0.001:
+            # entry_price ≈ stop_loss → undefined risk per unit → reject
+            logger.warning("risk_bypass_rejected",
+                           symbol=signal.symbol,
+                           strategy=signal.strategy.value,
+                           entry_price=signal.entry_price,
+                           stop_loss=signal.stop_loss,
+                           reason="risk_per_unit_zero_or_negligible")
+            return 0.0
+        if signal.entry_price > 0:
             max_size_by_risk = (max_risk / risk_per_unit) * signal.entry_price
             size = min(size, max_size_by_risk)
 
@@ -316,12 +345,19 @@ class RiskManager:
         # Alimentar volatility targeting
         self.vol_targeting.on_equity_update(equity, timestamp or time.time())
 
-        # Activar circuit breaker si drawdown es severo
+        # Activar circuit breaker si drawdown es severo (>80% of max)
         if self.current_drawdown_pct > self.config.max_drawdown_pct * 0.8:
+            if not self._circuit_breaker_active:
+                # Only log on first activation (not on repeated triggers)
+                logger.warning("circuit_breaker_triggered",
+                               drawdown_pct=round(self.current_drawdown_pct, 4),
+                               trigger_threshold=round(self.config.max_drawdown_pct * 0.8, 4),
+                               recovery_threshold=round(self.config.max_drawdown_pct * 0.5, 4),
+                               equity=round(self._current_equity, 2),
+                               equity_peak=round(self._equity_peak, 2),
+                               cooldown_sec=300)
             self._circuit_breaker_active = True
-            self._circuit_breaker_until = time.time() + 300  # 5 min pausa
-            logger.warning("circuit_breaker_triggered",
-                           drawdown=self.current_drawdown_pct)
+            self._circuit_breaker_until = time.time() + 300  # 5 min cooldown
 
     def update_position(self, symbol: str, position: Optional[Position]) -> None:
         """Actualiza posición registrada."""
@@ -354,6 +390,18 @@ class RiskManager:
         """Reset de métricas diarias."""
         self._daily_pnl = 0.0
 
+    def check_daily_reset(self) -> None:
+        """Auto-reset daily PnL at UTC midnight. Robust: uses date comparison, not exact timing."""
+        from datetime import datetime, timezone
+        today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if self._last_daily_reset_date != today_utc:
+            old_pnl = self._daily_pnl
+            self.reset_daily()
+            self._last_daily_reset_date = today_utc
+            logger.info("daily_pnl_auto_reset",
+                        previous_daily_pnl=round(old_pnl, 2),
+                        new_date=today_utc)
+
     @property
     def current_drawdown_pct(self) -> float:
         if self._equity_peak == 0:
@@ -366,9 +414,17 @@ class RiskManager:
 
     @property
     def is_circuit_breaker_active(self) -> bool:
-        """Public API for checking circuit breaker state."""
-        if self._circuit_breaker_active and time.time() >= self._circuit_breaker_until:
-            self._circuit_breaker_active = False
+        """Public API for checking circuit breaker state.
+
+        Circuit breaker deactivates only when BOTH:
+        1. Cooldown period has elapsed
+        2. Drawdown has recovered below 50% of max_drawdown_pct
+        """
+        if self._circuit_breaker_active:
+            cooldown_elapsed = time.time() >= self._circuit_breaker_until
+            drawdown_recovered = self.current_drawdown_pct < self.config.max_drawdown_pct * 0.5
+            if cooldown_elapsed and drawdown_recovered:
+                self._circuit_breaker_active = False
         return self._circuit_breaker_active
 
     @property

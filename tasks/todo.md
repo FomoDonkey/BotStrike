@@ -524,3 +524,73 @@
 - [x] Orderbook: normalizar barras por max quantity (no hardcoded *10)
 - [x] Bridge: broadcast fire-and-forget (no bloquea trading loop)
 - [x] Verificar terminal vs desktop idénticos en lógica de trading
+
+## Audit Institucional E2E #20 (2026-04-03) — Findings
+
+### P0 — CRITICAL (before live trading) — ALL FIXED
+- [x] BUG: `symbol_has_position` always False in live mode — added `elif self._positions.get(symbol)` check (main.py:628)
+- [x] BUG: `entry_price == stop_loss` bypasses risk-per-trade — added `risk_per_unit < 0.001` guard (risk_manager.py:301)
+- [x] BUG: Circuit breaker time-only — now requires BOTH cooldown elapsed AND drawdown < 50% of max (risk_manager.py:192)
+- [x] BUG: `daily_loss` never auto-resets — added `check_daily_reset()` with UTC date comparison (risk_manager.py + main.py)
+- [x] CONFIG: `max_position_usd=200>180` — reduced to 150, added `__post_init__` runtime validation (settings.py)
+- [x] BUG: Paper ignores SmartOrderRouter — integrated router with fill probability + LIMIT/MARKET routing (paper_simulator.py)
+
+### P1 — HIGH (before trusting results)
+- [ ] BUG: Position aggregation loses weighted avg entry price — uses first position only (main.py:860)
+- [ ] BUG: `_active_orders` race condition on double WS callback — can create Trade with None (order_engine.py:309)
+- [ ] CONFIG: Kelly activation 50→20 trades (50 trades at 1.5% = $225 max loss before Kelly kicks in)
+- [ ] CONFIG: Kelly ceiling 3%→2% (less aggressive jump from default 1.5%)
+- [ ] STRATEGY: OFM CONFIRM_TICKS reduce to 1 (current 10s lag > alpha decay <1s)
+- [ ] STRATEGY: MR ADX filter should be <30, not >40 (divergences weaker in strong trends)
+- [ ] STRATEGY: MR dip proximity filter has inverted logic — kills valid entries (mean_reversion.py:392)
+- [ ] BUG: Fill probability `inf` wait when fill_prob<0.05 — cap at 300s (smart_router.py:132)
+
+### P2 — MEDIUM (quality improvements)
+- [ ] Bridge: serialize `signal_features` in trade serialization (serializers.py)
+- [ ] Desktop: store slippage/latency/order_id in TradeData (tradingStore.ts)
+- [ ] Bridge: catch-up buffer for new WS clients (send recent trades/signals)
+- [ ] Bridge: runtime config update endpoint (change risk params without restart)
+- [ ] BUG: Break-even trades (pnl==0) don't reset consecutive loss counter (risk_manager.py:342)
+- [ ] Paper SL/TP trigger on intra-bar low/high — should use close for realism (paper_simulator.py:82)
+
+### STRATEGY VALIDATION REQUIRED
+- [ ] Paper trade 100+ OFM trades — validate WR>=32% after fees (currently theoretical)
+- [ ] Paper trade 20+ MR trades — validate WR>=35% after fees
+- [ ] If WR below thresholds: disable strategy, do NOT go live
+- [ ] Walk-forward backtest: train 60d / test 30d / rotate — for both strategies
+
+## Research Engine (2026-04-03)
+- [x] MAE/MFE tracking in PaperPosition (updated on every price tick)
+- [x] Full execution metadata stored per position (order_type, cost_bps, fill_prob, routing_reason)
+- [x] Market context at entry stored (spread, ATR, regime)
+- [x] _build_exit_features() creates comprehensive signal_features for all exit paths
+- [x] ResearchEngine with rolling trade analysis and per-strategy breakdown
+- [x] Auto-report every 20 trades or 24h (whichever comes first)
+- [x] Kill switch: auto-disables strategy if PF<1.0, WR<20%, or 10+ consecutive losses
+- [x] Kill switch integrated into _process_symbol (blocks signal generation for killed strategies)
+- [x] Research reports sent to Telegram via notifier
+- [x] Tests: 117/117 pass (57 bug + 15 strategy + 21 core + 24 P0)
+
+## Exit Optimizer (2026-04-03)
+- [x] Price path tracking in PaperPosition (sampled every 3s, bounded memory)
+- [x] _build_exit_features includes price_path, SL/TP levels for shadow simulation
+- [x] ExitOptimizer with 4 shadow strategy types:
+  - Fixed R:R (1:1, 1.5:1, 2:1, 3:1)
+  - Trailing stop (3 activation/trail combos)
+  - Time-based exit (3 time/MFE combos)
+  - Partial TP (2 tp/trail combos)
+- [x] MAE/MFE distribution analysis (percentiles, capture ratio, unused MFE)
+- [x] Shadow comparison table: WR, PF, expectancy, vs-current improvement
+- [x] Integrated into ResearchEngine auto-reports (every 20 trades)
+- [x] Tests: 117/117 pass, TypeScript 0 errors
+
+## OOS Validation (2026-04-03)
+- [x] 70/30 in-sample/out-of-sample split in ExitOptimizer
+- [x] Evaluate ALL shadow strategies on IS, then SAME params on OOS (no re-optimization)
+- [x] ValidationResult per strategy: IS PF/expect, OOS PF/expect, degradation ratio, verdict
+- [x] Overfit detection: positive IS + negative OOS = OVERFIT, PF degradation < 80% = OVERFIT
+- [x] StabilityCheck: Spearman rank correlation of strategy rankings between IS/OOS
+- [x] validated_best: only recommends strategies that PASS OOS validation
+- [x] MIN_TRADES_FOR_VALIDATION = 50 (warns if insufficient data)
+- [x] Format report shows IS vs OOS table + stability + final verdict
+- [x] Tests: 115+ pass, 0 failures

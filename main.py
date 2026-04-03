@@ -127,6 +127,10 @@ class BotStrike:
             max_drawdown_pct=settings.trading.max_drawdown_pct,
         )
 
+        # Research Engine — quantitative validation of strategies
+        from analytics.research_engine import ResearchEngine
+        self.research = ResearchEngine(settings)
+
         # Telegram notifications
         self.notifier = get_notifier(settings)
 
@@ -625,10 +629,20 @@ class BotStrike:
                 if self.paper_sim.get_position(symbol, strat_type) is not None:
                     symbol_has_position = True
                     break
+        elif self._positions.get(symbol) is not None:
+            # Live mode: exchange has one aggregate position per symbol
+            symbol_has_position = True
 
         for strategy in self.strategies:
             # MM se maneja en _mm_loop (refresh 500ms, no aqui cada 5s)
             if strategy.strategy_type == StrategyType.MARKET_MAKING:
+                continue
+            # Kill switch: check if research engine disabled this strategy
+            is_active, kill_reason = self.research.get_strategy_status(strategy.strategy_type)
+            if not is_active:
+                logger.info("strategy_killed_by_research",
+                            strategy=strategy.strategy_type.value,
+                            symbol=symbol, reason=kill_reason)
                 continue
             # Verificar si la estrategia debe operar
             if not strategy.should_activate(regime):
@@ -659,9 +673,11 @@ class BotStrike:
             # Block new entries if another strategy already has a position on this symbol
             # (exits are always allowed — must be able to close existing positions)
             if symbol_has_position and current_pos is None:
-                logger.debug("strategy_symbol_locked",
-                             strategy=strategy.strategy_type.value,
-                             symbol=symbol, reason="another_strategy_has_position")
+                logger.info("position_blocked_symbol_locked",
+                            strategy=strategy.strategy_type.value,
+                            symbol=symbol,
+                            mode="paper" if self.paper_sim else "live",
+                            reason="another_strategy_has_position")
                 continue
 
             # Kelly risk fraction para esta estrategia
@@ -773,6 +789,21 @@ class BotStrike:
                 regime=self._last_regime.get(trade.symbol, MarketRegime.UNKNOWN).value,
                 size_usd=trade.price * trade.quantity,
             )
+        # Feed to Research Engine — only closed trades (pnl != 0)
+        if trade.pnl != 0:
+            research_report = self.research.on_trade(trade)
+            if research_report:
+                # Auto-report triggered — log and notify
+                report_text = self.research.format_report(research_report)
+                logger.info("research_report_generated",
+                            report_number=research_report.report_number,
+                            trades=research_report.total_trades)
+                asyncio.ensure_future(
+                    self.notifier.notify_risk_event("research_report", {
+                        "report": report_text[:2000],  # Truncate for Telegram
+                    })
+                )
+
         # Persistir en trade database
         regime = self._last_regime.get(trade.symbol, MarketRegime.UNKNOWN)
         micro = self.microstructure.get_snapshot(trade.symbol)
@@ -838,6 +869,9 @@ class BotStrike:
         """Monitorea riesgo continuamente."""
         while self._running:
             try:
+                # Auto-reset daily PnL at UTC midnight (robust date-based check)
+                self.risk_manager.check_daily_reset()
+
                 if self.paper and self.paper_sim:
                     # Paper mode: sync posiciones desde el simulador
                     # Aggregate by symbol (paper_sim keys by symbol_STRATEGY,

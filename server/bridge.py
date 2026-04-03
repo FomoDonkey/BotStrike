@@ -724,11 +724,16 @@ async def get_strategies():
         StrategyType.ORDER_FLOW_MOMENTUM: state.engine.settings.trading.allocation_order_flow_momentum,
     }
     for s in state.engine.strategies:
+        alloc_active = alloc_map.get(s.strategy_type, 0) > 0
+        # Check kill switch from research engine
+        research_active, kill_reason = state.engine.research.get_strategy_status(s.strategy_type)
         strategies.append({
             "type": s.strategy_type.value,
             "name": s.__class__.__name__,
-            "active": alloc_map.get(s.strategy_type, 0) > 0,
+            "active": alloc_active and research_active,
             "allocation": alloc_map.get(s.strategy_type, 0),
+            "killed": not research_active,
+            "kill_reason": kill_reason,
         })
     return {"strategies": strategies}
 

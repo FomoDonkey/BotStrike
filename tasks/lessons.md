@@ -437,3 +437,47 @@
 - Con OFM evaluando cada 3s, 200-500ms de broadcast delay degradaba el alpha
 - Fix: asyncio.ensure_future() — fire-and-forget
 - **LESSON: Never await I/O operations inside a latency-sensitive trading loop.**
+
+## Institutional E2E Audit #20 (2026-04-03) — CRITICAL LESSONS
+
+### Paper ≠ Live Is The #1 Risk
+- Paper simulator bypasses SmartOrderRouter entirely — uses signal.entry_price + generic slippage
+- Live uses adaptive cost model with fill probability, spread prediction, queue estimation
+- Systematic 3-5 bps difference per trade on LIMIT orders
+- Paper shows 100% fill rate (instant). Live: 40-80% depending on depth and distance
+- Paper SL/TP triggers on intra-bar low/high (perfect). Live: exchange latency + queue
+- **LESSON: Paper results are STRUCTURALLY OPTIMISTIC. Never trust paper PnL as live prediction. Budget 3-5 bps extra friction per trade.**
+
+### Microstructure Alpha Decays Faster Than Confirmation Lag
+- OBI delta predictive for ~100-200ms on BTC futures. OFM confirmation = 10s (2 ticks × 5s). By entry, alpha is gone.
+- Hawkes process is contemporaneous (measures what happened), not predictive beyond ~100ms
+- Microprice moves 1-3 bps/tick from stale depth data — threshold of 0.8 bps is tick-level noise
+- **LESSON: If your signal decays in <1s but your confirmation takes 10s, you have NO edge. Either reduce confirmation or find slower-decaying signals.**
+
+### $300 Account Friction Math Is Brutal
+- 14 bps round-trip cost on $240 notional = $0.34 per trade
+- 9 trades = $3 in fees alone (1% of capital)
+- Need WR >> breakeven (32-35%) just to survive fees
+- Both active strategies have unvalidated WR — no empirical evidence of edge
+- **LESSON: On micro accounts, friction is the DOMINANT factor. Strategy edge must exceed 2x friction to be viable. Validate WR empirically before risking capital.**
+
+### Risk Bypass Vectors Are The Most Dangerous Bugs
+- `entry_price == stop_loss` skips risk-per-trade entirely — $200 undefended positions possible
+- `symbol_has_position` only checked in paper mode — live allows multi-strategy duplicates
+- Circuit breaker auto-deactivates by time (5min), not by drawdown recovery
+- `daily_loss` never auto-resets — one bad day permanently stops the bot
+- **LESSON: Every risk check must be tested with adversarial inputs. "Normal" signals pass; the dangerous ones are malformed signals that bypass guards.**
+
+### Position Tracking Asymmetry Creates Silent Bugs
+- Paper: positions keyed by `symbol_STRATEGY` in paper_sim
+- Live: positions keyed by `symbol` in `_positions` dict
+- Aggregation uses first position's entry_price, not weighted average
+- 6+ code locations have `if self.paper_sim:` branching — each one is a potential divergence
+- **LESSON: A single position tracking system with one key scheme is worth more than a "flexible" dual system. Complexity here is risk.**
+
+### Strategy Validation Must Be Empirical, Not Theoretical
+- Both MR and OFM have sophisticated signal logic (RSI divergences, Hawkes, microprice, OBI)
+- Neither has walk-forward out-of-sample validation
+- MR generates ~2 trades/month — statistically insignificant for 12+ months
+- OFM's theoretical edge is destroyed by 10s confirmation lag
+- **LESSON: A strategy with 50 lines of simple logic and 100 validated trades beats a strategy with 500 lines of complex logic and 0 validated trades.**

@@ -25,6 +25,21 @@ export interface TradeData {
   strategy: string | null;
   timestamp: number;
   pnl: number;
+  actual_slippage_bps?: number;
+  signal_features?: {
+    mae_bps?: number;
+    mfe_bps?: number;
+    pnl_bps?: number;
+    hold_time_sec?: number;
+    order_type?: string;
+    expected_cost_bps?: number;
+    fill_probability?: number;
+    routing_reason?: string;
+    regime_at_entry?: string;
+    spread_at_entry_bps?: number;
+    exit_reason?: string;
+    [key: string]: unknown;
+  };
 }
 
 export interface SignalData {

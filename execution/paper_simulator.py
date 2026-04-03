@@ -57,11 +57,42 @@ class PaperPosition:
         self.open_time = time.time()
         self.unrealized_pnl = 0.0
 
+        # MAE/MFE tracking — updated on every price tick
+        self.mae_price: float = entry_price  # worst price seen (lowest for BUY, highest for SELL)
+        self.mfe_price: float = entry_price  # best price seen (highest for BUY, lowest for SELL)
+
+        # Execution metadata (set by paper_sim after routing)
+        self.order_type: str = ""           # LIMIT or MARKET
+        self.expected_cost_bps: float = 0.0
+        self.fill_probability: float = 0.0
+        self.routing_reason: str = ""
+        self.spread_at_entry_bps: float = 0.0
+        self.atr_at_entry: float = 0.0
+        self.regime_at_entry: str = ""
+
+        # Price path for shadow exit simulation — (relative_time_sec, price)
+        self._price_path: List[tuple] = []
+        self._last_snapshot_time: float = 0.0
+
     def update_pnl(self, current_price: float) -> float:
         if self.side == Side.BUY:
             self.unrealized_pnl = (current_price - self.entry_price) * self.size
+            if current_price < self.mae_price:
+                self.mae_price = current_price
+            if current_price > self.mfe_price:
+                self.mfe_price = current_price
         else:
             self.unrealized_pnl = (self.entry_price - current_price) * self.size
+            if current_price > self.mae_price:
+                self.mae_price = current_price
+            if current_price < self.mfe_price:
+                self.mfe_price = current_price
+        # Sample price path every ~3s for shadow exit simulation (keeps memory bounded)
+        now = time.time()
+        if now - self._last_snapshot_time >= 3.0:
+            elapsed = now - self.open_time
+            self._price_path.append((round(elapsed, 1), current_price))
+            self._last_snapshot_time = now
         return self.unrealized_pnl
 
     def close(self, exit_price: float, fee_rate: float) -> tuple:
@@ -105,6 +136,52 @@ class PaperPosition:
         )
 
 
+def _build_exit_features(pos: PaperPosition, exit_price: float,
+                         hold_time: float, action: str, exit_reason: str) -> dict:
+    """Build comprehensive signal_features dict for exit trades with MAE/MFE and execution context."""
+    entry = pos.entry_price
+    # MAE/MFE in bps relative to entry
+    if entry > 0:
+        if pos.side == Side.BUY:
+            mae_bps = (entry - pos.mae_price) / entry * 10_000
+            mfe_bps = (pos.mfe_price - entry) / entry * 10_000
+        else:
+            mae_bps = (pos.mae_price - entry) / entry * 10_000
+            mfe_bps = (entry - pos.mfe_price) / entry * 10_000
+        pnl_bps = (exit_price - entry) / entry * 10_000 if pos.side == Side.BUY else (entry - exit_price) / entry * 10_000
+    else:
+        mae_bps = mfe_bps = pnl_bps = 0.0
+
+    return {
+        # Core
+        "entry_price": entry,
+        "exit_price": exit_price,
+        "hold_time_sec": round(hold_time, 1),
+        "action": action,
+        "exit_reason": exit_reason,
+        # MAE/MFE
+        "mae_bps": round(mae_bps, 2),
+        "mfe_bps": round(mfe_bps, 2),
+        "mae_price": pos.mae_price,
+        "mfe_price": pos.mfe_price,
+        "pnl_bps": round(pnl_bps, 2),
+        # Execution metadata (captured at entry)
+        "order_type": pos.order_type,
+        "expected_cost_bps": round(pos.expected_cost_bps, 2),
+        "fill_probability": round(pos.fill_probability, 3),
+        "routing_reason": pos.routing_reason,
+        # Market context at entry
+        "spread_at_entry_bps": round(pos.spread_at_entry_bps, 2),
+        "atr_at_entry": pos.atr_at_entry,
+        "regime_at_entry": pos.regime_at_entry,
+        # Price path for shadow exit simulation (list of (elapsed_sec, price))
+        "price_path": pos._price_path,
+        # SL/TP levels for shadow comparison
+        "stop_loss": pos.stop_loss,
+        "take_profit": pos.take_profit,
+    }
+
+
 class PaperTradingSimulator:
     """Simulador de fills para paper trading.
 
@@ -120,6 +197,10 @@ class PaperTradingSimulator:
         self._positions: Dict[str, PaperPosition] = {}  # key: symbol_STRATEGY
         self._last_prices: Dict[str, float] = {}  # symbol -> last known price
         self._trade_count = 0
+
+        # SmartOrderRouter for execution parity with live mode
+        from execution.smart_router import SmartOrderRouter
+        self._router = SmartOrderRouter()
 
     def execute_signals(
         self,
@@ -208,12 +289,8 @@ class PaperTradingSimulator:
                 strategy=pos.strategy,
                 pnl=pnl,
                 expected_price=pos.entry_price,
-                signal_features={
-                    "entry_price": pos.entry_price,
-                    "hold_time_sec": round(hold_time, 1),
-                    "action": f"exit_{trigger.lower()}",
-                    "exit_reason": trigger,
-                },
+                signal_features=_build_exit_features(pos, exit_price, hold_time,
+                                                       f"exit_{trigger.lower()}", trigger),
             )
             trades.append(trade)
             keys_to_close.append(key)
@@ -295,12 +372,9 @@ class PaperTradingSimulator:
                 strategy=signal.strategy,
                 pnl=pnl,
                 expected_price=pos.entry_price,  # Original entry price for tracking
-                signal_features={
-                    "entry_price": pos.entry_price,
-                    "hold_time_sec": round(hold_time, 1),
-                    "action": signal.metadata.get("action", "exit"),
-                    "exit_reason": signal.metadata.get("exit_reason", ""),
-                },
+                signal_features=_build_exit_features(pos, exit_price, hold_time,
+                                                     signal.metadata.get("action", "exit"),
+                                                     signal.metadata.get("exit_reason", "")),
             )
             del self._positions[pos_key]
             self._trade_count += 1
@@ -324,31 +398,89 @@ class PaperTradingSimulator:
         if size <= 0:
             return None
 
-        # Aplicar slippage dinamico (with available market context + Kyle Lambda)
+        # ── SmartOrderRouter: same routing logic as live mode ────
+        # Extract market context from signal metadata
+        spread_bps = signal.metadata.get("spread_bps", self.config.slippage_bps * 2)
+        atr_bps = 0.0
+        atr_val = signal.metadata.get("atr", 0)
+        if atr_val and price > 0:
+            atr_bps = atr_val / price * 10_000
+        book_depth_usd = signal.metadata.get("book_depth_usd", 0)
+        trade_intensity = signal.metadata.get("trade_intensity", 0)
+        kyle_lambda_bps = signal.metadata.get("kyle_lambda_bps", 0)
+        microprice = signal.metadata.get("microprice", 0)
+
+        is_mm = signal.strategy == StrategyType.MARKET_MAKING
+        routing = self._router.route(
+            side=signal.side.value,
+            price=price,
+            size_usd=signal.size_usd,
+            spread_bps=spread_bps,
+            atr_bps=atr_bps,
+            book_depth_usd=book_depth_usd,
+            trade_intensity=trade_intensity,
+            signal_strength=signal.strength,
+            is_exit=False,
+            is_mm=is_mm,
+            maker_fee_bps=self.config.maker_fee * 10_000,
+            taker_fee_bps=self.config.taker_fee * 10_000,
+            microprice=microprice,
+            mid_price=price,
+            kyle_lambda_bps=kyle_lambda_bps,
+        )
+
+        # Apply slippage based on routing decision (same model as live)
         from execution.slippage import compute_slippage
         import math as _math
-        slippage = compute_slippage(
-            base_bps=self.config.slippage_bps, price=price,
-            size_usd=signal.size_usd,
-            regime=signal.metadata.get("regime", ""),
-            book_depth_usd=signal.metadata.get("book_depth_usd", 0),
-            hawkes_ratio=signal.metadata.get("hawkes_ratio", 0),
-            atr=signal.metadata.get("atr", 0),
-        )
-        # Add Kyle Lambda permanent impact component
-        kyle_lambda_bps = signal.metadata.get("kyle_lambda_bps", 0)
-        depth = signal.metadata.get("book_depth_usd", 0)
+
+        if routing.order_type == "LIMIT" and routing.limit_price > 0:
+            # LIMIT order: fill at router's optimized price + small slippage
+            base_price = routing.limit_price
+            # Simulate fill probability — use router's estimate
+            import random
+            if random.random() > routing.fill_probability:
+                # Order not filled — no trade (matches live behavior)
+                logger.debug("paper_limit_no_fill",
+                             symbol=signal.symbol,
+                             fill_prob=round(routing.fill_probability, 3),
+                             reason=routing.reason)
+                return None
+            # Filled: minimal slippage on limit orders
+            slippage = compute_slippage(
+                base_bps=self.config.slippage_bps * 0.3,  # Limit orders have less slippage
+                price=base_price,
+                size_usd=signal.size_usd,
+                regime=signal.metadata.get("regime", ""),
+                book_depth_usd=book_depth_usd,
+                hawkes_ratio=signal.metadata.get("hawkes_ratio", 0),
+                atr=signal.metadata.get("atr", 0),
+            )
+        else:
+            # MARKET order: full slippage model (same as before)
+            base_price = price
+            slippage = compute_slippage(
+                base_bps=self.config.slippage_bps, price=base_price,
+                size_usd=signal.size_usd,
+                regime=signal.metadata.get("regime", ""),
+                book_depth_usd=book_depth_usd,
+                hawkes_ratio=signal.metadata.get("hawkes_ratio", 0),
+                atr=signal.metadata.get("atr", 0),
+            )
+
+        # Add Kyle Lambda permanent impact component (both order types)
+        depth = book_depth_usd
         if kyle_lambda_bps > 0 and depth > 0 and signal.size_usd > 0:
             slippage += kyle_lambda_bps * _math.sqrt(
                 min(signal.size_usd / depth, 4.0)
-            ) * price / 10_000
+            ) * base_price / 10_000
+
         if signal.side == Side.BUY:
-            fill_price = price + slippage
+            fill_price = base_price + slippage
         else:
-            fill_price = price - slippage
+            fill_price = base_price - slippage
 
         # Crear posicion paper (round-trip fee se cobra al cerrar: entry + exit)
-        self._positions[pos_key] = PaperPosition(
+        pos = PaperPosition(
             symbol=signal.symbol,
             side=signal.side,
             size=size,
@@ -358,6 +490,15 @@ class PaperTradingSimulator:
             take_profit=signal.take_profit,
             order_id=f"paper_entry_{uuid.uuid4().hex[:8]}",
         )
+        # Store execution metadata for later analysis
+        pos.order_type = routing.order_type
+        pos.expected_cost_bps = routing.expected_cost_bps
+        pos.fill_probability = routing.fill_probability
+        pos.routing_reason = routing.reason
+        pos.spread_at_entry_bps = spread_bps
+        pos.atr_at_entry = signal.metadata.get("atr", 0)
+        pos.regime_at_entry = signal.metadata.get("regime", "")
+        self._positions[pos_key] = pos
         self._trade_count += 1
 
         # Slippage tracking: medir diferencia entre precio de senal y fill
@@ -383,5 +524,9 @@ class PaperTradingSimulator:
             strategy=signal.strategy.value, side=signal.side.value,
             price=round(fill_price, 2), size=round(size, 6),
             sl=round(signal.stop_loss, 2), tp=round(signal.take_profit, 2),
+            order_type=routing.order_type,
+            expected_cost_bps=round(routing.expected_cost_bps, 2),
+            fill_prob=round(routing.fill_probability, 3),
+            routing_reason=routing.reason,
         )
         return trade

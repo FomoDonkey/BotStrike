@@ -150,7 +150,7 @@ class Settings:
 
     # Símbolos a operar
     symbols: List[SymbolConfig] = field(default_factory=lambda: [
-        SymbolConfig(symbol="BTC-USD", leverage=2, max_position_usd=200,
+        SymbolConfig(symbol="BTC-USD", leverage=2, max_position_usd=150,
                      vpin_bucket_size=50_000.0),
     ])
 
@@ -168,6 +168,18 @@ class Settings:
     telegram_chat_id: str = field(
         default_factory=lambda: os.getenv("TELEGRAM_CHAT_ID", "")
     )
+
+    def __post_init__(self) -> None:
+        """Validate configuration coherence at startup."""
+        max_exposure_usd = self.trading.initial_capital * self.trading.max_total_exposure_pct
+        for sym in self.symbols:
+            if sym.max_position_usd > max_exposure_usd:
+                raise ValueError(
+                    f"Config incoherence: {sym.symbol} max_position_usd={sym.max_position_usd} "
+                    f"exceeds max_total_exposure={max_exposure_usd:.0f} "
+                    f"(capital={self.trading.initial_capital} × exposure_pct={self.trading.max_total_exposure_pct}). "
+                    f"Reduce max_position_usd to <= {max_exposure_usd:.0f}"
+                )
 
     def get_symbol_config(self, symbol: str) -> SymbolConfig:
         """Obtiene configuración de un símbolo específico."""

@@ -11,6 +11,8 @@ interface StrategyInfo {
   active: boolean;
   allocation: number;
   name: string;
+  killed?: boolean;
+  kill_reason?: string;
 }
 
 const FALLBACK_STRATEGIES: StrategyInfo[] = [
@@ -97,11 +99,17 @@ export function StrategiesPage() {
               <span className="text-text-muted">Status</span>
               <span className={cn(
                 "px-2 py-0.5 rounded text-[10px] font-semibold uppercase",
+                s.killed ? "bg-loss/10 text-loss" :
                 s.active ? "bg-profit/10 text-profit" : "bg-white/5 text-text-muted"
               )}>
-                {s.active ? "ACTIVE" : "DISABLED"}
+                {s.killed ? "KILLED" : s.active ? "ACTIVE" : "DISABLED"}
               </span>
             </div>
+            {s.killed && s.kill_reason && (
+              <div className="text-[10px] text-loss/80 mt-1 font-mono truncate">
+                {s.kill_reason}
+              </div>
+            )}
           </GlassPanel>
         ))}
       </div>

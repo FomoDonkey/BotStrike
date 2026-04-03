@@ -105,6 +105,7 @@ def serialize_trade(t: Trade) -> Dict:
         "expected_price": t.expected_price,
         "actual_slippage_bps": t.actual_slippage_bps,
         "latency_ms": t.latency_ms,
+        "signal_features": _serialize_metadata(t.signal_features) if t.signal_features else None,
     }
 
 
