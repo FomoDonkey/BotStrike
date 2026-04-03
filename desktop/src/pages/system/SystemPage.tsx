@@ -175,7 +175,7 @@ export function SystemPage() {
             <div className="space-y-1 text-xs">
               <div className="flex justify-between">
                 <span className="text-text-muted">Version</span>
-                <span className="font-mono text-text-secondary">2.1.2</span>
+                <span className="font-mono text-text-secondary">2.2.0</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-text-muted">Framework</span>
