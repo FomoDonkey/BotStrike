@@ -400,12 +400,13 @@ check("end_session with provided=0 keeps internal (0.07)",
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SUMMARY
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-print("\n" + "=" * 55)
-print(f"TOTAL: {passed + failed} tests | PASSED: {passed} | FAILED: {failed}")
-print("=" * 55)
-if failed:
-    print(">>> SOME TESTS FAILED <<<")
-    sys.exit(1)
-else:
-    print(">>> ALL TESTS PASSED <<<")
-    sys.exit(0)
+if __name__ == "__main__":
+    print("\n" + "=" * 55)
+    print(f"TOTAL: {passed + failed} tests | PASSED: {passed} | FAILED: {failed}")
+    print("=" * 55)
+    if failed:
+        print(">>> SOME TESTS FAILED <<<")
+        sys.exit(1)
+    else:
+        print(">>> ALL TESTS PASSED <<<")
+        sys.exit(0)

@@ -436,9 +436,21 @@
 ## Pendiente / Mejoras futuras
 - [x] ~~Alertas por Telegram/Discord~~ (Telegram implementado)
 - [x] ~~Multi-exchange support~~ (Binance data downloader implementado, trading pendiente)
-- [ ] Binance trading client (BinanceClient para ejecución de órdenes en Binance)
+- [x] Binance Futures trading client (exchange/binance_client.py — HMAC-SHA256 auth, full order API)
+- [x] Exchange abstraction: config exchange_venue="binance"|"strike", auto-selects client
+- [x] Binance user data stream (listenKey + WebSocket for fills/positions in live mode)
+- [x] Fix allocation: OFM→0% (unvalidated), MR→100% (only strategy with evidence)
+- [x] Fix slippage: 2.0→1.5 bps (calibrated for Binance Futures, not Strike)
+- [x] Fix taker fee: 5→4 bps (Binance Futures VIP 0)
+- [x] Fix data_stale_block_sec: 300→30s (was absurd for scalping with alpha decay <10s)
+- [x] Fix data_stale_warn_sec: 60→15s
+- [x] OrderExecutionEngine accepts Union[StrikeClient, BinanceClient]
+- [x] MarketDataCollector accepts Any client (duck typing for get_klines)
+- [x] Binance symbol normalization in order fill processing (BTCUSDT → BTC-USD)
+- [x] main.py auto-selects BinanceClient+BinanceWebSocket when venue=binance
+- [x] All tests pass (57+21+15+24 = 117 regression), 0 new failures
 - [ ] Bayesian optimization (reemplazar grid search)
-- [ ] Calibrar slippage model con datos reales de Strike (cuando haya 30+ dias recolectados)
+- [ ] Calibrar slippage model con datos empíricos (30+ dias paper en Binance)
 - [ ] Sharpe ratio: incluir dias sin trades como retorno 0 (sparse calendar fix)
 - [ ] HMM regime transition model (probabilidades de cambio de regimen)
 - [ ] Execution analytics cross-venue (comparar fills con Binance/Bybit via API publica)
@@ -594,3 +606,63 @@
 - [x] MIN_TRADES_FOR_VALIDATION = 50 (warns if insufficient data)
 - [x] Format report shows IS vs OOS table + stability + final verdict
 - [x] Tests: 115+ pass, 0 failures
+
+## FASE 2: Research Engine — Validacion Empirica (2026-04-03)
+- [x] Extend TradeRecord with 10 new fields: slippage_bps, expected_cost_bps, fill_probability, order_type, mae_bps, mfe_bps, signal_strength, spread_bps, atr, pnl_pct
+- [x] DB schema migration v1→v2: ALTER TABLE adds columns, backwards-compatible
+- [x] TradeRepository: updated INSERT (32 columns), batch insert, _row_to_trade with safe .get()
+- [x] TradeDBAdapter.on_trade: accepts all new fields as kwargs
+- [x] main.py _process_paper_fill: extracts execution quality from signal_features → adapter
+- [x] scripts/research_report.py: CLI tool reads DB, computes metrics, generates formatted report
+- [x] Report includes: portfolio summary, execution quality, per-strategy, per-regime, alerts, kill switches, last 10 trades, sample trade log
+- [x] Kill switch logic: PF<1.0 (30+ trades) → flag strategy for disable
+- [x] JSON output mode (--json flag)
+- [x] Tests: 36/36 pytest pass, DB round-trip verified, migration tested
+- [x] NOTE: Existing 53 trades have 0 in new fields (pre-migration). New trades will have full data.
+
+## Audit Institucional E2E #21 — Full System Deep Audit (2026-04-03)
+
+### P0 — CRITICAL (blocks live trading) — ALL FIXED
+- [x] BUG: Order engine SL/TP race condition — now always places protectives (reduce_only handles unfilled parent)
+- [x] BUG: Position reconciliation gate fixed — was checking Strike key only, now also checks Binance key
+- [x] BUG: Desktop now calls set_leverage() after engine init (matches CLI behavior)
+- [x] BUG: Desktop testnet — paper/dry_run force mainnet, live respects settings.use_testnet
+- [x] BUG: Desktop shutdown now mirrors CLI — cancel_all, end_session, flush_metrics, notify
+- [x] BUG: MR backtest_mode flag — disables live API calls, uses resampled data only
+- [x] BUG: MR ADX thresholds lowered to 25-30 (ranging market filter, was 40-55)
+- [x] BUG: All test files sys.exit guarded + conftest.py collect_ignore for script-style tests
+- [x] CONFIG: max_open_positions=2 added to TradingConfig, enforced in risk_manager
+- [x] BUG: Latency calc fixed (fill_ts ms - order.timestamp*1000)
+- [x] BUG: Cancel order response checked before removing from tracking
+- [x] Tests: 36/36 pytest + 57 bug + 21 core + 15 strategy + 22 P0 = ALL PASSING
+
+### P1 — HIGH (degrades performance significantly)
+- [ ] BUG: Kyle Lambda never populated in signal metadata (always 0.0) — slippage model advanced component disabled (order_engine.py:111-112)
+- [ ] BUG: Order cancel doesn't verify exchange response — pops from tracking even if cancel failed (order_engine.py:262-267)
+- [ ] BUG: Latency calc units wrong (fill_ts in ms, order.timestamp in seconds) — off by 1000x (order_engine.py:356-359)
+- [ ] BUG: Backtest SL/TP exits at exact price without slippage — overestimates PnL 2-5 bps/trade (backtester.py:377-404)
+- [ ] RISK: Flash crash with 6 positions × 10% = 30% loss — circuit breaker too slow. Limit to 2-3 concurrent positions for $300 account
+- [ ] RISK: Funding rate not budgeted for open positions — $1.50/8h on $150 position = 1.5%/day invisible bleed
+- [ ] BUG: Batch order response indexed by array position — partial failures cause tracking mismatch (binance_client.py:430-473)
+- [ ] BUG: Paper simulator fill probability uses Bernoulli (random) — path-dependent in reality (paper_simulator.py:436-447)
+- [ ] BUG: Backtest indicators pre-computed on full dataset — information leakage in regime thresholds (backtester.py:330-335)
+- [ ] BUG: Equity curve built per-trade only — misses intra-trade unrealized DD, understates max DD 10-15% (performance.py:574-587)
+- [ ] CONFIG: Annualization factor 252 (equities) should be 365 (crypto 24/7) in performance.py:144
+
+### P2 — MEDIUM (quality improvements)
+- [ ] Data staleness check exists but NOT enforced — strategy must call manually, no auto-rejection
+- [ ] OFM OBI Delta threshold (0.02) hardcoded — should adapt to volatility
+- [ ] OFM MAX_HOLD_SEC=600 too long for scalp alpha (30-60s half-life) — reduce to 120s
+- [ ] Trend Provider cache 15min too stale for intraday — reduce to 5min
+- [ ] Walk-forward optimizer needs nested cross-validation (train on 80%, validate on 20% of IS fold)
+- [ ] Optimizer doesn't check parameter stability across folds — only reports consistency_ratio
+- [ ] No exponential backoff on exchange API failures — orders abandoned on transient 5xx
+- [ ] WebSocket reconnection doesn't re-validate subscriptions after >60s disconnect
+- [ ] Hawkes adaptive_mu blend: max(mu, adaptive_mu*0.8) can completely suppress adaptation if config mu is high
+- [ ] Avellaneda-Stoikov gamma cap at 5x is arbitrary — use log scaling or softer cap
+- [ ] adverse_selection_horizon_sec=300 too long for 3s bot cycle — reduce to 60s
+- [ ] Correlation regime useless for single-symbol (BTC only) — document or disable
+- [ ] Stress tests inject events uniformly — real crashes cluster in high-vol periods
+- [ ] Slippage model linear size impact — should use sqrt (Almgren-Chriss concave model)
+- [ ] No idempotency key handling in REST clients — network timeout can create duplicate orders
+- [ ] Desktop no error recovery — engine crash = bridge dies (CLI has task restart logic)

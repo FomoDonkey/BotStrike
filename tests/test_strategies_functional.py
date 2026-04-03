@@ -442,19 +442,20 @@ run_test("MM: generates bid and ask signals when conditions met", test_mm_genera
 # ══════════════════════════════════════════════════════════════════════
 # SUMMARY
 # ══════════════════════════════════════════════════════════════════════
-print("\n" + "=" * 60)
-passed = sum(1 for _, ok, _ in results if ok)
-failed = sum(1 for _, ok, _ in results if not ok)
-total = len(results)
-print(f"RESULTS: {passed}/{total} passed, {failed} failed")
+if __name__ == "__main__":
+    print("\n" + "=" * 60)
+    passed = sum(1 for _, ok, _ in results if ok)
+    failed = sum(1 for _, ok, _ in results if not ok)
+    total = len(results)
+    print(f"RESULTS: {passed}/{total} passed, {failed} failed")
 
-if failed:
-    print("\nFailed tests:")
-    for name, ok, err in results:
-        if not ok:
-            print(f"  - {name}: {err}")
-    print()
-    sys.exit(1)
-else:
-    print("All tests passed!")
-    sys.exit(0)
+    if failed:
+        print("\nFailed tests:")
+        for name, ok, err in results:
+            if not ok:
+                print(f"  - {name}: {err}")
+        print()
+        sys.exit(1)
+    else:
+        print("All tests passed!")
+        sys.exit(0)

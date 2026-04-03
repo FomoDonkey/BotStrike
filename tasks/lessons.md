@@ -481,3 +481,71 @@
 - MR generates ~2 trades/month — statistically insignificant for 12+ months
 - OFM's theoretical edge is destroyed by 10s confirmation lag
 - **LESSON: A strategy with 50 lines of simple logic and 100 validated trades beats a strategy with 500 lines of complex logic and 0 validated trades.**
+
+## Audit Institucional E2E #21 — Venue Migration (2026-04-03)
+
+### Strike Finance Liquidity Is Insufficient
+- Strike Finance tiene ~556 trades/día BTC vs ~480K en Binance (856x menos liquidez)
+- Order book de Strike probablemente tiene 1-2 niveles significativos — OBI/depth/microprice necesitan 5+
+- Slippage real en Strike estimado en 10-50 bps, no los 2 bps calibrados
+- OFM (60% del capital) nunca fue backesteada — el orderbook simulado produce 0 señales
+- MR tiene solo n=5 trades en 90 días — estadísticamente insignificante
+- **LESSON: No importa cuán sofisticado sea el modelo de microestructura si el venue no tiene la liquidez para generar datos significativos. La elección del venue es anterior a la elección de la estrategia.**
+
+### Capital Allocation Must Follow Evidence
+- OFM tenía 60% del capital sin un solo backtest validado
+- Breakeven WR de OFM era 37.5% — zero margin for error
+- MR tenía solo 40% a pesar de ser la única estrategia con evidencia (incluso si débil)
+- **LESSON: Nunca asignar capital a una estrategia sin validación estadística. 0% allocation hasta que haya evidence >= 30 trades OOS.**
+
+### Slippage Calibration Must Match Execution Venue
+- slippage_bps estaba calibrado en 2.0 bps "realistic for Binance micro-orders"
+- Pero el sistema ejecutaba en Strike Finance con 856x menos liquidez
+- El modelo de 7 componentes era sofisticado pero el input base era incorrecto
+- **LESSON: El modelo de slippage más avanzado es inútil si el parámetro base no corresponde al venue real. Calibrar empíricamente primero, modelar después.**
+
+### Stale Data Threshold Must Match Strategy Timeframe
+- data_stale_block_sec era 300s (5 minutos)
+- OFM alpha decay era <10 segundos
+- 5 minutos de datos stale en un scalper = operar ciego
+- **LESSON: El threshold de datos stale debe ser <= al decay time del alpha de la estrategia más rápida. Para scalping: 30s max.**
+
+### Binance Futures Integration
+- BinanceClient usa HMAC-SHA256 (no Ed25519 como Strike)
+- Binance Futures order types: STOP_MARKET (no "stop"), TAKE_PROFIT_MARKET (no "take_profit")
+- Binance post_only en futures: usar timeInForce="GTX" (Good Till Crossing)
+- Binance batch orders: máximo 5 por request
+- Binance cancel_all: requiere symbol parameter (no tiene cancel global sin symbol)
+- Binance user data stream: requiere listenKey (POST /fapi/v1/listenKey), renovar cada 30min con PUT
+- Binance symbols: BTCUSDT (no BTC-USD) — normalizar en ambas direcciones
+- Binance margin mode change returns error "No need to change" si ya está en el modo correcto — catch and ignore
+
+## Audit Institucional E2E #21 (2026-04-03)
+
+### CLI vs Desktop Coherence
+- Desktop mode y CLI mode comparten el core BotStrike class, pero la inicialización, shutdown, y error recovery divergen en 8 de 16 dimensiones. Los módulos de trading son idénticos, pero todo lo demás (testnet, leverage, metrics flush, DB session, Telegram, error recovery) solo está implementado en CLI.
+- **LESSON: Cualquier funcionalidad que se añada al ciclo de vida (init/shutdown/recovery) DEBE implementarse en AMBOS entry points simultáneamente. Mantener un checklist de paridad CLI↔Desktop.**
+
+### ADX Threshold Direction for Mean Reversion
+- ADX 40-55 indica tendencia fuerte, no ranging. Mean reversion funciona en ADX < 25 (mercado sin dirección). Los thresholds altos se justificaron como "divergencias en exhaustion de tendencia" pero esto contradice la premisa fundamental de mean reversion.
+- **LESSON: Si una estrategia se llama "Mean Reversion", su filtro de régimen debe seleccionar mercados RANGING (ADX < 25-30), no trending. Divergencias en tendencia son Trend Exhaustion, no Mean Reversion.**
+
+### Backtest with Live API Calls = Invalid
+- MR strategy calls Binance REST API for 1D/4H/1H klines during backtest, getting CURRENT data instead of historical period data. This creates massive look-ahead bias and invalidates all multi-timeframe backtest results.
+- **LESSON: NEVER call external APIs from within strategy code during backtest execution. All data must come from the backtest harness. Mock or pre-load all timeframes.**
+
+### Position Reconciliation is Non-Negotiable
+- System relies 100% on WebSocket for position tracking. A single missed WS message creates permanent state divergence. No periodic REST polling to verify actual exchange positions.
+- **LESSON: For any system managing real money, implement periodic position reconciliation via REST API (every 5-10 min). WebSocket is for speed, REST is for truth.**
+
+### Backtests Overestimate by 10-20%
+- Multiple compounding biases: SL/TP fill at exact price (no slippage), indicators pre-computed on full history (leak), taker fee always (not maker), equity curve per-trade (misses intra-trade DD), stress events uniformly distributed.
+- **LESSON: Discount backtest Sharpe by 15-20% for realistic expectation. Apply "execution tax" of +5 bps to all exits in backtest to model real fills.**
+
+### Flash Crash Exposure on Micro Accounts
+- With 6 concurrent positions at $150 each, a 10% flash crash causes 30% DD — bypassing the 10% circuit breaker before it can react. The CB activates per-signal, not per-portfolio-tick.
+- **LESSON: For accounts <$1K, limit to 2-3 concurrent positions maximum. Circuit breakers designed for sequential losses fail against simultaneous correlated moves.**
+
+### Slippage Model: Linear vs Concave
+- Code uses linear size impact model (slippage ∝ size/depth). Empirical research (Almgren-Chriss) shows slippage scales as sqrt(size/depth). Linear model underestimates slippage on large orders and overestimates on small ones.
+- **LESSON: Use sqrt scaling for market impact: slip = base × sqrt(size/depth). Linear is only acceptable for orders < 1% of book depth.**

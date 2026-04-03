@@ -232,15 +232,16 @@ except Exception as e:
 
 
 # ============================================================
-# FINAL SUMMARY
-# ============================================================
-print(f"\n{'='*50}")
-print(f"  SELF-AUDIT COMPLETE: {passed} PASSED, {failed} FAILED")
-if issues:
-    print(f"  ISSUES:")
-    for i in issues:
-        print(f"    - {i}")
-else:
-    print(f"  NO ISSUES FOUND")
-print(f"{'='*50}")
-sys.exit(0 if failed == 0 else 1)
+if __name__ == "__main__":
+    # FINAL SUMMARY
+    # ============================================================
+    print(f"\n{'='*50}")
+    print(f"  SELF-AUDIT COMPLETE: {passed} PASSED, {failed} FAILED")
+    if issues:
+        print(f"  ISSUES:")
+        for i in issues:
+            print(f"    - {i}")
+    else:
+        print(f"  NO ISSUES FOUND")
+    print(f"{'='*50}")
+    sys.exit(0 if failed == 0 else 1)

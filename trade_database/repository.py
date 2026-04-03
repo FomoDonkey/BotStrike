@@ -25,8 +25,8 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-# Schema version para migraciones futuras
-SCHEMA_VERSION = 1
+# Schema version — bump on column additions
+SCHEMA_VERSION = 2
 
 CREATE_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -70,6 +70,16 @@ CREATE TABLE IF NOT EXISTS trades (
     duration_sec REAL DEFAULT 0,
     micro_vpin REAL DEFAULT 0,
     micro_risk_score REAL DEFAULT 0,
+    slippage_bps REAL DEFAULT 0,
+    expected_cost_bps REAL DEFAULT 0,
+    fill_probability REAL DEFAULT 0,
+    order_type TEXT DEFAULT '',
+    mae_bps REAL DEFAULT 0,
+    mfe_bps REAL DEFAULT 0,
+    signal_strength REAL DEFAULT 0,
+    spread_bps REAL DEFAULT 0,
+    atr REAL DEFAULT 0,
+    pnl_pct REAL DEFAULT 0,
     timestamp REAL NOT NULL,
     FOREIGN KEY (session_id) REFERENCES sessions(session_id)
 );
@@ -102,18 +112,45 @@ class TradeRepository:
         self._init_db()
 
     def _init_db(self) -> None:
-        """Crea tablas si no existen."""
+        """Crea tablas si no existen. Migrates schema if needed."""
         with self._connect() as conn:
             conn.executescript(CREATE_TABLES_SQL)
             # Check/set schema version
             cur = conn.execute("SELECT version FROM schema_version LIMIT 1")
             row = cur.fetchone()
-            if row is None:
+            current_version = row["version"] if row else 0
+            if current_version == 0:
                 conn.execute(
                     "INSERT INTO schema_version (version) VALUES (?)",
                     (SCHEMA_VERSION,),
                 )
+            elif current_version < SCHEMA_VERSION:
+                self._migrate(conn, current_version)
             conn.commit()
+
+    def _migrate(self, conn, from_version: int) -> None:
+        """Apply schema migrations incrementally."""
+        if from_version < 2:
+            # v2: Add execution quality + MAE/MFE + market context fields
+            new_columns = [
+                ("slippage_bps", "REAL DEFAULT 0"),
+                ("expected_cost_bps", "REAL DEFAULT 0"),
+                ("fill_probability", "REAL DEFAULT 0"),
+                ("order_type", "TEXT DEFAULT ''"),
+                ("mae_bps", "REAL DEFAULT 0"),
+                ("mfe_bps", "REAL DEFAULT 0"),
+                ("signal_strength", "REAL DEFAULT 0"),
+                ("spread_bps", "REAL DEFAULT 0"),
+                ("atr", "REAL DEFAULT 0"),
+                ("pnl_pct", "REAL DEFAULT 0"),
+            ]
+            for col_name, col_type in new_columns:
+                try:
+                    conn.execute(f"ALTER TABLE trades ADD COLUMN {col_name} {col_type}")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+            conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+            logger.info("db_migrated", from_version=from_version, to_version=SCHEMA_VERSION)
 
     @contextmanager
     def _connect(self):
@@ -137,8 +174,11 @@ class TradeRepository:
                     trade_id, session_id, source, symbol, side, price, quantity,
                     fee, fee_asset, pnl, order_id, strategy, regime, trade_type,
                     equity_before, equity_after, entry_price, exit_price,
-                    duration_sec, micro_vpin, micro_risk_score, timestamp
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    duration_sec, micro_vpin, micro_risk_score,
+                    slippage_bps, expected_cost_bps, fill_probability, order_type,
+                    mae_bps, mfe_bps, signal_strength, spread_bps, atr, pnl_pct,
+                    timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 trade.trade_id, trade.session_id, trade.source,
                 trade.symbol, trade.side, trade.price, trade.quantity,
@@ -147,6 +187,9 @@ class TradeRepository:
                 trade.equity_before, trade.equity_after,
                 trade.entry_price, trade.exit_price,
                 trade.duration_sec, trade.micro_vpin, trade.micro_risk_score,
+                trade.slippage_bps, trade.expected_cost_bps, trade.fill_probability,
+                trade.order_type, trade.mae_bps, trade.mfe_bps,
+                trade.signal_strength, trade.spread_bps, trade.atr, trade.pnl_pct,
                 trade.timestamp,
             ))
             conn.commit()
@@ -161,8 +204,11 @@ class TradeRepository:
                     trade_id, session_id, source, symbol, side, price, quantity,
                     fee, fee_asset, pnl, order_id, strategy, regime, trade_type,
                     equity_before, equity_after, entry_price, exit_price,
-                    duration_sec, micro_vpin, micro_risk_score, timestamp
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    duration_sec, micro_vpin, micro_risk_score,
+                    slippage_bps, expected_cost_bps, fill_probability, order_type,
+                    mae_bps, mfe_bps, signal_strength, spread_bps, atr, pnl_pct,
+                    timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, [
                 (
                     t.trade_id, t.session_id, t.source,
@@ -172,6 +218,9 @@ class TradeRepository:
                     t.equity_before, t.equity_after,
                     t.entry_price, t.exit_price,
                     t.duration_sec, t.micro_vpin, t.micro_risk_score,
+                    t.slippage_bps, t.expected_cost_bps, t.fill_probability,
+                    t.order_type, t.mae_bps, t.mfe_bps,
+                    t.signal_strength, t.spread_bps, t.atr, t.pnl_pct,
                     t.timestamp,
                 )
                 for t in trades
@@ -461,27 +510,39 @@ class TradeRepository:
     @staticmethod
     def _row_to_trade(row: sqlite3.Row) -> TradeRecord:
         """Convierte fila SQLite a TradeRecord."""
+        # Use dict() for safe access — older DBs may lack new columns
+        d = dict(row)
         return TradeRecord(
-            trade_id=row["trade_id"],
-            session_id=row["session_id"],
-            source=row["source"],
-            symbol=row["symbol"],
-            side=row["side"],
-            price=row["price"],
-            quantity=row["quantity"],
-            fee=row["fee"],
-            fee_asset=row["fee_asset"],
-            pnl=row["pnl"],
-            order_id=row["order_id"],
-            strategy=row["strategy"],
-            regime=row["regime"],
-            trade_type=row["trade_type"],
-            equity_before=row["equity_before"],
-            equity_after=row["equity_after"],
-            entry_price=row["entry_price"],
-            exit_price=row["exit_price"],
-            duration_sec=row["duration_sec"],
-            micro_vpin=row["micro_vpin"],
-            micro_risk_score=row["micro_risk_score"],
-            timestamp=row["timestamp"],
+            trade_id=d["trade_id"],
+            session_id=d["session_id"],
+            source=d["source"],
+            symbol=d["symbol"],
+            side=d["side"],
+            price=d["price"],
+            quantity=d["quantity"],
+            fee=d.get("fee", 0),
+            fee_asset=d.get("fee_asset", "USD"),
+            pnl=d.get("pnl", 0),
+            order_id=d.get("order_id", ""),
+            strategy=d.get("strategy", ""),
+            regime=d.get("regime", ""),
+            trade_type=d.get("trade_type", ""),
+            equity_before=d.get("equity_before", 0),
+            equity_after=d.get("equity_after", 0),
+            entry_price=d.get("entry_price", 0),
+            exit_price=d.get("exit_price", 0),
+            duration_sec=d.get("duration_sec", 0),
+            micro_vpin=d.get("micro_vpin", 0),
+            micro_risk_score=d.get("micro_risk_score", 0),
+            slippage_bps=d.get("slippage_bps", 0),
+            expected_cost_bps=d.get("expected_cost_bps", 0),
+            fill_probability=d.get("fill_probability", 0),
+            order_type=d.get("order_type", ""),
+            mae_bps=d.get("mae_bps", 0),
+            mfe_bps=d.get("mfe_bps", 0),
+            signal_strength=d.get("signal_strength", 0),
+            spread_bps=d.get("spread_bps", 0),
+            atr=d.get("atr", 0),
+            pnl_pct=d.get("pnl_pct", 0),
+            timestamp=d["timestamp"],
         )

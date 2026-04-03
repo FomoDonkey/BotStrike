@@ -143,8 +143,19 @@ class TradeDBAdapter:
         trade_type: str = "",
         entry_price: float = 0.0,
         duration_sec: float = 0.0,
+        # Execution quality fields
+        slippage_bps: float = 0.0,
+        expected_cost_bps: float = 0.0,
+        fill_probability: float = 0.0,
+        order_type: str = "",
+        mae_bps: float = 0.0,
+        mfe_bps: float = 0.0,
+        signal_strength: float = 0.0,
+        spread_bps: float = 0.0,
+        atr: float = 0.0,
+        pnl_pct: float = 0.0,
     ) -> None:
-        """Registra un trade desde el sistema live.
+        """Registra un trade desde el sistema live/paper.
 
         Convierte core.types.Trade a TradeRecord y lo persiste.
         """
@@ -169,6 +180,16 @@ class TradeDBAdapter:
             duration_sec=duration_sec,
             micro_vpin=micro_vpin,
             micro_risk_score=micro_risk_score,
+            slippage_bps=slippage_bps,
+            expected_cost_bps=expected_cost_bps,
+            fill_probability=fill_probability,
+            order_type=order_type,
+            mae_bps=mae_bps,
+            mfe_bps=mfe_bps,
+            signal_strength=signal_strength,
+            spread_bps=spread_bps,
+            atr=atr,
+            pnl_pct=pnl_pct,
             timestamp=trade.timestamp,
         )
         self._track(record)

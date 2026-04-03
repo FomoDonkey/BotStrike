@@ -54,27 +54,27 @@ TF_CONFIGS: Dict[str, TFConfig] = {
     "1d": TFConfig(
         name="1D", interval="1d", lookback=14,
         rsi_oversold=30, rsi_overbought=70, rsi_recovery=40,
-        adx_max=55, sl_mult=2.5, tp_mult=5.0,     # ADX 55: divergences at trend exhaustion are strongest
+        adx_max=30, sl_mult=2.5, tp_mult=4.0,     # ADX 30: MR works in ranging/weak-trend (was 55)
         risk_pct=0.015, strength_base=0.95,
         cache_ttl=900, min_bars=30,
     ),
     "4h": TFConfig(
         name="4H", interval="4h", lookback=12,
         rsi_oversold=30, rsi_overbought=70, rsi_recovery=42,
-        adx_max=50, sl_mult=1.8, tp_mult=4.0,     # ADX 50: allow exhaustion divergences
+        adx_max=28, sl_mult=1.8, tp_mult=3.5,     # ADX 28: ranging market filter (was 50)
         risk_pct=0.015, strength_base=0.85,
         cache_ttl=600, min_bars=30,
     ),
     "1h": TFConfig(
         name="1H", interval="1h", lookback=10,
         rsi_oversold=28, rsi_overbought=72, rsi_recovery=43,
-        adx_max=50, sl_mult=1.5, tp_mult=3.5,     # ADX 50: allow divergences in strong trends (exhaustion)
+        adx_max=25, sl_mult=1.5, tp_mult=3.0,     # ADX 25: classic ranging threshold (was 50)
         risk_pct=0.015, strength_base=0.75, cache_ttl=300, min_bars=25,
     ),
     "15m": TFConfig(
         name="15m", interval="15m", lookback=10,
-        rsi_oversold=28, rsi_overbought=72, rsi_recovery=42,  # Wilder RSI is smoother — adjusted from 25/75/45
-        adx_max=40, sl_mult=1.5, tp_mult=3.0,     # ADX 40: was 35, too tight
+        rsi_oversold=28, rsi_overbought=72, rsi_recovery=42,
+        adx_max=25, sl_mult=1.5, tp_mult=2.5,     # ADX 25: ranging only (was 40). TP 2.5 realistic for 15m
         risk_pct=0.01, strength_base=0.65, cache_ttl=180, min_bars=20,
     ),
 }
@@ -312,6 +312,9 @@ class MeanReversionStrategy(BaseStrategy):
     def __init__(self, trading_config: TradingConfig) -> None:
         super().__init__(StrategyType.MEAN_REVERSION, trading_config)
         self._last_exit_time: Dict[str, float] = {}
+        # When True, disables live Binance API calls (backtest context).
+        # Higher TFs will only work via resampling from input data.
+        self.backtest_mode: bool = False
 
     def should_activate(self, regime: MarketRegime) -> bool:
         return regime != MarketRegime.BREAKOUT
@@ -645,11 +648,16 @@ class MeanReversionStrategy(BaseStrategy):
         if target_min is None:
             return None
 
-        # Try resample from 1m input first (backtester)
+        # Try resample from 1m input first (backtester and live)
         if len(df) > target_min * cfg.min_bars:
             resampled = _resample(df, target_min)
             if resampled is not None and len(resampled) >= cfg.min_bars:
                 return resampled
 
-        # Live: fetch from Binance
+        # In backtest mode, NEVER call live API — it creates look-ahead bias.
+        # Higher TFs that can't be resampled from input data are simply skipped.
+        if self.backtest_mode:
+            return None
+
+        # Live only: fetch from Binance (cached)
         return _fetch_klines_sync(symbol, cfg.interval, limit=100)

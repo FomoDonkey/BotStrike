@@ -183,11 +183,13 @@ async def start_engine(mode: str = "paper"):
     from main import BotStrike
 
     settings = Settings()
-    settings.use_testnet = False  # Always mainnet for real price data
+    # Paper/dry-run: always use mainnet for real price data (testnet prices differ).
+    # Live mode: respect settings.use_testnet from .env (user may want testnet for testing).
     is_paper = mode == "paper"
     is_dry_run = mode == "dry_run"
+    if is_paper or is_dry_run:
+        settings.use_testnet = False
 
-    # Identical config to: python main.py --paper --binance --no-testnet
     state.engine = BotStrike(
         settings=settings,
         dry_run=is_dry_run,
@@ -196,6 +198,15 @@ async def start_engine(mode: str = "paper"):
     )
     state.mode = mode
     state.running = True
+
+    # Set leverage on exchange (match CLI behavior — main.py:162-169)
+    if not is_dry_run and not is_paper:
+        for sym in settings.symbols:
+            try:
+                await state.engine.client.set_leverage(sym.symbol, sym.leverage)
+                logger.info("leverage_set", symbol=sym.symbol, leverage=sym.leverage)
+            except Exception as e:
+                logger.warning("leverage_set_failed", symbol=sym.symbol, error=str(e))
 
     _install_hooks(state.engine)
     state.engine_task = asyncio.create_task(_run_engine())
@@ -218,15 +229,49 @@ async def _run_engine():
 
 
 async def stop_engine():
-    """Gracefully stop the engine."""
-    if state.engine:
-        state.engine._running = False
+    """Gracefully stop the engine — mirrors CLI shutdown sequence (main.py:1080-1104)."""
+    engine = state.engine
+    if engine:
+        engine._running = False
+
+        # Cancel live orders if in live mode (match CLI: main.py:1084-1085)
+        if not engine.dry_run and not engine.paper:
+            try:
+                await engine.execution_engine.cancel_all()
+            except Exception as e:
+                logger.warning("shutdown_cancel_all_failed", error=str(e))
+
     if state.engine_task and not state.engine_task.done():
         state.engine_task.cancel()
         try:
             await asyncio.wait_for(state.engine_task, timeout=10)
         except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
             pass
+
+    # Flush metrics, end DB session, notify — match CLI shutdown
+    if engine:
+        try:
+            engine.trade_db.end_session(
+                final_equity=engine.risk_manager.current_equity,
+                max_drawdown=engine.risk_manager.current_drawdown_pct,
+            )
+        except Exception as e:
+            logger.warning("shutdown_db_end_failed", error=str(e))
+
+        try:
+            metrics = engine.metrics.get_metrics()
+            logger.info("final_metrics", **metrics)
+            engine.trading_logger._flush_metrics()
+        except Exception as e:
+            logger.warning("shutdown_metrics_flush_failed", error=str(e))
+
+        try:
+            metrics = engine.metrics.get_metrics()
+            await engine.notifier.notify_shutdown(metrics)
+            await engine.notifier.stop()
+        except Exception as e:
+            logger.warning("shutdown_notify_failed", error=str(e))
+
     state.running = False
     state.engine = None
     state.engine_task = None

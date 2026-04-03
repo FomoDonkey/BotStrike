@@ -302,7 +302,9 @@ class Backtester:
         active_strategies: List[BaseStrategy] = []
         strat_names = strategies or ["MEAN_REVERSION", "TREND_FOLLOWING", "MARKET_MAKING"]
         if "MEAN_REVERSION" in strat_names:
-            active_strategies.append(MeanReversionStrategy(trading_config))
+            _mr = MeanReversionStrategy(trading_config)
+            _mr.backtest_mode = True  # Disable live API calls — use resampled data only
+            active_strategies.append(_mr)
         if "TREND_FOLLOWING" in strat_names:
             active_strategies.append(TrendFollowingStrategy(trading_config))
         if "MARKET_MAKING" in strat_names:
@@ -672,7 +674,9 @@ class RealisticBacktester:
         active_strategies: List[BaseStrategy] = []
         strat_names = strategies or ["MEAN_REVERSION", "TREND_FOLLOWING", "MARKET_MAKING", "ORDER_FLOW_MOMENTUM"]
         if "MEAN_REVERSION" in strat_names:
-            active_strategies.append(MeanReversionStrategy(trading_config))
+            _mr = MeanReversionStrategy(trading_config)
+            _mr.backtest_mode = True  # Disable live API calls — use resampled data only
+            active_strategies.append(_mr)
         if "TREND_FOLLOWING" in strat_names:
             active_strategies.append(TrendFollowingStrategy(trading_config))
         if "MARKET_MAKING" in strat_names:

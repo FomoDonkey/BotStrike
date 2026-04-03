@@ -18,11 +18,12 @@ import sys
 import time
 from typing import Dict, List, Optional
 
-from config.settings import Settings, SymbolConfig
+from config.settings import Settings, SymbolConfig, ExchangeVenue
 from core.types import MarketRegime, StrategyType, Signal, Position, Side
 from core.market_data import MarketDataCollector
 from core.regime_detector import RegimeDetector
 from exchange.strike_client import StrikeClient
+from exchange.binance_client import BinanceClient
 from exchange.websocket_client import StrikeWebSocket
 from strategies.mean_reversion import MeanReversionStrategy
 from strategies.trend_following import TrendFollowingStrategy
@@ -57,19 +58,29 @@ class BotStrike:
         self.use_binance = use_binance
         self._running = False
 
-        # Paper trading: forzar URLs de MAINNET para datos reales
-        if self.paper and not use_binance:
+        # Resolve exchange venue: --binance flag overrides config; config default is "binance"
+        self._venue = ExchangeVenue.BINANCE if use_binance else settings.exchange_venue_enum
+
+        # Paper trading with Strike: forzar URLs de MAINNET para datos reales
+        if self.paper and self._venue == ExchangeVenue.STRIKE:
             settings.api_price_url = "https://api.strikefinance.org/price"
             settings.api_base_url = "https://api.strikefinance.org"
             settings.ws_market_url = "wss://api.strikefinance.org/ws/price"
 
-        # Inicializar componentes
-        self.client = StrikeClient(settings)
-        if use_binance:
+        # Inicializar exchange client según venue configurado
+        if self._venue == ExchangeVenue.BINANCE:
+            self.client = BinanceClient(settings)
             from exchange.binance_ws import BinanceWebSocket
             self.websocket = BinanceWebSocket(symbols=settings.symbol_names)
+            self.use_binance = True  # Force Binance WS for data
         else:
-            self.websocket = StrikeWebSocket(settings)
+            self.client = StrikeClient(settings)
+            if use_binance:
+                from exchange.binance_ws import BinanceWebSocket
+                self.websocket = BinanceWebSocket(symbols=settings.symbol_names)
+            else:
+                self.websocket = StrikeWebSocket(settings)
+
         self.regime_detector = RegimeDetector()
         self.market_data = MarketDataCollector(settings, self.client, self.regime_detector)
         self.risk_manager = RiskManager(settings)
@@ -188,7 +199,11 @@ class BotStrike:
         ]
 
         # WebSocket de usuario solo si hay API key Y no estamos en paper mode
-        if self.settings.api_private_key and not self.paper:
+        has_api_key = (
+            self.settings.api_private_key  # Strike key
+            or os.getenv("BINANCE_API_KEY", "")  # Binance key
+        )
+        if has_api_key and not self.paper:
             tasks.append(asyncio.create_task(self.websocket.connect_user()))
 
         logger.info("botstrike_running")
@@ -804,10 +819,11 @@ class BotStrike:
                     })
                 )
 
-        # Persistir en trade database
+        # Persistir en trade database — extract execution quality from signal_features
         regime = self._last_regime.get(trade.symbol, MarketRegime.UNKNOWN)
         micro = self.microstructure.get_snapshot(trade.symbol)
-        is_exit = trade.pnl != 0 or trade.signal_features.get("action", "").startswith("exit")
+        sf = trade.signal_features or {}
+        is_exit = trade.pnl != 0 or sf.get("action", "").startswith("exit")
         self.trade_db.on_trade(
             trade,
             regime=regime,
@@ -816,8 +832,19 @@ class BotStrike:
             micro_vpin=micro.vpin.vpin if micro and micro.vpin else 0,
             micro_risk_score=micro.risk_score if micro else 0,
             trade_type="EXIT" if is_exit else "ENTRY",
-            entry_price=trade.expected_price if not is_exit else trade.signal_features.get("entry_price", 0),
-            duration_sec=trade.signal_features.get("hold_time_sec", 0),
+            entry_price=trade.expected_price if not is_exit else sf.get("entry_price", 0),
+            duration_sec=sf.get("hold_time_sec", 0),
+            # Execution quality (new fields)
+            slippage_bps=trade.actual_slippage_bps,
+            expected_cost_bps=sf.get("expected_cost_bps", 0),
+            fill_probability=sf.get("fill_probability", 0),
+            order_type=sf.get("order_type", ""),
+            mae_bps=sf.get("mae_bps", 0),
+            mfe_bps=sf.get("mfe_bps", 0),
+            signal_strength=sf.get("strength", sf.get("signal_strength", 0)),
+            spread_bps=sf.get("spread_at_entry_bps", sf.get("spread_bps", 0)),
+            atr=sf.get("atr_at_entry", sf.get("atr", 0)),
+            pnl_pct=(trade.pnl / equity_before * 100) if equity_before > 0 else 0,
         )
 
     async def _unwind_mm_inventory(self, symbol: str, sym_config: SymbolConfig) -> None:
@@ -901,7 +928,7 @@ class BotStrike:
                     for sym in list(self.risk_manager._positions.keys()):
                         if sym not in paper_symbols:
                             self.risk_manager.update_position(sym, None)
-                elif not self.dry_run and self.settings.api_private_key:
+                elif not self.dry_run and (self.settings.api_private_key or self.settings.binance_api_secret):
                     # Live: actualizar posiciones desde exchange
                     positions_data = await self.client.get_positions()
                     if isinstance(positions_data, list):
@@ -1797,15 +1824,19 @@ def main() -> None:
                         use_binance=args.binance)
 
         if args.paper:
-            source = "BINANCE" if args.binance else "STRIKE MAINNET"
+            venue = settings.trading.exchange_venue.upper()
+            source = "BINANCE" if (args.binance or venue == "BINANCE") else "STRIKE MAINNET"
             print(f"\n{'='*60}")
             print(f"  BotStrike PAPER TRADING")
             print(f"{'='*60}")
+            print(f"  Exchange:         {venue}")
             print(f"  Datos de mercado: {source} (precios reales)")
             print(f"  Ordenes:          SIMULADAS (sin dinero real)")
             print(f"  PnL tracking:     COMPLETO (trade DB + analytics)")
             print(f"  Simbolos:         {settings.symbol_names}")
             print(f"  Capital virtual:  ${settings.trading.initial_capital:,.0f}")
+            print(f"  Alloc MR:         {settings.trading.allocation_mean_reversion*100:.0f}%")
+            print(f"  Alloc OFM:        {settings.trading.allocation_order_flow_momentum*100:.0f}%")
             print(f"  Ctrl+C para detener")
             print(f"{'='*60}\n")
 

@@ -226,6 +226,15 @@ class RiskManager:
                            drawdown=self.current_drawdown_pct)
             return None
 
+        # 1c. Verificar max concurrent positions (flash crash protection)
+        max_pos = getattr(self.config, 'max_open_positions', 0)
+        if max_pos > 0:
+            open_count = sum(1 for p in self._positions.values() if p is not None)
+            if open_count >= max_pos:
+                logger.info("max_open_positions_reached",
+                            symbol=signal.symbol, open=open_count, limit=max_pos)
+                return None
+
         # 2. Verificar exposición total
         if self._check_total_exposure(signal):
             logger.warning("max_exposure_reached", symbol=signal.symbol)

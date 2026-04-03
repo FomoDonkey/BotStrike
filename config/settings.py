@@ -4,11 +4,18 @@ Define todos los parámetros ajustables: API, estrategias, riesgo, símbolos.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Dict, List
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+class ExchangeVenue(Enum):
+    """Exchange de ejecución. Binance por defecto (liquidez real)."""
+    BINANCE = "binance"
+    STRIKE = "strike"
 
 
 @dataclass
@@ -66,6 +73,8 @@ class SymbolConfig:
 @dataclass
 class TradingConfig:
     """Configuración global de trading."""
+    # Exchange venue — Binance for liquidity, Strike when ready
+    exchange_venue: str = "binance"      # "binance" or "strike"
     # Capital
     initial_capital: float = 300.0
     # Riesgo global — calibrado para $300 micro account
@@ -73,23 +82,24 @@ class TradingConfig:
     max_daily_loss_pct: float = 0.05    # $15 max daily loss — prevents single bad day from hitting drawdown limit
     max_leverage: int = 5               # Safer for micro account (was 20)
     max_total_exposure_pct: float = 0.6  # 60% max exposure (was 0.8)
+    max_open_positions: int = 2          # Max concurrent positions (flash crash protection for $300 account)
     risk_per_trade_pct: float = 0.015   # 1.5% = $4.50 risk budget (was 1%)
-    # Asignación por estrategia (se ajusta dinámicamente)
-    allocation_mean_reversion: float = 0.40
+    # Asignación por estrategia — OFM desactivado hasta validación estadística (0 backtests)
+    allocation_mean_reversion: float = 1.00   # 100% — única estrategia con evidencia (was 0.40)
     allocation_trend_following: float = 0.00
     allocation_market_making: float = 0.00
-    allocation_order_flow_momentum: float = 0.60
-    # Fees (Strike Finance defaults)
-    maker_fee: float = 0.0002
-    taker_fee: float = 0.0005
-    # Slippage — realistic for micro orders on Binance
-    slippage_bps: float = 2.0           # 2 bps — realistic for Binance micro-orders ($250 notional)
+    allocation_order_flow_momentum: float = 0.00  # DESACTIVADO: sin backtest, breakeven WR=37.5% (was 0.60)
+    # Fees — Binance Futures defaults (VIP 0)
+    maker_fee: float = 0.0002           # 2 bps — Binance Futures maker
+    taker_fee: float = 0.0004           # 4 bps — Binance Futures taker (was 5 bps Strike)
+    # Slippage — calibrado para Binance Futures micro orders
+    slippage_bps: float = 1.5           # 1.5 bps — Binance Futures has deep book (was 2.0 bps)
     # Funding rate thresholds
     funding_rate_warn: float = 0.0001   # 1 bps/8h — reduce sizing 30%
     funding_rate_block: float = 0.0005  # 5 bps/8h — bloquear entradas contra funding
-    # Stale data protection
-    data_stale_warn_sec: float = 60.0    # warn si datos > 60s stale (15m bars)
-    data_stale_block_sec: float = 300.0  # no operar si datos > 5min stale
+    # Stale data protection — tight for scalping (alpha decays <10s)
+    data_stale_warn_sec: float = 15.0    # warn si datos > 15s stale (was 60s — too permissive)
+    data_stale_block_sec: float = 30.0   # no operar si datos > 30s stale (was 300s — absurd for scalping)
     # Intervalos
     data_interval_sec: float = 1.0
     strategy_interval_sec: float = 3.0   # evaluar cada 3s — OFM alpha decays <10s, 5s was too slow
@@ -143,6 +153,14 @@ class Settings:
     )
     api_private_key: str = field(
         default_factory=lambda: os.getenv("STRIKE_PRIVATE_KEY", "")
+    )
+
+    # Binance Futures API (when exchange_venue="binance")
+    binance_api_key: str = field(
+        default_factory=lambda: os.getenv("BINANCE_API_KEY", "")
+    )
+    binance_api_secret: str = field(
+        default_factory=lambda: os.getenv("BINANCE_API_SECRET", "")
     )
 
     # Usar testnet por defecto para desarrollo
@@ -214,6 +232,19 @@ class Settings:
                 "adverse_selection_horizon_sec": s.adverse_selection_horizon_sec,
             }
         return cfg
+
+    @property
+    def exchange_venue_enum(self) -> ExchangeVenue:
+        """Returns the configured exchange venue as enum."""
+        return ExchangeVenue(self.trading.exchange_venue)
+
+    @property
+    def is_binance(self) -> bool:
+        return self.trading.exchange_venue == "binance"
+
+    @property
+    def is_strike(self) -> bool:
+        return self.trading.exchange_venue == "strike"
 
     def apply_testnet(self) -> None:
         """Cambia URLs a testnet."""

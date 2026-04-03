@@ -474,21 +474,22 @@ for fn in [test_vpin_cdf_monotonic, test_hawkes_spike_uses_original_mu,
 # ================================================================
 # SUMMARY
 # ================================================================
-print()
-print("=" * 60)
-print("SUMMARY")
-print("=" * 60)
-passed = sum(1 for _, ok, _ in results if ok)
-failed = sum(1 for _, ok, _ in results if not ok)
-total = len(results)
-print(f"Total: {total}  |  PASSED: {passed}  |  FAILED: {failed}")
-print()
-if failed > 0:
-    print("FAILED TESTS:")
-    for name, ok, err in results:
-        if not ok:
-            print(f"  - {name}: {err}")
-else:
-    print("ALL TESTS PASSED!")
-print()
-sys.exit(0 if failed == 0 else 1)
+if __name__ == "__main__":
+    print()
+    print("=" * 60)
+    print("SUMMARY")
+    print("=" * 60)
+    passed = sum(1 for _, ok, _ in results if ok)
+    failed = sum(1 for _, ok, _ in results if not ok)
+    total = len(results)
+    print(f"Total: {total}  |  PASSED: {passed}  |  FAILED: {failed}")
+    print()
+    if failed > 0:
+        print("FAILED TESTS:")
+        for name, ok, err in results:
+            if not ok:
+                print(f"  - {name}: {err}")
+    else:
+        print("ALL TESTS PASSED!")
+    print()
+    sys.exit(0 if failed == 0 else 1)

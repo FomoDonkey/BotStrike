@@ -65,6 +65,24 @@ class TradeRecord:
     micro_vpin: float = 0.0
     micro_risk_score: float = 0.0
 
+    # Execution quality (captured from paper_sim / live fills)
+    slippage_bps: float = 0.0
+    expected_cost_bps: float = 0.0
+    fill_probability: float = 0.0
+    order_type: str = ""            # MARKET, LIMIT
+
+    # MAE/MFE (from paper_sim price path tracking)
+    mae_bps: float = 0.0           # Max Adverse Excursion in basis points
+    mfe_bps: float = 0.0           # Max Favorable Excursion in basis points
+
+    # Market context at entry
+    signal_strength: float = 0.0
+    spread_bps: float = 0.0
+    atr: float = 0.0               # ATR at entry (absolute, not bps)
+
+    # Derived
+    pnl_pct: float = 0.0           # PnL as % of equity_before
+
     # Timestamp
     timestamp: float = field(default_factory=time.time)
 
@@ -109,6 +127,16 @@ class TradeRecord:
             "duration_sec": self.duration_sec,
             "micro_vpin": self.micro_vpin,
             "micro_risk_score": self.micro_risk_score,
+            "slippage_bps": self.slippage_bps,
+            "expected_cost_bps": self.expected_cost_bps,
+            "fill_probability": self.fill_probability,
+            "order_type": self.order_type,
+            "mae_bps": self.mae_bps,
+            "mfe_bps": self.mfe_bps,
+            "signal_strength": self.signal_strength,
+            "spread_bps": self.spread_bps,
+            "atr": self.atr,
+            "pnl_pct": self.pnl_pct,
             "timestamp": self.timestamp,
         }
 

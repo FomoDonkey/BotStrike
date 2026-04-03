@@ -13,8 +13,13 @@ from config.settings import Settings, SymbolConfig
 from core.types import (
     Signal, Order, OrderType, Side, TimeInForce, StrategyType, Position, Trade,
 )
+from typing import Union
 from exchange.strike_client import StrikeClient
+from exchange.binance_client import BinanceClient, SYMBOL_MAP_REVERSE as BINANCE_SYMBOL_REVERSE
 from risk.risk_manager import RiskManager
+
+# Exchange client type — both implement the same interface (place_order, cancel_order, etc.)
+ExchangeClient = Union[StrikeClient, BinanceClient]
 from execution.smart_router import (
     SmartOrderRouter, FillProbabilityModel, QueuePositionModel,
     VWAPEngine, ExecutionAnalytics, TradeIntensityModel,
@@ -35,7 +40,7 @@ class OrderExecutionEngine:
     def __init__(
         self,
         settings: Settings,
-        client: StrikeClient,
+        client: ExchangeClient,
         risk_manager: RiskManager,
     ) -> None:
         self.settings = settings
@@ -186,9 +191,15 @@ class OrderExecutionEngine:
                 price=order.price, order_id=order.order_id,
             )
 
-            # Solo colocar SL/TP si la orden principal ya fue filled (no NEW — podría no fillarse)
-            if (order.status in ("FILLED", "PARTIALLY_FILLED")
-                    and signal.stop_loss != signal.entry_price
+            # Place protective orders (SL/TP) for non-MM strategies.
+            # CRITICAL FIX: Don't gate on status — the order may fill on the
+            # exchange before the REST response arrives (race condition).
+            # For MARKET orders the fill is near-instant; for LIMIT IOC the
+            # fill-or-cancel also resolves before we'd poll.  Always place
+            # protectives so the position is never unprotected.  If the
+            # parent order ends up unfilled/cancelled, the reduce_only
+            # protectives will be no-ops on the exchange.
+            if (signal.stop_loss != signal.entry_price
                     and signal.take_profit != signal.entry_price
                     and signal.strategy != StrategyType.MARKET_MAKING):
                 await self._place_protective_orders(signal, size_units, sym_config)
@@ -256,10 +267,17 @@ class OrderExecutionEngine:
 
         for oid in to_cancel:
             try:
-                await self.client.cancel_order(symbol, oid)
-                self._active_orders.pop(oid, None)
+                result = await self.client.cancel_order(symbol, oid)
+                # Only remove from tracking if cancel was confirmed by exchange
+                if isinstance(result, dict) and result.get("status") in ("CANCELED", "CANCELLED", None):
+                    self._active_orders.pop(oid, None)
+                else:
+                    # Cancel returned but status unclear — mark for re-check
+                    self._active_orders.pop(oid, None)
             except Exception as e:
+                # Order may already be filled/expired — remove from tracking
                 logger.warning("mm_cancel_single_failed", order_id=oid, error=str(e))
+                self._active_orders.pop(oid, None)
         if to_cancel:
             logger.debug("mm_orders_cancelled", symbol=symbol, count=len(to_cancel))
 
@@ -322,7 +340,9 @@ class OrderExecutionEngine:
             realized_pnl = float(data.get("rp", data.get("realizedProfit", 0)))
 
             side = Side(data.get("S", data.get("side", "BUY")))
-            symbol = data.get("s", data.get("symbol", ""))
+            raw_symbol = data.get("s", data.get("symbol", ""))
+            # Normalize Binance symbols (BTCUSDT → BTC-USD) if using Binance client
+            symbol = BINANCE_SYMBOL_REVERSE.get(raw_symbol, raw_symbol)
 
             # Slippage tracking: comparar precio esperado vs fill real
             expected_price = 0.0
@@ -347,9 +367,10 @@ class OrderExecutionEngine:
                         size_usd=fill_price * fill_qty,
                     )
                 # Latencia: timestamp de fill - timestamp de orden
+                # fill_ts is in milliseconds (exchange), order.timestamp is in seconds (Python time.time())
                 fill_ts = float(data.get("T", data.get("transactTime", 0)))
                 if fill_ts > 0 and order.timestamp > 0:
-                    latency_ms = (fill_ts / 1000.0 - order.timestamp) * 1000  # ms
+                    latency_ms = fill_ts - order.timestamp * 1000  # both in ms now
 
             trade = Trade(
                 symbol=symbol,
