@@ -65,14 +65,19 @@ class PaperPosition:
         return self.unrealized_pnl
 
     def close(self, exit_price: float, fee_rate: float) -> tuple:
-        """Cierra posicion. Retorna (pnl_neto, fee)."""
+        """Cierra posicion. Retorna (pnl_neto, fee_total).
+
+        Cobra round-trip fees: entry + exit.
+        """
         if self.side == Side.BUY:
             gross = (exit_price - self.entry_price) * self.size
         else:
             gross = (self.entry_price - exit_price) * self.size
-        # Exit fee only — entry fee already deducted at open
-        fee = exit_price * self.size * fee_rate
-        return gross - fee, fee
+        # Round-trip fee: entry fee + exit fee
+        entry_fee = self.entry_price * self.size * fee_rate
+        exit_fee = exit_price * self.size * fee_rate
+        total_fee = entry_fee + exit_fee
+        return gross - total_fee, total_fee
 
     def check_sl_tp(self, price: float, high: float, low: float) -> Optional[str]:
         """Verifica si SL o TP se activaron. Retorna 'SL' o 'TP' o None."""
@@ -325,7 +330,7 @@ class PaperTradingSimulator:
         else:
             fill_price = price - slippage
 
-        # Crear posicion paper (fee se cobra completo al cerrar, igual que backtester)
+        # Crear posicion paper (round-trip fee se cobra al cerrar: entry + exit)
         self._positions[pos_key] = PaperPosition(
             symbol=signal.symbol,
             side=signal.side,
@@ -341,7 +346,7 @@ class PaperTradingSimulator:
         # Slippage tracking: medir diferencia entre precio de senal y fill
         actual_slippage_bps = abs(fill_price - price) / price * 10_000 if price > 0 else 0.0
 
-        # Retornar Trade de entrada (pnl=0, fee=0 — fee completo se cobra al cerrar)
+        # Retornar Trade de entrada (pnl=0, fee=0 — round-trip fee se cobra al cerrar)
         trade = Trade(
             symbol=signal.symbol,
             side=signal.side,

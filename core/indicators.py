@@ -73,8 +73,8 @@ class Indicators:
         avg_loss = loss.ewm(span=period, adjust=False).mean()
         rs = avg_gain / avg_loss.replace(0, np.nan)
         rsi = 100 - (100 / (1 + rs))
-        # Cuando avg_loss=0 (solo ganancias), rs=NaN → RSI debe ser 100
-        return rsi.fillna(100.0)
+        # NaN cases: avg_loss=0 (all gains → RSI=100) or first bar (diff=NaN → RSI=50 neutral)
+        return rsi.fillna(50.0)
 
     @staticmethod
     def momentum(series: pd.Series, period: int) -> pd.Series:

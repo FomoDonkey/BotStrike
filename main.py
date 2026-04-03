@@ -981,6 +981,9 @@ class BotStrike:
         metrics = self.metrics.get_metrics()
         logger.info("final_metrics", **metrics)
 
+        # Flush pending metrics to disk
+        self.trading_logger._flush_metrics()
+
         # Notificar shutdown por Telegram
         await self.notifier.notify_shutdown(metrics)
         await self.notifier.stop()

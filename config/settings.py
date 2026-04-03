@@ -16,7 +16,7 @@ class SymbolConfig:
     """Configuración específica por símbolo/activo."""
     symbol: str
     leverage: int = 10
-    max_position_usd: float = 10_000.0
+    max_position_usd: float = 200.0  # Safe default for small accounts (was 10k)
     # Mean Reversion
     mr_zscore_entry: float = 2.0
     mr_zscore_exit: float = 0.5
