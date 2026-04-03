@@ -85,6 +85,17 @@ export function useWebSocketBridge() {
       if (msg.type === "health") {
         useSystemStore.getState().onHealth(msg);
         useSystemStore.getState().setBridgeConnected(true);
+      } else if (msg.type === "log") {
+        useSystemStore.getState().onLog(msg);
+      } else if (msg.type === "engine_error") {
+        useSystemStore.getState().onEngineError(msg);
+        // Also fire a critical alert so the user sees it regardless of current page
+        useAlertStore.getState().addAlert({
+          level: "critical",
+          title: "Engine Error",
+          message: msg.error ?? "Unknown engine error",
+          sound: "circuitBreaker",
+        });
       }
     });
 

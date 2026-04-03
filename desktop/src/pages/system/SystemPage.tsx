@@ -5,19 +5,12 @@ import { PulsingDot } from "@/components/shared/PulsingDot";
 import { useSystemStore } from "@/stores/systemStore";
 import { formatDuration, cn } from "@/lib/utils";
 import { api } from "@/lib/api";
-import { getChannel } from "@/lib/ws";
 import { useMarketStore } from "@/stores/marketStore";
 import { Monitor, Cpu, Wifi, WifiOff, Clock, Users, Activity, Play, Square, RefreshCw } from "lucide-react";
 
-interface LogEntry {
-  timestamp: number;
-  level: string;
-  message: string;
-}
-
 export function SystemPage() {
   const system = useSystemStore();
-  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const logs = useSystemStore((s) => s.logs);
   const [botStatus, setBotStatus] = useState<any>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
@@ -29,32 +22,13 @@ export function SystemPage() {
     return () => clearInterval(i);
   }, []);
 
-  // Subscribe to system channel for logs (reduced buffer 200, batched scroll)
+  // Auto-scroll when new logs arrive
   useEffect(() => {
-    let scrollTimer: ReturnType<typeof setTimeout> | null = null;
-    const scrollToBottom = () => {
-      if (scrollTimer) return; // debounce
-      scrollTimer = setTimeout(() => {
-        logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-        scrollTimer = null;
-      }, 300);
-    };
-
-    const unsub = getChannel("system").subscribe((msg) => {
-      if (msg.type === "log") {
-        setLogs((prev) => [...prev.slice(-199), { timestamp: msg.timestamp, level: msg.level || "info", message: msg.message || JSON.stringify(msg) }]);
-        scrollToBottom();
-      }
-      if (msg.type === "engine_error") {
-        setLogs((prev) => [...prev.slice(-199), { timestamp: msg.timestamp, level: "error", message: msg.error }]);
-        scrollToBottom();
-      }
-    });
-    return () => {
-      unsub();
-      if (scrollTimer) clearTimeout(scrollTimer);
-    };
-  }, []);
+    const timer = setTimeout(() => {
+      logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [logs.length]);
 
   const handleStart = () => api.botStart("paper").catch(() => null);
   const handleStop = () => api.botStop().catch(() => null);
@@ -175,7 +149,7 @@ export function SystemPage() {
             <div className="space-y-1 text-xs">
               <div className="flex justify-between">
                 <span className="text-text-muted">Version</span>
-                <span className="font-mono text-text-secondary">2.3.0</span>
+                <span className="font-mono text-text-secondary">2.4.0</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-text-muted">Framework</span>
@@ -193,7 +167,7 @@ export function SystemPage() {
             <Activity className="w-3 h-3" /> Live Logs
           </h3>
           <button
-            onClick={() => setLogs([])}
+            onClick={() => useSystemStore.setState({ logs: [] })}
             className="text-[10px] text-text-muted hover:text-text-secondary flex items-center gap-1"
           >
             <RefreshCw className="w-2.5 h-2.5" /> Clear

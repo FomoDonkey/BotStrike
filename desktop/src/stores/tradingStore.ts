@@ -9,6 +9,7 @@ export interface PositionData {
   unrealized_pnl: number;
   realized_pnl: number;
   leverage: number;
+  liquidation_price: number;
   strategy: string | null;
   notional: number;
   pnl_pct: number;
@@ -34,6 +35,7 @@ export interface SignalData {
   entry_price: number;
   stop_loss: number;
   take_profit: number;
+  size_usd: number;
   timestamp: number;
 }
 

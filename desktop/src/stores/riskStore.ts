@@ -18,11 +18,11 @@ export const useRiskStore = create<RiskState>((set) => ({
   regime: "UNKNOWN",
 
   onUpdate: (data) =>
-    set({
-      equity: data.equity ?? 300,
-      drawdown_pct: data.drawdown_pct ?? 0,
-      max_drawdown_pct: data.max_drawdown_pct ?? 0.10,
-      circuit_breaker_active: data.circuit_breaker_active ?? false,
-      regime: data.regime ?? "UNKNOWN",
-    }),
+    set((s) => ({
+      equity: data.equity ?? s.equity,
+      drawdown_pct: data.drawdown_pct ?? s.drawdown_pct,
+      max_drawdown_pct: data.max_drawdown_pct ?? s.max_drawdown_pct,
+      circuit_breaker_active: data.circuit_breaker_active ?? s.circuit_breaker_active,
+      regime: data.regime ?? s.regime,
+    })),
 }));

@@ -404,6 +404,35 @@
 - [x] Verified FALSE POSITIVES from audit: Exit 3 logic is correct (if not should_exit), asyncio has no race conditions (single-threaded), notify_external_exit correctly only for SL/TP (strategy exits already update cooldown)
 - [x] All modules compile, 56/57 tests pass (1 pre-existing), TypeScript zero errors
 
+## Audit profundo #18: Full terminal + desktop coherence audit (2026-04-03)
+- [x] Fix CRITICAL: Desktop system channel only handled "health" — "log" and "engine_error" silently dropped. Added onLog/onEngineError to systemStore, wired in useWebSocket hook, engine_error triggers critical alert. SystemPage now uses global store logs instead of local subscription (useWebSocket.ts, systemStore.ts, SystemPage.tsx)
+- [x] Fix HIGH: riskStore equity reverted to $300 on missing data — now preserves last known value via set(s => ...) pattern (riskStore.ts)
+- [x] Fix HIGH: OFM EMA initialized at 0.0 — took ~100s to converge. Now initializes to first raw value for instant responsiveness (order_flow_momentum.py)
+- [x] Fix HIGH: Kelly Criterion computed but never applied in risk_manager.validate_signal — _adjust_position_size used fixed risk_per_trade_pct. Now uses get_kelly_risk_pct(signal.strategy) (risk_manager.py)
+- [x] Fix HIGH: Position sizing friction used magic ×10 multiplier for estimated notional — replaced with actual notional calculation from raw_size * price (base.py)
+- [x] Fix MEDIUM: Desktop PositionData missing liquidation_price field — added to interface. Also added size_usd to SignalData (tradingStore.ts)
+- [x] Fix MEDIUM: Market snapshot fields (funding_rate, volume_24h, open_interest, mark_price, index_price) silently dropped by marketStore — added MarketInfo interface and storage (marketStore.ts)
+- [x] Fix MEDIUM: Bridge _broadcast_symbol_state sent log_entry messages to trading channel instead of system channel — now routes correctly (server/bridge.py)
+- [x] Fix MEDIUM: OFM microprice threshold used ATR-based calc that got easier in low vol (inverted for scalping) — now uses spread-based threshold: max(0.8, effective_spread * 0.4) (order_flow_momentum.py)
+- [x] Fix MEDIUM: Alert cooldown race condition in checkAndTrigger — multiple rules could bypass cooldown in same call. Now collects all triggers and batch-updates cooldowns in single set() (alertStore.ts)
+- [x] Test update: _calc_position_size expected value updated for new friction formula (test_strategies_functional.py)
+- [x] Fix MEDIUM: analytics fallback initial_eq=100_000 → settings.trading.initial_capital ($300) — prevented distorted % returns when session not found (main.py)
+- [x] All Python files compile, TypeScript zero errors, Vite build passes
+- [x] Tests: 15/15 strategies, 56/57 bug fixes (1 pre-existing), 20/21 core (1 pre-existing)
+
+## Audit profundo #19: Economics + coherence deep audit (2026-04-03)
+- [x] Fix CRITICAL (QUANT): OFM SL/TP economics UNPROFITABLE — SL=9bps < round-trip cost=14bps. Net R:R was 0.17:1 (needs 85% WR). Added fee-based SL floor: SL >= 2x round-trip cost (28bps). Net R:R now 1:1, breakeven WR=50% (order_flow_momentum.py)
+- [x] Fix CRITICAL: MAX_SL_BPS 30→50 — with fee floor of 28bps, old cap left no room for ATR scaling (order_flow_momentum.py)
+- [x] Fix CRITICAL: Profit lock threshold used spread (2-4bps) instead of SL (28bps) — locked profit before covering fees. Now uses SL-based threshold (order_flow_momentum.py)
+- [x] Fix CRITICAL: SystemPage Clear button crashed — `setLogs([])` called non-existent function. Fixed with `useSystemStore.setState({ logs: [] })` (SystemPage.tsx)
+- [x] Fix CRITICAL: Bridge candle gap logic dropped ALL post-gap candles permanently — compared against last ACCEPTED candle (cascading rejection). Now compares against previous RAW timestamp (server/bridge.py)
+- [x] Fix HIGH: MR `_fetch_klines_sync` blocked event loop 15s — asyncio.run() in thread blocked everything. Now fire-and-forget with ensure_future, returns cached data immediately (mean_reversion.py)
+- [x] Fix MEDIUM: Alert sound type "circuitBreaker" not in union — added to Alert type (alertStore.ts)
+- [x] Fix MEDIUM: Bridge `get_strategies` hardcoded active status — now uses dynamic allocation check (server/bridge.py)
+- [x] Fix MEDIUM: Dead constant TP_SPREAD_MULT=6.0 never used — renamed to TP_RR_MULT=2.0 which IS used (order_flow_momentum.py)
+- [x] Fix MEDIUM: OFMState missing entry_sl_bps field for profit lock calculation (order_flow_momentum.py)
+- [x] All Python files compile, TypeScript zero errors, 15/15 strategy tests pass
+
 ## Pendiente / Mejoras futuras
 - [x] ~~Alertas por Telegram/Discord~~ (Telegram implementado)
 - [x] ~~Multi-exchange support~~ (Binance data downloader implementado, trading pendiente)

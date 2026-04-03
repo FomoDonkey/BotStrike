@@ -148,23 +148,39 @@ async def _fetch_binance_klines(symbol: str, interval: str, limit: int = 100) ->
 
 
 def _fetch_klines_sync(symbol: str, interval: str, limit: int = 100) -> Optional[pd.DataFrame]:
-    """Synchronous wrapper for kline fetching (for use in generate_signals)."""
+    """Non-blocking wrapper for kline fetching.
+
+    Schedules the async fetch on the running event loop (non-blocking).
+    Returns cached data immediately; fresh data appears on the NEXT call.
+    This prevents blocking the event loop for 15s on cache misses,
+    which would freeze SL/TP processing and all other async tasks.
+    """
+    cache_key = f"{symbol}_{interval}"
+    tf_cfg = TF_CONFIGS.get(interval)
+    ttl = tf_cfg.cache_ttl if tf_cfg else 300
+    now = _time.time()
+
+    # Return cache if fresh
+    if cache_key in _kline_cache:
+        ts, df = _kline_cache[cache_key]
+        if now - ts < ttl:
+            return df
+
+    # Schedule async fetch in background (non-blocking)
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            # We're inside an async context — use a thread
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(asyncio.run, _fetch_binance_klines(symbol, interval, limit))
-                return future.result(timeout=15)
+            # Fire-and-forget: fetch will populate cache for next call
+            asyncio.ensure_future(_fetch_binance_klines(symbol, interval, limit))
         else:
-            return asyncio.run(_fetch_binance_klines(symbol, interval, limit))
+            asyncio.run(_fetch_binance_klines(symbol, interval, limit))
     except Exception:
-        # Fallback: check cache
-        cache_key = f"{symbol}_{interval}"
-        if cache_key in _kline_cache:
-            return _kline_cache[cache_key][1]
-        return None
+        pass
+
+    # Return stale cache if available (better than blocking or returning None)
+    if cache_key in _kline_cache:
+        return _kline_cache[cache_key][1]
+    return None
 
 
 # ── Divergence Detection ─────────────────────────────────────────

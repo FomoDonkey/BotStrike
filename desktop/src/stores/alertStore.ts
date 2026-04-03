@@ -9,7 +9,7 @@ export interface Alert {
   message: string;
   timestamp: number;
   dismissed: boolean;
-  sound?: "trade" | "profit" | "loss" | "alert";
+  sound?: "trade" | "profit" | "loss" | "alert" | "circuitBreaker";
 }
 
 export interface AlertRule {
@@ -78,56 +78,66 @@ export const useAlertStore = create<AlertState>((set, get) => ({
     const { rules, addAlert } = get();
     const now = Date.now() / 1000;
 
+    // Collect triggered rule IDs and their alerts, then batch-update cooldowns
+    const triggered: { ruleId: string; level: AlertLevel; title: string; message: string }[] = [];
+
     for (const rule of rules) {
       if (!rule.enabled) continue;
       if (now - rule.lastTriggered < rule.cooldownSec) continue;
 
-      let triggered = false;
+      let match = false;
       let message = "";
 
       switch (rule.type) {
         case "drawdown_above":
           if (data.drawdown_pct !== undefined && data.drawdown_pct >= rule.threshold) {
-            triggered = true;
+            match = true;
             message = `Drawdown at ${(data.drawdown_pct * 100).toFixed(1)}% (threshold: ${(rule.threshold * 100).toFixed(0)}%)`;
           }
           break;
         case "vpin_above":
           if (data.vpin !== undefined && data.vpin >= rule.threshold) {
-            triggered = true;
+            match = true;
             message = `VPIN at ${(data.vpin * 100).toFixed(0)}% — toxic flow detected`;
           }
           break;
         case "hawkes_spike":
           if (data.hawkes_mult !== undefined && data.hawkes_mult >= rule.threshold) {
-            triggered = true;
+            match = true;
             message = `Hawkes intensity spike: ${data.hawkes_mult.toFixed(1)}x baseline`;
           }
           break;
         case "price_above":
           if (data.price !== undefined && data.price >= rule.threshold) {
-            triggered = true;
+            match = true;
             message = `${data.symbol || "BTC"} price above $${rule.threshold.toLocaleString()}`;
           }
           break;
         case "price_below":
           if (data.price !== undefined && data.price <= rule.threshold) {
-            triggered = true;
+            match = true;
             message = `${data.symbol || "BTC"} price below $${rule.threshold.toLocaleString()}`;
           }
           break;
       }
 
-      if (triggered) {
-        // Update rule cooldown through Zustand set() — not direct mutation
-        set((s) => ({
-          rules: s.rules.map((r) => r.id === rule.id ? { ...r, lastTriggered: now } : r),
-        }));
+      if (match) {
+        triggered.push({ ruleId: rule.id, level: rule.level, title: rule.name, message });
+      }
+    }
+
+    // Batch update all triggered rule cooldowns in a single set() call
+    if (triggered.length > 0) {
+      const triggeredIds = new Set(triggered.map((t) => t.ruleId));
+      set((s) => ({
+        rules: s.rules.map((r) => triggeredIds.has(r.id) ? { ...r, lastTriggered: now } : r),
+      }));
+      for (const t of triggered) {
         addAlert({
-          level: rule.level,
-          title: rule.name,
-          message,
-          sound: rule.level === "critical" ? "alert" : undefined,
+          level: t.level,
+          title: t.title,
+          message: t.message,
+          sound: t.level === "critical" ? "alert" : undefined,
         });
       }
     }

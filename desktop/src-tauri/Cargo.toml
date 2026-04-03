@@ -1,6 +1,6 @@
 [package]
 name = "botstrike"
-version = "2.3.0"
+version = "2.4.0"
 description = "BotStrike Trading Terminal"
 authors = ["Edgar"]
 license = "MIT"

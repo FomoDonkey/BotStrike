@@ -34,12 +34,21 @@ export interface OrderBookData {
   microprice: number | null;
 }
 
+export interface MarketInfo {
+  funding_rate: number;
+  volume_24h: number;
+  open_interest: number;
+  mark_price: number;
+  index_price: number;
+}
+
 interface MarketState {
   prices: Record<string, number>;
   prevPrices: Record<string, number>;
   candles: Record<string, Candle[]>;
   orderbooks: Record<string, OrderBookData>;
   regime: Record<string, string>;
+  marketInfo: Record<string, MarketInfo>;
 
   // Throttled tick buffer — NOT in state to avoid re-renders
   _tickBuffer: Record<string, Tick[]>;
@@ -105,6 +114,7 @@ export const useMarketStore = create<MarketState>((set, get) => ({
   candles: {},
   orderbooks: {},
   regime: {},
+  marketInfo: {},
   _tickBuffer: {},
 
   onTick: (tick) => {
@@ -134,6 +144,21 @@ export const useMarketStore = create<MarketState>((set, get) => ({
     }
     if (data.regime) {
       updates.regime = { ...s.regime, [sym]: data.regime };
+    }
+
+    // Store market info fields from snapshot (funding, volume, OI, etc.)
+    if (data.funding_rate !== undefined || data.volume_24h !== undefined || data.open_interest !== undefined) {
+      const prev = s.marketInfo[sym] ?? { funding_rate: 0, volume_24h: 0, open_interest: 0, mark_price: 0, index_price: 0 };
+      updates.marketInfo = {
+        ...s.marketInfo,
+        [sym]: {
+          funding_rate: data.funding_rate ?? prev.funding_rate,
+          volume_24h: data.volume_24h ?? prev.volume_24h,
+          open_interest: data.open_interest ?? prev.open_interest,
+          mark_price: data.mark_price ?? prev.mark_price,
+          index_price: data.index_price ?? prev.index_price,
+        },
+      };
     }
 
     if (Object.keys(updates).length > 0) {

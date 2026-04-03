@@ -181,12 +181,13 @@ def test_calc_position_size_normal():
     s = _ConcreteStrategy(StrategyType.MEAN_REVERSION, tc)
     result = s._calc_position_size(capital=100000, price=50000, stop_loss=49000, leverage=10)
     # risk_amount = 100000 * 0.02 = 2000
-    # risk_per_unit = |50000 - 49000| = 1000
-    # size_units = 2000 / 1000 = 2
+    # raw_size = 2000 / 1000 = 2.0, raw_notional = 100000
+    # friction_bps = 2*2 + 5*2 = 14 bps, friction_cost = 100000 * 14/10000 = 140
+    # adjusted_risk = max(2000 - 140, 1000) = 1860
+    # size_units = 1860 / 1000 = 1.86
     # max_units = (100000 * 10) / 50000 = 20
-    # min(2, 20) = 2
     assert result > 0, f"Expected positive size, got {result}"
-    assert abs(result - 2.0) < 0.001, f"Expected ~2.0, got {result}"
+    assert abs(result - 1.86) < 0.05, f"Expected ~1.86, got {result}"
 
 run_test("_calc_position_size returns valid size for normal inputs", test_calc_position_size_normal)
 

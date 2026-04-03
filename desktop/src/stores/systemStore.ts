@@ -1,5 +1,11 @@
 import { create } from "zustand";
 
+export interface LogEntry {
+  timestamp: number;
+  level: string;
+  message: string;
+}
+
 interface SystemState {
   engineRunning: boolean;
   mode: string;
@@ -8,8 +14,11 @@ interface SystemState {
   clientsConnected: number;
   bridgeConnected: boolean;
   _lastHealthAt: number;
+  logs: LogEntry[];
 
   onHealth: (data: any) => void;
+  onLog: (data: any) => void;
+  onEngineError: (data: any) => void;
   setBridgeConnected: (v: boolean) => void;
 }
 
@@ -36,6 +45,7 @@ export const useSystemStore = create<SystemState>((set) => {
     clientsConnected: 0,
     bridgeConnected: false,
     _lastHealthAt: 0,
+    logs: [],
 
     onHealth: (data) =>
       set({
@@ -46,6 +56,30 @@ export const useSystemStore = create<SystemState>((set) => {
         clientsConnected: data.clients_connected ?? 0,
         _lastHealthAt: Date.now(),
       }),
+
+    onLog: (data) =>
+      set((s) => ({
+        logs: [
+          ...s.logs.slice(-199),
+          {
+            timestamp: data.timestamp ?? Date.now() / 1000,
+            level: data.level ?? "info",
+            message: data.message ?? JSON.stringify(data),
+          },
+        ],
+      })),
+
+    onEngineError: (data) =>
+      set((s) => ({
+        logs: [
+          ...s.logs.slice(-199),
+          {
+            timestamp: data.timestamp ?? Date.now() / 1000,
+            level: "error",
+            message: data.error ?? "Unknown engine error",
+          },
+        ],
+      })),
 
     setBridgeConnected: (v) => set({ bridgeConnected: v }),
   };

@@ -40,10 +40,11 @@ EXIT_SCORE_THRESHOLD = 0.15 # Exit when signal is mostly gone
 CONFIRM_TICKS = 3           # Score must persist 3 consecutive evals (15s) — was 5 (25s), too slow for scalping
 OBI_DELTA_EMA_ALPHA = 0.05  # Slow EMA: filters noise, only passes sustained flow (alpha=0.05 → ~20 tick halflife)
 SL_SPREAD_MULT = 3.0        # SL = 3x spread
-TP_SPREAD_MULT = 6.0        # TP = 6x spread (R:R 2:1)
-MAX_SL_BPS = 30.0           # Emergency hard cap: 30 bps max loss
+TP_RR_MULT = 2.0            # TP = SL * 2 (R:R 2:1)
+MAX_SL_BPS = 50.0           # Emergency hard cap: 50 bps max loss (was 30 — too tight after fee-floor fix)
 MIN_SPREAD_BPS = 3.0        # Minimum spread for SL/TP calc (floor)
 MIN_SL_ATR_MULT = 0.3       # ATR-based SL floor: SL >= 0.3x ATR (prevents tiny SLs during low spread)
+FEE_SL_MULT = 2.0           # SL must be >= 2x round-trip cost (ensures net R:R >= 1:1 after fees)
 PROFIT_LOCK_MULT = 2.0      # Lock profit at 2x spread gain
 MAX_HOLD_SEC = 1800          # 30 min max hold — prevent indefinite exposure
 MIN_HOLD_BEFORE_MICRO_EXIT = 30  # Seconds: don't exit on microprice reversal until 30s held (avoids noise exits)
@@ -55,6 +56,7 @@ class OFMState:
     entry_time: float = 0
     entry_score: float = 0
     entry_spread_bps: float = 0
+    entry_sl_bps: float = 0    # Actual SL used (spread/ATR/fee-based)
     best_pnl_pct: float = 0   # Peak unrealized PnL %
     breakeven_locked: bool = False
 
@@ -125,8 +127,12 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         obi_imbalance = obi.weighted_imbalance if obi else 0
         obi_delta_raw = obi.delta if obi else 0
         # Smooth OBI delta with EMA to filter tick-to-tick noise
-        prev_ema = self._obi_delta_ema.get(symbol, 0.0)
-        obi_delta = OBI_DELTA_EMA_ALPHA * obi_delta_raw + (1 - OBI_DELTA_EMA_ALPHA) * prev_ema
+        # Initialize to raw value on first observation (avoids ~100s convergence lag from 0.0)
+        if symbol not in self._obi_delta_ema:
+            obi_delta = obi_delta_raw
+        else:
+            prev_ema = self._obi_delta_ema[symbol]
+            obi_delta = OBI_DELTA_EMA_ALPHA * obi_delta_raw + (1 - OBI_DELTA_EMA_ALPHA) * prev_ema
         self._obi_delta_ema[symbol] = obi_delta
 
         # Microprice
@@ -155,6 +161,7 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         long_score, short_score = self._compute_scores(
             obi_imbalance, obi_delta, microprice_adj_bps, hawkes_ratio,
             vpin, depth_ratio, atr, price, kwargs.get("trend_info"),
+            effective_spread,
         )
 
         # ── Exit logic (setup invalidation) ──────────────────────
@@ -190,11 +197,24 @@ class OrderFlowMomentumStrategy(BaseStrategy):
             return signals
 
         # ── SL/TP based on spread (microstructure-calibrated) ────
-        # ATR floor prevents tiny SLs during calm markets or gap vulnerability
+        # Three SL floors ensure viability:
+        #   1. Spread-based: SL >= 3x spread (microstructure calibrated)
+        #   2. ATR-based:    SL >= 0.3x ATR (prevents gap vulnerability)
+        #   3. Fee-based:    SL >= 2x round-trip cost (ensures net R:R >= 1:1)
+        # Without the fee floor, tight spreads on Binance (1-2 bps) create
+        # SL=9bps vs 14bps round-trip cost → fees dominate, R:R collapses.
         atr_bps = (atr / price * 10000) if price > 0 else 10.0
         atr_sl_floor = atr_bps * MIN_SL_ATR_MULT
-        sl_bps = min(max(effective_spread * SL_SPREAD_MULT, atr_sl_floor), MAX_SL_BPS)
-        tp_bps = sl_bps * 2.0  # Maintain 2:1 R:R regardless of SL source
+        round_trip_bps = (
+            self.trading_config.slippage_bps * 2
+            + self.trading_config.taker_fee * 10_000 * 2
+        )
+        fee_sl_floor = round_trip_bps * FEE_SL_MULT
+        sl_bps = min(
+            max(effective_spread * SL_SPREAD_MULT, atr_sl_floor, fee_sl_floor),
+            MAX_SL_BPS,
+        )
+        tp_bps = sl_bps * TP_RR_MULT  # Maintain 2:1 R:R regardless of SL source
         sl_distance = price * sl_bps / 10000
         tp_distance = price * tp_bps / 10000
 
@@ -245,6 +265,7 @@ class OrderFlowMomentumStrategy(BaseStrategy):
                     entry_time=ts,
                     entry_score=long_score,
                     entry_spread_bps=effective_spread,
+                    entry_sl_bps=sl_bps,
                 )
                 signals.append(Signal(
                     strategy=self.strategy_type, symbol=symbol,
@@ -285,6 +306,7 @@ class OrderFlowMomentumStrategy(BaseStrategy):
                     entry_time=ts,
                     entry_score=short_score,
                     entry_spread_bps=effective_spread,
+                    entry_sl_bps=sl_bps,
                 )
                 signals.append(Signal(
                     strategy=self.strategy_type, symbol=symbol,
@@ -319,6 +341,7 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         atr: float,
         price: float,
         trend_info,
+        effective_spread: float = 3.0,
     ) -> tuple:
         """Compute long/short scores from microstructure signals.
 
@@ -337,7 +360,10 @@ class OrderFlowMomentumStrategy(BaseStrategy):
             short_score += 0.35
 
         # Signal 2: Microprice (30%)
-        microprice_threshold = max(0.8, atr / price * 3000) if price > 0 else 1.5
+        # Threshold based on spread (transaction cost) — not ATR.
+        # In low-vol with tight spread, we need MORE microprice shift to justify entry.
+        # In high-vol with wide spread, threshold scales naturally.
+        microprice_threshold = max(0.8, effective_spread * 0.4) if price > 0 else 1.5
         if microprice_adj_bps > microprice_threshold:
             long_score += 0.30
         elif microprice_adj_bps < -microprice_threshold:
@@ -430,8 +456,9 @@ class OrderFlowMomentumStrategy(BaseStrategy):
             should_exit = True
             exit_reason = "max_hold_time"
 
-        # Exit 5: Profit lock — if we gained > spread, and now giving back
-        profit_lock_bps = state.entry_spread_bps * PROFIT_LOCK_MULT
+        # Exit 5: Profit lock — if we gained > SL distance, and now giving back
+        # Use SL-based threshold (not spread) — matches actual risk/reward
+        profit_lock_bps = (state.entry_sl_bps if state.entry_sl_bps > 0 else state.entry_spread_bps * SL_SPREAD_MULT) * PROFIT_LOCK_MULT
         profit_lock_pct = profit_lock_bps / 10000
         if state.best_pnl_pct > profit_lock_pct and current_pnl_pct < profit_lock_pct * 0.3:
             should_exit = True

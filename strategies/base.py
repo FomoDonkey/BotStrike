@@ -90,21 +90,22 @@ class BaseStrategy(ABC):
         risk_pct = kelly_risk_pct if kelly_risk_pct is not None else self.trading_config.risk_per_trade_pct
         risk_amount = capital * risk_pct
 
-        # Deduct estimated round-trip friction from risk budget
-        # Entry slippage + exit slippage + entry fee + exit fee
-        friction_bps = (
-            self.trading_config.slippage_bps * 2  # entry + exit slippage
-            + self.trading_config.taker_fee * 10_000  # entry taker fee in bps
-            + self.trading_config.taker_fee * 10_000  # exit taker fee in bps
-        )
-        # Estimate friction cost on expected position size
-        estimated_notional = capital * risk_pct * 10  # rough estimate
-        friction_cost = estimated_notional * friction_bps / 10_000
-        adjusted_risk = max(risk_amount - friction_cost, risk_amount * 0.5)
-
         risk_per_unit = abs(price - stop_loss)
         if risk_per_unit == 0 or price <= 0:
             return 0.0
+
+        # Compute raw size, then deduct round-trip friction from actual notional
+        raw_size = risk_amount / risk_per_unit
+        raw_notional = raw_size * price
+
+        # Round-trip friction: entry/exit slippage + entry/exit fees
+        friction_bps = (
+            self.trading_config.slippage_bps * 2
+            + self.trading_config.taker_fee * 10_000 * 2
+        )
+        friction_cost = raw_notional * friction_bps / 10_000
+        adjusted_risk = max(risk_amount - friction_cost, risk_amount * 0.5)
+
         size_units = adjusted_risk / risk_per_unit
         # Cap by leveraged capital
         max_units = (capital * leverage) / price

@@ -271,8 +271,9 @@ class RiskManager:
 
         size = min(size, remaining)
 
-        # Límite por riesgo por trade
-        max_risk = self._current_equity * self.config.risk_per_trade_pct
+        # Límite por riesgo por trade (use Kelly if enough data, else default)
+        kelly_pct = self.get_kelly_risk_pct(signal.strategy)
+        max_risk = self._current_equity * kelly_pct
         risk_per_unit = abs(signal.entry_price - signal.stop_loss)
         if risk_per_unit > 0 and signal.entry_price > 0:
             max_size_by_risk = (max_risk / risk_per_unit) * signal.entry_price

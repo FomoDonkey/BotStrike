@@ -1383,7 +1383,7 @@ def run_analytics_report(settings: Settings, session_id: Optional[str] = None) -
         return
 
     session = next((s for s in sessions if s.session_id == target), None)
-    initial_eq = session.initial_equity if session else 100_000.0
+    initial_eq = session.initial_equity if session else settings.trading.initial_capital
 
     print(f"\n  Analizando sesion: {target} ({len(trades)} trades)\n")
 

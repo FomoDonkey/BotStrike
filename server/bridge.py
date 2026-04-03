@@ -394,10 +394,13 @@ async def _broadcast_symbol_state(engine, symbol: str):
         "regime": engine._last_regime.get(symbol, MarketRegime.UNKNOWN).value,
     })
 
-    # Broadcast pending signals/trades
+    # Broadcast pending signals/trades (route log_entry to system channel)
     while state._pending_signals:
         msg = state._pending_signals.popleft()
-        await state.channels.broadcast("trading", msg)
+        if msg.get("type") == "log_entry":
+            await state.channels.broadcast("system", msg["data"])
+        else:
+            await state.channels.broadcast("trading", msg)
 
 
 # ── Broadcast Loops ──────────────────────────────────────────────
@@ -472,6 +475,7 @@ async def candle_broadcast_loop():
                     closes = df_tail["close"].values
                     volumes = df_tail["volume"].values if "volume" in df_tail.columns else [0] * n
 
+                    prev_raw_ts = 0  # Track previous RAW timestamp (not accepted)
                     for i in range(len(timestamps)):
                         ts = float(timestamps[i])
                         if math.isnan(ts) or ts <= 0:
@@ -485,9 +489,13 @@ async def candle_broadcast_loop():
                         v = float(volumes[i])
                         if any(math.isnan(x) for x in [o, h, lo, c]):
                             continue
-                        # Skip candles with gaps > 5 minutes (missing data periods)
-                        if candles and (int(ts) - candles[-1]["time"]) > 300:
-                            continue  # Skip gap candle, keep continuous history
+                        # Skip candles with gaps > 5 minutes vs PREVIOUS RAW candle
+                        # (compare against raw sequence, not last accepted — avoids
+                        # cascading drops where gap grows indefinitely)
+                        if prev_raw_ts > 0 and (int(ts) - int(prev_raw_ts)) > 300:
+                            prev_raw_ts = ts
+                            continue  # Skip this gap candle only
+                        prev_raw_ts = ts
                         candles.append({
                             "time": int(ts),
                             "open": o, "high": h, "low": lo, "close": c,
@@ -717,7 +725,7 @@ async def get_strategies():
         strategies.append({
             "type": s.strategy_type.value,
             "name": s.__class__.__name__,
-            "active": s.strategy_type in [StrategyType.MEAN_REVERSION, StrategyType.ORDER_FLOW_MOMENTUM],
+            "active": alloc_map.get(s.strategy_type, 0) > 0,
             "allocation": alloc_map.get(s.strategy_type, 0),
         })
     return {"strategies": strategies}
