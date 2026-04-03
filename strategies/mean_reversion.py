@@ -485,6 +485,7 @@ class MeanReversionStrategy(BaseStrategy):
         df: pd.DataFrame,
         price: float,
         regime: MarketRegime,
+        sym_config: SymbolConfig,
         allocated_capital: float,
         kelly_pct: Optional[float],
         obi,
