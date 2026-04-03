@@ -297,3 +297,10 @@
 - Hawkes event count filter of 3/min was too strict for less liquid venues. Lowered to 1.
 - CRITICAL: when strategies evaluate but generate zero signals, there was NO logging. Impossible to diagnose. Added debug logs at every filter/score computation point.
 - With $300 capital, need more trade frequency for statistical feedback. Rare high-conviction signals don't give enough data to calibrate Kelly/RoR.
+
+## OBI Absolute Level vs Delta (2026-04-03) — CRITICAL QUANT LESSON
+- BTC orderbook on Binance has STRUCTURAL ask-heavy bias (more sell-side depth). This is normal market microstructure — market makers place more asks.
+- Using OBI absolute level as directional signal → 99% SELL signals. This is NOT a bug in OBI calculation — the measurement is correct, the usage was wrong.
+- OBI DELTA (change in imbalance) IS predictive of short-term price movement. When buying pressure INCREASES (delta > 0), price tends to move up. The absolute level tells you nothing about direction.
+- Same lesson applies to depth_ratio: absolute ratio has structural bias. Use deviation from baseline (1.0) instead.
+- General principle: in market microstructure, CHANGES are predictive. LEVELS have structural bias from market maker inventory management.
