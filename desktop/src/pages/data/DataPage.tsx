@@ -32,9 +32,8 @@ export function DataPage() {
 
   const tickCounts = Object.entries(prices).map(([sym, price]) => ({
     symbol: sym,
-    count: 0,
-    tps: 0,
     lastPrice: price,
+    status: price > 0 ? "streaming" : "waiting",
   }));
 
   return (
@@ -55,14 +54,14 @@ export function DataPage() {
         <div className="grid grid-cols-3 gap-4">
           {tickCounts.length > 0 ? tickCounts.map((t) => (
             <div key={t.symbol} className="p-3 rounded-lg bg-white/[0.02] flex items-center justify-between">
-              <div>
-                <p className="font-mono text-sm font-semibold text-text-primary">{t.symbol}</p>
-                <p className="text-[10px] text-text-muted">{t.count} ticks buffered</p>
+              <div className="flex items-center gap-2">
+                <PulsingDot active={t.status === "streaming"} />
+                <div>
+                  <p className="font-mono text-sm font-semibold text-text-primary">{t.symbol}</p>
+                  <p className="text-[10px] text-text-muted">{t.status === "streaming" ? "Live" : "Connecting..."}</p>
+                </div>
               </div>
-              <div className="text-right">
-                <p className="font-mono text-sm text-accent">${t.lastPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
-                <p className="text-[10px] text-text-muted">{t.tps} tps</p>
-              </div>
+              <p className="font-mono text-sm text-accent">${t.lastPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
             </div>
           )) : (
             <div className="col-span-3 text-center py-4 text-text-muted text-sm">

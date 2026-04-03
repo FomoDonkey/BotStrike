@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useShallow } from "zustand/shallow";
 import { motion } from "framer-motion";
+import { api } from "@/lib/api";
 import { GlassPanel } from "@/components/shared/GlassPanel";
 import { MetricCard } from "@/components/shared/MetricCard";
 import { AnimatedNumber } from "@/components/shared/AnimatedNumber";
@@ -26,13 +27,27 @@ const fadeUp = {
   show: { opacity: 1, y: 0, transition: { duration: 0.2, ease: "easeOut" as const } },
 };
 
-// Dynamic allocation from config (will be overridden if API provides real weights)
-const ALLOCATION_DATA = [
+const DEFAULT_ALLOCATION = [
   { name: "Mean Reversion", value: 40, color: "#6C5CE7" },
   { name: "Order Flow", value: 60, color: "#00CEC9" },
-].filter((d) => d.value > 0);
+];
 
 export function DashboardPage() {
+  // Load real allocation from API config
+  const [allocation, setAllocation] = useState(DEFAULT_ALLOCATION);
+  useEffect(() => {
+    api.config().then((cfg) => {
+      if (!cfg?.trading) return;
+      const t = cfg.trading;
+      const data = [
+        { name: "Mean Reversion", value: Math.round((t.allocation_mean_reversion || 0) * 100), color: "#6C5CE7" },
+        { name: "Order Flow", value: Math.round((t.allocation_order_flow_momentum || 0) * 100), color: "#00CEC9" },
+        { name: "Trend Following", value: Math.round((t.allocation_trend_following || 0) * 100), color: "#00B894" },
+        { name: "Market Making", value: Math.round((t.allocation_market_making || 0) * 100), color: "#FDCB6E" },
+      ].filter((d) => d.value > 0);
+      if (data.length > 0) setAllocation(data);
+    }).catch(() => {});
+  }, []);
   const btcPrice = useMarketStore((s) => s.prices["BTC-USD"] || s.prices["BTCUSDT"] || 0);
   const btcPrev = useMarketStore((s) => s.prevPrices["BTC-USD"] || s.prevPrices["BTCUSDT"] || 0);
   const ethPrice = useMarketStore((s) => s.prices["ETH-USD"] || s.prices["ETHUSDT"] || 0);
@@ -145,7 +160,7 @@ export function DashboardPage() {
           <ResponsiveContainer width={120} height={120}>
             <PieChart>
               <Pie
-                data={ALLOCATION_DATA}
+                data={allocation}
                 cx="50%"
                 cy="50%"
                 innerRadius={36}
@@ -154,14 +169,14 @@ export function DashboardPage() {
                 dataKey="value"
                 strokeWidth={0}
               >
-                {ALLOCATION_DATA.map((entry, i) => (
+                {allocation.map((entry, i) => (
                   <Cell key={i} fill={entry.color} />
                 ))}
               </Pie>
             </PieChart>
           </ResponsiveContainer>
           <div className="space-y-1 mt-1 w-full">
-            {ALLOCATION_DATA.map((s) => (
+            {allocation.map((s) => (
               <div key={s.name} className="flex items-center justify-between text-[10px]">
                 <div className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />
