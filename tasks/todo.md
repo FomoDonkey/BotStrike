@@ -620,6 +620,24 @@
 - [x] Tests: 36/36 pytest pass, DB round-trip verified, migration tested
 - [x] NOTE: Existing 53 trades have 0 in new fields (pre-migration). New trades will have full data.
 
+## FASE 3: Exit Optimization (2026-04-03)
+- [x] scripts/exit_analysis.py: CLI exit strategy comparison with shadow simulation
+- [x] Synthetic demo mode (--demo) with realistic BTC price paths
+- [x] DB mode (--from-db) for real paper trades
+- [x] Uses ExitOptimizer (4 shadow types: Fixed R:R, Trailing, Time-based, Partial TP)
+- [x] OOS validation with overfit detection, stability check, rank correlation
+- [x] Finding: no exit can fix entries where SL < round-trip fees (14 bps)
+
+## Desktop App Audit (2026-04-03)
+- [x] All 10 pages fully implemented and functional (no placeholders)
+- [x] Fix CRITICAL: riskStore NaN corruption — safeNum() guard replaces ?? operator
+- [x] Fix CRITICAL: OrderBookData missing `spread` field — data loss from bridge
+- [x] Fix CRITICAL: risk channel passed `type`/`timestamp` to store — now stripped
+- [x] Fix HIGH: All 5 WS channel handlers had no try-catch — silent failures
+- [x] Fix HIGH: API requests had no timeout — now 30s AbortController
+- [x] Fix MEDIUM: WS reconnect backoff without jitter — now 50-150% random
+- [x] TypeScript: 0 errors, Vite build passes, Python tests: 36/36
+
 ## Audit Institucional E2E #21 — Full System Deep Audit (2026-04-03)
 
 ### P0 — CRITICAL (blocks live trading) — ALL FIXED
