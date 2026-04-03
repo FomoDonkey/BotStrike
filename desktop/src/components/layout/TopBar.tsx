@@ -26,8 +26,9 @@ const ClockDisplay = memo(function ClockDisplay() {
 
 // Price ticker with flash
 const PriceTicker = memo(function PriceTicker({ symbol, label }: { symbol: string; label: string }) {
-  const price = useMarketStore((s) => s.prices[symbol] || 0);
-  const prev = useMarketStore((s) => s.prevPrices[symbol] || 0);
+  // Support both "BTC-USD" and "BTCUSDT" symbol formats
+  const price = useMarketStore((s) => s.prices[symbol] || s.prices[symbol.replace("USDT", "-USD")] || 0);
+  const prev = useMarketStore((s) => s.prevPrices[symbol] || s.prevPrices[symbol.replace("USDT", "-USD")] || 0);
   const [flash, setFlash] = useState<"up" | "down" | null>(null);
   const lastPrice = useRef(0);
 
