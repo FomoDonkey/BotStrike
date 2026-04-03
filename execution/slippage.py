@@ -79,13 +79,11 @@ def compute_slippage(
         slip_bps += base_bps * size_ratio
     elif size_usd > 0 and atr > 0 and price > 0:
         # Fallback sin depth: usar ATR como proxy de liquidez
-        # Ratio: size_usd / (ATR-equivalente en USD * factor)
         atr_notional = atr * (size_usd / price)  # ATR * units = price impact proxy
         if atr_notional <= 0:
             atr_notional = 1.0
-        if atr_notional > 0:
-            impact_ratio = min(size_usd / (atr_notional * 50), 2.0)
-            slip_bps += base_bps * impact_ratio
+        impact_ratio = min(size_usd / (atr_notional * 50), 2.0)
+        slip_bps += base_bps * impact_ratio
 
     # 4. Hawkes impact: actividad anomala → mas slippage
     if hawkes_ratio > 1.5:

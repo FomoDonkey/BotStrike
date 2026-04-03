@@ -136,22 +136,22 @@ def serialize_micro_snapshot(micro) -> Optional[Dict]:
     if hawkes:
         result["hawkes"] = {
             "intensity": getattr(hawkes, "intensity", 0),
-            "multiplier": getattr(hawkes, "multiplier", 0),
+            "multiplier": getattr(hawkes, "spike_ratio", 0),
             "is_spike": getattr(hawkes, "is_spike", False),
         }
     # A-S spread
-    spread = getattr(micro, "as_spread", None)
-    if spread:
+    a_s = getattr(micro, "avellaneda_stoikov", None)
+    if a_s:
         result["as_spread"] = {
-            "bid_spread_bps": getattr(spread, "bid_spread_bps", 0),
-            "ask_spread_bps": getattr(spread, "ask_spread_bps", 0),
-            "reservation_price": getattr(spread, "reservation_price", 0),
+            "bid_spread_bps": getattr(a_s, "spread_bps", 0) / 2,
+            "ask_spread_bps": getattr(a_s, "spread_bps", 0) / 2,
+            "reservation_price": getattr(a_s, "reservation_price", 0),
         }
     # Kyle Lambda
     kyle = getattr(micro, "kyle_lambda", None)
     if kyle:
         result["kyle_lambda"] = {
-            "lambda_bps": getattr(kyle, "lambda_bps", 0),
+            "lambda_bps": getattr(kyle, "kyle_lambda_ema", 0),
             "impact_stress": getattr(kyle, "impact_stress", 0),
             "adverse_selection_bps": getattr(kyle, "adverse_selection_bps", 0),
         }

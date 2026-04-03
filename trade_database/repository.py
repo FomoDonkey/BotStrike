@@ -373,7 +373,7 @@ class TradeRepository:
                     "gross_loss": round(gross_loss, 2),
                     "profit_factor": round(
                         abs(r["gross_profit"] / gross_loss), 2
-                    ) if gross_loss != 0 else float("inf"),
+                    ) if gross_loss != 0 else 0.0,
                     "total_fees": round(r["total_fees"], 2),
                     "best_trade": round(r["best_trade"], 2),
                     "worst_trade": round(r["worst_trade"], 2),

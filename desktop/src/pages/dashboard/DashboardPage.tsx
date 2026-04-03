@@ -26,10 +26,11 @@ const fadeUp = {
   show: { opacity: 1, y: 0, transition: { duration: 0.2, ease: "easeOut" as const } },
 };
 
+// Dynamic allocation from config (will be overridden if API provides real weights)
 const ALLOCATION_DATA = [
   { name: "Mean Reversion", value: 40, color: "#6C5CE7" },
   { name: "Order Flow", value: 60, color: "#00CEC9" },
-];
+].filter((d) => d.value > 0);
 
 export function DashboardPage() {
   const btcPrice = useMarketStore((s) => s.prices["BTCUSDT"] || 0);

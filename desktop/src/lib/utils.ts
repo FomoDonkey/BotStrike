@@ -33,5 +33,7 @@ export function formatDuration(seconds: number): string {
 }
 
 export function formatTime(timestamp: number): string {
-  return new Date(timestamp * 1000).toLocaleTimeString("en-US", { hour12: false });
+  // Auto-detect seconds vs milliseconds
+  const ms = timestamp > 1e11 ? timestamp : timestamp * 1000;
+  return new Date(ms).toLocaleTimeString("en-US", { hour12: false });
 }
