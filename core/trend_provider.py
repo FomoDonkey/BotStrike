@@ -105,19 +105,24 @@ class TrendProvider:
         if not closes_4h or not closes_1d:
             return TrendInfo()
 
-        # 4H trend: EMA20 vs EMA50 (with neutral dead zone)
+        # 4H trend: EMA20 vs EMA50 (with volatility-adaptive dead zone)
         ema20_4h = self._ema(closes_4h, 20)
         ema50_4h = self._ema(closes_4h, 50)
-        # Neutral zone: EMAs within 0.15% = no clear trend
-        if ema50_4h > 0 and abs(ema20_4h - ema50_4h) / ema50_4h < 0.0015:
+        # Dead zone scales with recent volatility: more volatile = wider neutral zone
+        # Base 0.15%, scaled by 4H ATR proxy (range/close)
+        vol_4h = self._recent_vol(closes_4h) if len(closes_4h) > 5 else 0.0015
+        dead_zone_4h = max(0.001, min(vol_4h * 0.5, 0.005))  # 0.1% to 0.5%
+        if ema50_4h > 0 and abs(ema20_4h - ema50_4h) / ema50_4h < dead_zone_4h:
             trend_4h = 0
         else:
             trend_4h = 1 if ema20_4h > ema50_4h else -1
 
-        # 1D trend: EMA7 vs EMA21 (with neutral dead zone)
+        # 1D trend: EMA7 vs EMA21 (with volatility-adaptive dead zone)
         ema7_1d = self._ema(closes_1d, 7)
         ema21_1d = self._ema(closes_1d, 21)
-        if ema21_1d > 0 and abs(ema7_1d - ema21_1d) / ema21_1d < 0.0015:
+        vol_1d = self._recent_vol(closes_1d) if len(closes_1d) > 5 else 0.0015
+        dead_zone_1d = max(0.001, min(vol_1d * 0.5, 0.005))
+        if ema21_1d > 0 and abs(ema7_1d - ema21_1d) / ema21_1d < dead_zone_1d:
             trend_1d = 0
         else:
             trend_1d = 1 if ema7_1d > ema21_1d else -1
@@ -143,3 +148,12 @@ class TrendProvider:
         for v in values[1:]:
             result = alpha * v + (1 - alpha) * result
         return result
+
+    @staticmethod
+    def _recent_vol(closes: list, lookback: int = 10) -> float:
+        """Compute recent volatility as mean absolute return over lookback bars."""
+        if len(closes) < 2:
+            return 0.0015
+        recent = closes[-lookback:] if len(closes) >= lookback else closes
+        returns = [abs(recent[i] / recent[i - 1] - 1) for i in range(1, len(recent)) if recent[i - 1] > 0]
+        return sum(returns) / len(returns) if returns else 0.0015

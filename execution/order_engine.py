@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections import deque
 from typing import Dict, List, Optional
 
 from config.settings import Settings, SymbolConfig
@@ -51,8 +52,8 @@ class OrderExecutionEngine:
         self._active_orders: Dict[str, Order] = {}  # order_id -> Order
         # Mapping de señal a orden para cancel/replace
         self._signal_orders: Dict[str, str] = {}  # signal_key -> order_id
-        # Fills recientes
-        self._recent_trades: List[Trade] = []
+        # Fills recientes (bounded deque — no manual trimming needed)
+        self._recent_trades: deque = deque(maxlen=500)
 
         # ── Smart execution components ───────────────────────────────
         self.fill_model = FillProbabilityModel()
@@ -336,6 +337,11 @@ class OrderExecutionEngine:
             # Fill parcial o total
             fill_price = float(data.get("L", data.get("lastFilledPrice", 0)))
             fill_qty = float(data.get("l", data.get("lastFilledQuantity", 0)))
+            # Guard: skip if fill data is invalid (double WS callback or stale event)
+            if fill_price <= 0 or fill_qty <= 0:
+                logger.warning("invalid_fill_data", order_id=order_id,
+                               fill_price=fill_price, fill_qty=fill_qty)
+                return None
             commission = float(data.get("n", data.get("commission", 0)))
             realized_pnl = float(data.get("rp", data.get("realizedProfit", 0)))
 
@@ -386,9 +392,6 @@ class OrderExecutionEngine:
                 latency_ms=latency_ms,
             )
             self._recent_trades.append(trade)
-            # Limitar historial en memoria
-            if len(self._recent_trades) > 500:
-                self._recent_trades = self._recent_trades[-250:]
 
             # Actualizar risk manager con PnL
             if realized_pnl != 0:
@@ -421,10 +424,25 @@ class OrderExecutionEngine:
         except Exception as e:
             logger.error("emergency_cancel_failed", error=str(e))
 
+    def cleanup_stale_orders(self, max_age_sec: float = 300.0) -> int:
+        """Remove orders older than max_age_sec from tracking.
+
+        Called periodically to prevent _active_orders from growing after WS disconnects
+        where FILLED/CANCELED events were missed.
+        """
+        now = time.time()
+        stale = [oid for oid, order in self._active_orders.items()
+                 if (now - order.timestamp) > max_age_sec]
+        for oid in stale:
+            self._active_orders.pop(oid, None)
+        if stale:
+            logger.warning("stale_orders_cleaned", count=len(stale), max_age_sec=max_age_sec)
+        return len(stale)
+
     @property
     def active_order_count(self) -> int:
         return len(self._active_orders)
 
     @property
     def recent_trades(self) -> List[Trade]:
-        return self._recent_trades[-100:]  # últimos 100 trades
+        return list(self._recent_trades)[-100:]  # últimos 100 trades

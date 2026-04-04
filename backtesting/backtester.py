@@ -452,12 +452,7 @@ class Backtester:
                 if not strat.should_activate(regime):
                     continue
 
-                # Skip MR on non-15m boundaries (massive speedup)
-                if strat.strategy_type == StrategyType.MEAN_REVERSION and i % 15 != 0:
-                    # Still need to check if we have a position to manage
-                    pos_key = f"{symbol}_{strat.strategy_type.value}"
-                    if pos_key not in positions:
-                        continue
+                # MR now operates on 1m bars directly — evaluate every bar
 
                 # Capital asignado (simplificado)
                 alloc = equity / len(active_strategies) / len(self.settings.symbols)

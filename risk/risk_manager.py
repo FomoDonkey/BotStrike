@@ -5,6 +5,7 @@ exposición máxima por activo, ajuste de inventario, Risk of Ruin,
 volatility targeting, y correlation stress.
 """
 from __future__ import annotations
+import asyncio
 import copy
 import time
 from typing import Dict, Optional
@@ -31,6 +32,10 @@ class RiskManager:
         self.settings = settings
         self.config = settings.trading
 
+        # Lock para proteger estado mutable contra coroutines concurrentes.
+        # asyncio es single-threaded pero interleaves en cada await.
+        self._state_lock = asyncio.Lock()
+
         # Estado de riesgo
         self._equity_peak: float = self.config.initial_capital
         self._current_equity: float = self.config.initial_capital
@@ -44,6 +49,8 @@ class RiskManager:
         self._circuit_breaker_active: bool = False
         self._circuit_breaker_until: float = 0.0
         self._last_daily_reset_date: str = ""  # ISO date of last daily reset (e.g. "2026-04-03")
+        self._consecutive_loss_pause: bool = False
+        self._consecutive_loss_pause_until: float = 0.0
 
         # ── Modelos cuantitativos avanzados ──────────────────────────
         # Risk of Ruin: probabilidad de alcanzar max drawdown
@@ -166,6 +173,19 @@ class RiskManager:
                     logger.info("size_reduced_funding", symbol=signal.symbol,
                                 funding_rate=round(funding_rate, 6),
                                 penalty=round(funding_penalty, 2))
+
+        # ── Consecutive loss circuit breaker ──────────────────────
+        if self._consecutive_loss_pause:
+            if time.time() < self._consecutive_loss_pause_until:
+                logger.warning("consecutive_loss_pause_active",
+                               symbol=signal.symbol,
+                               consecutive=self._consecutive_losses,
+                               remaining_sec=round(self._consecutive_loss_pause_until - time.time(), 1))
+                return None
+            else:
+                self._consecutive_loss_pause = False
+                logger.info("consecutive_loss_pause_lifted",
+                            consecutive=self._consecutive_losses)
 
         # ── Risk of Ruin auto-throttle ────────────────────────────
         ror = self.risk_of_ruin.current
@@ -346,7 +366,11 @@ class RiskManager:
     # ── Estado del portafolio ──────────────────────────────────────
 
     def update_equity(self, equity: float, timestamp: float = 0.0) -> None:
-        """Actualiza equity actual y peak."""
+        """Actualiza equity actual y peak.
+
+        Thread-safe via _state_lock cuando se llama desde async context.
+        Sync callers (backtester) pueden llamar directamente — single-threaded.
+        """
         self._current_equity = equity
         if equity > self._equity_peak:
             self._equity_peak = equity
@@ -368,12 +392,22 @@ class RiskManager:
             self._circuit_breaker_active = True
             self._circuit_breaker_until = time.time() + 300  # 5 min cooldown
 
+    async def update_equity_safe(self, equity: float, timestamp: float = 0.0) -> None:
+        """Async-safe version of update_equity — acquires lock."""
+        async with self._state_lock:
+            self.update_equity(equity, timestamp)
+
     def update_position(self, symbol: str, position: Optional[Position]) -> None:
         """Actualiza posición registrada."""
         if position is None or position.size == 0:
             self._positions.pop(symbol, None)
         else:
             self._positions[symbol] = position
+
+    async def update_position_safe(self, symbol: str, position: Optional[Position]) -> None:
+        """Async-safe version of update_position — acquires lock."""
+        async with self._state_lock:
+            self.update_position(symbol, position)
 
     def record_trade_result(self, pnl: float, strategy: Optional[StrategyType] = None) -> None:
         """Registra resultado de trade para tracking de riesgo."""
@@ -384,8 +418,18 @@ class RiskManager:
             self._max_consecutive_losses = max(
                 self._max_consecutive_losses, self._consecutive_losses
             )
+            # Consecutive loss circuit breaker: pause after 4+ losses
+            if self._consecutive_losses >= 4 and not self._consecutive_loss_pause:
+                self._consecutive_loss_pause = True
+                # Escalating cooldown: 5min at 4 losses, 15min at 5, 30min at 6+
+                cooldown = min(300 * (2 ** (self._consecutive_losses - 4)), 1800)
+                self._consecutive_loss_pause_until = time.time() + cooldown
+                logger.warning("consecutive_loss_pause",
+                               consecutive=self._consecutive_losses,
+                               cooldown_sec=cooldown)
         elif pnl > 0:
             self._consecutive_losses = 0
+            self._consecutive_loss_pause = False
         # pnl == 0 (break-even / entry fills): no afecta el contador
 
         # Alimentar modelos cuantitativos
@@ -395,12 +439,20 @@ class RiskManager:
         # Recalcular Risk of Ruin
         self.risk_of_ruin.compute(self._current_equity)
 
+    async def record_trade_result_safe(self, pnl: float, strategy: Optional[StrategyType] = None) -> None:
+        """Async-safe version of record_trade_result — acquires lock."""
+        async with self._state_lock:
+            self.record_trade_result(pnl, strategy)
+
     def reset_daily(self) -> None:
         """Reset de métricas diarias."""
         self._daily_pnl = 0.0
 
     def check_daily_reset(self) -> None:
-        """Auto-reset daily PnL at UTC midnight. Robust: uses date comparison, not exact timing."""
+        """Auto-reset daily PnL at UTC midnight. Robust: uses date comparison, not exact timing.
+
+        Protected by _state_lock when called via check_daily_reset_safe().
+        """
         from datetime import datetime, timezone
         today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if self._last_daily_reset_date != today_utc:
@@ -410,6 +462,11 @@ class RiskManager:
             logger.info("daily_pnl_auto_reset",
                         previous_daily_pnl=round(old_pnl, 2),
                         new_date=today_utc)
+
+    async def check_daily_reset_safe(self) -> None:
+        """Async-safe version of check_daily_reset — acquires lock."""
+        async with self._state_lock:
+            self.check_daily_reset()
 
     @property
     def current_drawdown_pct(self) -> float:

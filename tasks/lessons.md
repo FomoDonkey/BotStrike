@@ -549,3 +549,56 @@
 ### Slippage Model: Linear vs Concave
 - Code uses linear size impact model (slippage ∝ size/depth). Empirical research (Almgren-Chriss) shows slippage scales as sqrt(size/depth). Linear model underestimates slippage on large orders and overestimates on small ones.
 - **LESSON: Use sqrt scaling for market impact: slip = base × sqrt(size/depth). Linear is only acceptable for orders < 1% of book depth.**
+
+## Audit Institucional E2E #22 (2026-04-03)
+
+### asyncio Concurrency ≠ Thread Safety
+- Python asyncio is single-threaded but NOT race-free. Multiple coroutines can interleave at any `await`. Risk Manager state (`_positions`, `_daily_pnl`, `_equity_peak`) is mutated by 3+ coroutines without locks. Interleaving at `await` points can corrupt state.
+- **LESSON: Use `asyncio.Lock` for any mutable state accessed by multiple coroutines, even in single-threaded asyncio. The `await` keyword is a yield point where other coroutines execute.**
+
+### Edge Validation is Non-Negotiable
+- RSI divergence (Mean Reversion) has ~45-50% WR in academic literature (Bulkowski). With 4bps round-trip fees + 1.5bps slippage, breakeven WR ≈ 52-55%. An active strategy without OOS validation is gambling, not trading.
+- **LESSON: NEVER run a strategy live without minimum 2 years OOS backtest showing WR > breakeven, PF > 1.2, and consistency across regimes. "Looks reasonable" is not validation.**
+
+### Microstructure Models Need Calibration Per Venue
+- VPIN (BVC classification), Hawkes (baseline mu), Kyle Lambda (window size) all have parameters calibrated for academic datasets (equities). Crypto order books are 10-100x thinner with different dynamics. Using defaults gives false signals.
+- **LESSON: Every microstructure model parameter needs crypto-specific calibration. Use 30+ days of actual venue data to set thresholds, not academic defaults.**
+
+### API Error Handling is a Survival Feature
+- Binance returns 429 on rate limits and 418 on IP bans. Without retry logic, a single rate limit spike crashes the entire bot. With open positions, this means unprotected exposure.
+- **LESSON: Every exchange API call MUST have retry with exponential backoff (1s→2s→4s→30s cap). Rate limiting is not an edge case — it's a guaranteed event in production.**
+
+### Many Bugs Get Fixed, Same Class Recurs
+- This project has had 22 audits fixing 200+ bugs. But the same CLASS of bug keeps appearing: race conditions, missing error handling, hardcoded thresholds, sign errors. The root cause is not carelessness — it's that async trading systems have inherent concurrency complexity.
+- **LESSON: Invest in structural prevention (typed state machines, immutable position objects, centralized error handling) rather than fixing individual instances. A Lock on Risk Manager solves 5 bugs at once.**
+
+### Colinealidad Mata la Confluence
+- BB touch y Z-score miden lo mismo (distancia del precio a la media en unidades de std). Contar ambos como "2 confirmaciones independientes" es falsa confluence. Un sistema contaba 82% de pullbacks como "confirmados" cuando en realidad solo tenía 1 señal.
+- **LESSON: Antes de contar confirmaciones, verificar que los indicadores sean ortogonales. BB≈Z-score. RSI≈Stochastic. ADX≈DI. Si miden lo mismo, es 1 señal, no 2.**
+
+### No Hay Edge Técnico en BTC con 14bps Fees
+- Exhaustive scan: 17 señales × 5 TFs × 25 SL/TP = 2125 combinaciones. Mejor PF=0.92. Cero cruzan 1.0.
+- 1m ATR=6bps (0.5x fees), 5m ATR=17bps (1.2x), 15m ATR=34bps (2.4x). Fees dominan en TFs cortos.
+- **LESSON: Calcular ATR/Fee ratio ANTES de diseñar estrategia. Si ratio < 2x, el TF es inviable. Para BTC con VIP0 fees, mínimo 15m. Para scalping, necesitas VIP3+ (fees <5bps).**
+
+### OOS Validation Revealed Critical Issue: Strategy Too Conservative
+- MR RSI divergence produced only 3 trades in 29 days OOS. WR=66.7% but PF=0.47 (loss magnitude dominated). The multi-layered entry filters (RSI oversold + divergence + ADX < 30 + OBI confirmation + dip proximity) are so restrictive that signals are extremely rare, and when the one loss hits, it wipes out all gains.
+- **LESSON: Comprehensive data analysis (90d BTC, 17 signal variants, 5 timeframes, 25 SL/TP combos) proved that NO technical indicator achieves PF>1.0 in BTC. Best: RSI extreme PF=0.92, ADX trend PF=0.86. Root cause: 14bps round-trip fees require 30-50bps moves, but 1m ATR=6bps (0.5x fees, IMPOSSIBLE), 5m ATR=17bps (1.2x), 15m ATR=34bps (2.4x, first viable). The real edge in crypto comes from microstructure (OFM with real orderbook), not technical indicators. Strategy redesigned to 5m resampled + 1H trend filter as a "survive and learn" baseline while OFM is validated in live/paper.**
+
+## Audit E2E #24 — Lessons (2026-04-04)
+
+### Friction Cost en Position Sizing
+- `_calc_position_size()` resta friction del risk_amount en vez de sumarlo al risk_per_unit. Esto reduce posiciones ~20-30% más de lo necesario. Con $300 capital y $4.50 de risk budget, cada bps de undersizing importa.
+- **LESSON: Friction cost debe ampliar el stop loss (risk_per_unit), no reducir el capital asignado. Fórmula correcta: `size = risk_amount / (risk_per_unit + friction_per_unit)`.**
+
+### Automated Audit False Positives
+- Agentes automatizados reportaron ~8 bugs que NO existen tras verificación manual: `current_drawdown_pct` existe (L472), `check_daily_reset` existe (L451), `consecutive_losses` sí se resetea (L431), `on_orderbook` sí actualiza `_last_data_time` (L327).
+- **LESSON: Nunca confiar en análisis automatizado sin verificación manual del código. Los agentes tienden a reportar "missing X" cuando X está en otra parte del archivo que no leyeron completamente. Siempre grep/read antes de declarar un bug.**
+
+### Backtest-Live Divergence es el Error Más Peligroso
+- Paper mode usa position keys `symbol_STRATEGY` (multi-strategy per symbol). Live usa aggregate `symbol` (1 position per symbol). Si se activan 2+ estrategias, los resultados de paper NO reproducen live.
+- **LESSON: El mayor riesgo en trading algorítmico no es un bug en el código, es que el backtest/paper no reproduzca el comportamiento live. Cualquier divergencia en position management, order routing, o state handling entre paper y live invalida toda la validación estadística.**
+
+### Microprice Clamping Destruye Alpha
+- Clampear microprice adjusted entre bid-ask es correcto para Level-1, pero el adjusted microprice (con intensity + OBI) puede legítimamente exceder el spread — eso es precisamente la señal predictiva.
+- **LESSON: No aplicar restricciones de modelos simples a modelos compuestos. El rango válido de un estimador compuesto es más amplio que el de sus componentes individuales.**

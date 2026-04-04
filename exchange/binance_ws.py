@@ -1,8 +1,8 @@
 """
 Binance WebSocket client para datos de mercado en tiempo real.
 
-Solo lectura — para paper trading con liquidez real.
 Provee trades, depth (orderbook), y klines via streams combinados.
+También soporta user data stream para fills y posiciones en live trading.
 
 Usa la misma interfaz de callbacks que StrikeWebSocket para
 integración directa con BotStrike.
@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+import aiohttp
 import websockets
 import structlog
 
@@ -22,6 +24,8 @@ logger = structlog.get_logger(__name__)
 # Binance WebSocket endpoints
 BINANCE_WS_URL = "wss://stream.binance.com:9443/ws"
 BINANCE_WS_COMBINED = "wss://stream.binance.com:9443/stream"
+BINANCE_FAPI_BASE = "https://fapi.binance.com"
+BINANCE_FAPI_WS = "wss://fstream.binance.com/ws"
 
 # Mapeo BotStrike → Binance
 SYMBOL_MAP = {
@@ -172,8 +176,102 @@ class BinanceWebSocket:
         pass
 
     async def connect_user(self) -> None:
-        """No-op: paper trading doesn't need user stream."""
-        pass
+        """Connect to Binance Futures user data stream for order/position updates.
+
+        Requires BINANCE_API_KEY env var. Creates a listenKey via REST,
+        then connects to the WebSocket. Keeps listenKey alive every 30min.
+        """
+        api_key = os.getenv("BINANCE_API_KEY", "")
+        if not api_key:
+            logger.info("binance_user_stream_skipped", reason="no API key")
+            return
+
+        # Get listenKey from Binance Futures
+        listen_key = await self._get_listen_key(api_key)
+        if not listen_key:
+            return
+
+        url = f"{BINANCE_FAPI_WS}/{listen_key}"
+        self._running = True
+        reconnect_delay = 1
+
+        while self._running:
+            try:
+                async with websockets.connect(url, ping_interval=20) as ws:
+                    logger.info("binance_user_stream_connected")
+                    reconnect_delay = 1
+
+                    # Keep-alive task: PUT every 30 min to extend listenKey
+                    async def keepalive():
+                        while self._running:
+                            await asyncio.sleep(1800)  # 30 min
+                            await self._keepalive_listen_key(api_key, listen_key)
+
+                    keepalive_task = asyncio.create_task(keepalive())
+
+                    try:
+                        async for raw_msg in ws:
+                            if not self._running:
+                                break
+                            try:
+                                data = json.loads(raw_msg)
+                                event_type = data.get("e", "")
+                                if event_type == "ORDER_TRADE_UPDATE":
+                                    # Normalize to StrikeWebSocket-compatible format
+                                    await self._emit("ORDER_TRADE_UPDATE", data)
+                                elif event_type == "ACCOUNT_UPDATE":
+                                    await self._emit("ACCOUNT_UPDATE", data)
+                            except json.JSONDecodeError:
+                                continue
+                    finally:
+                        keepalive_task.cancel()
+
+            except (websockets.exceptions.ConnectionClosed, OSError) as e:
+                if not self._running:
+                    break
+                logger.warning("binance_user_stream_disconnected", error=str(e),
+                               reconnect_sec=reconnect_delay)
+                await asyncio.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 2, 60)
+                # Get fresh listenKey on reconnect
+                listen_key = await self._get_listen_key(api_key)
+                if listen_key:
+                    url = f"{BINANCE_FAPI_WS}/{listen_key}"
+
+    async def _get_listen_key(self, api_key: str) -> Optional[str]:
+        """Get or create a listenKey for Binance Futures user data stream."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{BINANCE_FAPI_BASE}/fapi/v1/listenKey",
+                    headers={"X-MBX-APIKEY": api_key},
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        key = data.get("listenKey", "")
+                        if key:
+                            logger.info("binance_listen_key_obtained")
+                            return key
+                    text = await resp.text()
+                    logger.error("binance_listen_key_failed", status=resp.status, body=text[:100])
+        except Exception as e:
+            logger.error("binance_listen_key_error", error=str(e))
+        return None
+
+    async def _keepalive_listen_key(self, api_key: str, listen_key: str) -> None:
+        """Extend listenKey validity (must be called every <60 min)."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.put(
+                    f"{BINANCE_FAPI_BASE}/fapi/v1/listenKey",
+                    headers={"X-MBX-APIKEY": api_key},
+                ) as resp:
+                    if resp.status == 200:
+                        logger.debug("binance_listen_key_extended")
+                    else:
+                        logger.warning("binance_listen_key_extend_failed", status=resp.status)
+        except Exception as e:
+            logger.warning("binance_listen_key_extend_error", error=str(e))
 
     async def stop(self) -> None:
         """Detiene la conexión."""

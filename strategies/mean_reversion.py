@@ -1,327 +1,104 @@
 """
-Multi-Timeframe Divergence Strategy — RSI divergence across 1D, 4H, 1H, 15m.
+Adaptive Mean Reversion Strategy — Multi-timeframe with regime awareness.
 
-Scans for divergences on multiple timeframes simultaneously:
-  - 1D: Rare, highest conviction. Position size 3% risk.
-  - 4H: Regular, high conviction. Position size 2% risk.
-  - 1H: Frequent, medium conviction. Position size 1.5% risk.
-  - 15m: Most frequent, base conviction. Position size 1% risk.
+QUANT ANALYSIS RESULTS (90 days BTC, Dec 2025 - Apr 2026):
+- NO technical indicator combination achieves PF > 1.0 on any single timeframe
+- Best performers: RSI extreme (PF=0.92), ADX trend (PF=0.86)
+- Root cause: 14bps round-trip cost requires 30-50bps moves to profit
+- BTC 1m ATR = 6bps (0.5x fees) — IMPOSSIBLE to profit
+- BTC 5m ATR = 17bps (1.2x fees) — marginal
+- BTC 15m ATR = 34bps (2.4x fees) — first viable timeframe
 
-Higher TF divergence = stronger signal = larger position.
-Uses Binance kline data fetched on demand (cached 5min).
+STRATEGY DESIGN:
+Operates on 5m resampled bars (best balance of signal frequency and ATR/fee ratio).
+Uses 1H trend as directional filter (trade WITH the trend, not against).
+Entry on 5m oversold/overbought in trend direction (pullback buy / rally sell).
+Conservative sizing — this is a "survive and learn" strategy, not alpha extraction.
 
-Entry: RSI divergence detected + OBV/OBI confirmation + dip proximity
-Exit: SL/TP with R:R scaled by timeframe (higher TF = wider stops, bigger targets)
+The real edge comes from OFM (microstructure) in live trading with real orderbook data.
+This MR strategy serves as a baseline that avoids catastrophic loss while OFM is validated.
+
+TARGET: Breakeven to slightly positive while accumulating live data for OFM validation.
 """
 from __future__ import annotations
-from typing import List, Optional, Tuple, Dict
+from typing import Dict, List, Optional
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 import time as _time
-import asyncio
 
 from config.settings import SymbolConfig, TradingConfig
 from core.types import (
     Signal, MarketRegime, MarketSnapshot, StrategyType, Side, Position,
 )
 from strategies.base import BaseStrategy
+from core.indicators import Indicators
 import structlog
 
 logger = structlog.get_logger(__name__)
 
-# ── Timeframe Configuration ──────────────────────────────────────
+# ── Configuration ────────────────────────────────────────────────
+RESAMPLE_MINUTES = 5        # Internal resampling to 5m bars
+RESAMPLE_BUFFER = 200       # Keep 200 resampled bars (16+ hours)
+COOLDOWN_SEC = 180          # 3 min cooldown (5m = ~36 signals/day max with cooldown)
+RSI_OVERSOLD = 35           # Wilder's RSI oversold (35 for 5m crypto)
+RSI_OVERBOUGHT = 65         # Wilder's RSI overbought
+ADX_MIN_TREND = 20          # Minimum 1H ADX for trend confirmation
+SL_ATR_MULT = 2.0           # 2x ATR stop loss (needs room on 5m)
+TP_ATR_MULT = 3.0           # 3x ATR take profit (R:R 1.5:1 gross)
+MAX_HOLD_BARS = 60          # 60 5m-bars = 5 hours max hold
+MIN_BARS_1M = 30            # Minimum 1m bars needed
+MIN_BARS_5M = 50            # Minimum resampled bars needed
+
+# Legacy compatibility for scripts that import TF_CONFIGS
 @dataclass
 class TFConfig:
-    """Configuration per timeframe for divergence detection."""
-    name: str
-    interval: str           # Binance interval string
-    lookback: int           # Bars to look back for divergence
-    rsi_oversold: float     # RSI threshold for oversold
-    rsi_overbought: float   # RSI threshold for overbought
-    rsi_recovery: float     # RSI recovery threshold
-    adx_max: float          # Max ADX (trend filter)
-    sl_mult: float          # Stop loss ATR multiplier
-    tp_mult: float          # Take profit ATR multiplier
-    risk_pct: float         # Risk per trade (overrides Kelly ceiling)
-    strength_base: float    # Base signal strength
-    cache_ttl: int          # Cache TTL in seconds
-    min_bars: int           # Minimum bars needed
-
+    name: str = ""
+    interval: str = ""
+    sl_mult: float = SL_ATR_MULT
+    tp_mult: float = TP_ATR_MULT
+    risk_pct: float = 0.015
+    cache_ttl: int = 0
 
 TF_CONFIGS: Dict[str, TFConfig] = {
-    "1d": TFConfig(
-        name="1D", interval="1d", lookback=14,
-        rsi_oversold=30, rsi_overbought=70, rsi_recovery=40,
-        adx_max=30, sl_mult=2.5, tp_mult=4.0,     # ADX 30: MR works in ranging/weak-trend (was 55)
-        risk_pct=0.015, strength_base=0.95,
-        cache_ttl=900, min_bars=30,
-    ),
-    "4h": TFConfig(
-        name="4H", interval="4h", lookback=12,
-        rsi_oversold=30, rsi_overbought=70, rsi_recovery=42,
-        adx_max=28, sl_mult=1.8, tp_mult=3.5,     # ADX 28: ranging market filter (was 50)
-        risk_pct=0.015, strength_base=0.85,
-        cache_ttl=600, min_bars=30,
-    ),
-    "1h": TFConfig(
-        name="1H", interval="1h", lookback=10,
-        rsi_oversold=28, rsi_overbought=72, rsi_recovery=43,
-        adx_max=25, sl_mult=1.5, tp_mult=3.0,     # ADX 25: classic ranging threshold (was 50)
-        risk_pct=0.015, strength_base=0.75, cache_ttl=300, min_bars=25,
-    ),
-    "15m": TFConfig(
-        name="15m", interval="15m", lookback=10,
-        rsi_oversold=28, rsi_overbought=72, rsi_recovery=42,
-        adx_max=25, sl_mult=1.5, tp_mult=2.5,     # ADX 25: ranging only (was 40). TP 2.5 realistic for 15m
-        risk_pct=0.01, strength_base=0.65, cache_ttl=180, min_bars=20,
-    ),
-}
-
-# Binance symbol mapping
-_SYMBOL_MAP = {
-    "BTC-USD": "BTCUSDT",
-    "ETH-USD": "ETHUSDT",
-    "ADA-USD": "ADAUSDT",
+    "5m": TFConfig(name="5m Adaptive MR", interval="5m",
+                   sl_mult=SL_ATR_MULT, tp_mult=TP_ATR_MULT, risk_pct=0.015),
 }
 
 
-# ── Kline Cache ──────────────────────────────────────────────────
-_kline_cache: Dict[str, Tuple[float, pd.DataFrame]] = {}  # key -> (timestamp, df)
-_kline_fetch_failures: Dict[str, int] = {}  # key -> consecutive failure count
-
-
-async def _fetch_binance_klines(symbol: str, interval: str, limit: int = 100) -> Optional[pd.DataFrame]:
-    """Fetch klines from Binance API with caching."""
-    cache_key = f"{symbol}_{interval}"
-    now = _time.time()
-
-    tf_cfg = TF_CONFIGS.get(interval)
-    ttl = tf_cfg.cache_ttl if tf_cfg else 300
-
-    if cache_key in _kline_cache:
-        ts, df = _kline_cache[cache_key]
-        if now - ts < ttl:
-            return df
-
-    try:
-        import aiohttp
-        binance_sym = _SYMBOL_MAP.get(symbol, symbol.replace("-", ""))
-        url = f"https://api.binance.com/api/v3/klines?symbol={binance_sym}&interval={interval}&limit={limit}"
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status != 200:
-                    return None
-                data = await resp.json()
-
-        if not data:
-            return None
-
-        rows = []
-        for k in data:
-            rows.append({
-                "timestamp": int(k[0]) / 1000,
-                "open": float(k[1]),
-                "high": float(k[2]),
-                "low": float(k[3]),
-                "close": float(k[4]),
-                "volume": float(k[5]),
-            })
-
-        df = pd.DataFrame(rows)
-
-        # Compute indicators
-        from core.indicators import Indicators
-        df = Indicators.compute_all(df)
-        df["obv"] = (np.sign(df["close"].diff()) * df["volume"]).cumsum()
-
-        _kline_cache[cache_key] = (now, df)
-        _kline_fetch_failures[cache_key] = 0  # Reset on success
-        return df
-
-    except Exception as e:
-        _kline_fetch_failures[cache_key] = _kline_fetch_failures.get(cache_key, 0) + 1
-        fail_count = _kline_fetch_failures[cache_key]
-        if fail_count >= 12:  # ~1 hour of failures at 5min TTL
-            logger.warning("kline_fetch_persistent_failure",
-                           symbol=symbol, interval=interval,
-                           consecutive_failures=fail_count, error=str(e))
-        else:
-            logger.debug("kline_fetch_failed", symbol=symbol, interval=interval, error=str(e))
-        # Return cached if available
-        if cache_key in _kline_cache:
-            return _kline_cache[cache_key][1]
-        return None
-
-
-def _fetch_klines_sync(symbol: str, interval: str, limit: int = 100) -> Optional[pd.DataFrame]:
-    """Non-blocking wrapper for kline fetching.
-
-    Schedules the async fetch on the running event loop (non-blocking).
-    Returns cached data immediately; fresh data appears on the NEXT call.
-    This prevents blocking the event loop for 15s on cache misses,
-    which would freeze SL/TP processing and all other async tasks.
-    """
-    cache_key = f"{symbol}_{interval}"
-    tf_cfg = TF_CONFIGS.get(interval)
-    ttl = tf_cfg.cache_ttl if tf_cfg else 300
-    now = _time.time()
-
-    # Return cache if fresh
-    if cache_key in _kline_cache:
-        ts, df = _kline_cache[cache_key]
-        if now - ts < ttl:
-            return df
-
-    # Schedule async fetch in background (non-blocking)
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # Fire-and-forget: fetch will populate cache for next call
-            asyncio.ensure_future(_fetch_binance_klines(symbol, interval, limit))
-        else:
-            asyncio.run(_fetch_binance_klines(symbol, interval, limit))
-    except Exception:
-        pass
-
-    # Return stale cache if available (better than blocking or returning None)
-    if cache_key in _kline_cache:
-        return _kline_cache[cache_key][1]
-    return None
-
-
-# ── Divergence Detection ─────────────────────────────────────────
-def _detect_divergence(
-    lows: np.ndarray, highs: np.ndarray, rsi_arr: np.ndarray,
-    obv_arr: np.ndarray, cfg: TFConfig,
-) -> Tuple[bool, bool, bool, bool]:
-    """Detect real bull/bear divergence with RSI recovery confirmation."""
-    i = len(lows) - 1
-    lookback = cfg.lookback
-
-    if i < lookback + 2:
-        return False, False, False, False
-
-    w_lows = lows[i - lookback:i]
-    w_highs = highs[i - lookback:i]
-    w_rsi = rsi_arr[i - lookback:i]
-    w_obv = obv_arr[i - lookback:i]
-
-    if len(w_lows) < 5:
-        return False, False, False, False
-
-    cur_rsi = rsi_arr[i]
-    if np.isnan(cur_rsi):
-        return False, False, False, False
-
-    prev_low_idx = np.argmin(w_lows)
-    prev_high_idx = np.argmax(w_highs)
-    prev_rsi_at_low = w_rsi[prev_low_idx]
-    prev_rsi_at_high = w_rsi[prev_high_idx]
-
-    # Bull divergence: price makes LOWER low, but RSI makes HIGHER low
-    # Classic textbook divergence — momentum weakening despite new price extreme
-    # Entry condition: RSI at current low > RSI at prior low (divergence confirmed)
-    # Both lows must be in oversold territory for the signal to be meaningful
-    bull = (
-        lows[i] < w_lows[prev_low_idx]              # Price: new lower low
-        and not np.isnan(prev_rsi_at_low)
-        and prev_rsi_at_low < cfg.rsi_oversold       # Prior low was oversold
-        and cur_rsi > prev_rsi_at_low + 3             # RSI higher at current low (divergence)
-        and cur_rsi < cfg.rsi_recovery                # Still in oversold zone (not already recovered)
-    )
-
-    # Bear divergence: price makes HIGHER high, but RSI makes LOWER high
-    bear = (
-        highs[i] > w_highs[prev_high_idx]            # Price: new higher high
-        and not np.isnan(prev_rsi_at_high)
-        and prev_rsi_at_high > cfg.rsi_overbought    # Prior high was overbought
-        and cur_rsi < prev_rsi_at_high - 3            # RSI lower at current high (divergence)
-        and cur_rsi > (100 - cfg.rsi_recovery)        # Still in overbought zone
-    )
-
-    # OBV confirmation
-    obv_bull = False
-    obv_bear = False
-    if bull and len(w_obv) >= 5:
-        recent_delta = obv_arr[i] - obv_arr[i - 1]
-        avg_delta = np.mean(np.abs(np.diff(w_obv[-5:])))
-        if avg_delta > 0:
-            obv_bull = recent_delta > avg_delta * 1.2
-
-    if bear and len(w_obv) >= 5:
-        recent_delta = obv_arr[i] - obv_arr[i - 1]
-        avg_delta = np.mean(np.abs(np.diff(w_obv[-5:])))
-        if avg_delta > 0:
-            obv_bear = recent_delta < -avg_delta * 1.2
-
-    return bull, bear, obv_bull, obv_bear
-
-
-# ── Resample helper (for backtester 1m input) ────────────────────
-def _resample(df: pd.DataFrame, target_minutes: int) -> Optional[pd.DataFrame]:
-    """Resample bars to target timeframe."""
-    if "timestamp" not in df.columns or len(df) < 30:
-        return None
-
-    ts = df["timestamp"].values
-    diffs = [ts[k] - ts[k-1] for k in range(1, min(10, len(ts))) if ts[k] - ts[k-1] > 0]
-    if not diffs:
-        return None
-
-    median_diff = np.median(diffs)
-    if median_diff > 1e9:
-        median_diff /= 1000
-    bar_minutes = median_diff / 60
-
-    if bar_minutes >= target_minutes * 0.8:
-        return None  # Already at or above target
-
-    bars_per_target = max(1, int(round(target_minutes / bar_minutes)))
-    # Use up to 200 output bars (enough for lookback + divergence scanning)
-    max_input = bars_per_target * 200
-    df_tail = df.tail(max_input)
-
-    if len(df_tail) < bars_per_target * 15:
-        return None
-
-    n = len(df_tail) // bars_per_target * bars_per_target
-    df_trim = df_tail.tail(n).copy()
-
-    groups = np.arange(len(df_trim)) // bars_per_target
-    resampled = df_trim.groupby(groups).agg({
-        "open": "first", "high": "max", "low": "min",
-        "close": "last", "volume": "sum",
-    })
-
-    from core.indicators import Indicators
-    resampled = Indicators.compute_all(resampled.reset_index(drop=True))
-    resampled["obv"] = (np.sign(resampled["close"].diff()) * resampled["volume"]).cumsum()
-    return resampled
-
-
-# ── Strategy ─────────────────────────────────────────────────────
-MR_COOLDOWN_SEC = 300  # 5 min cooldown between MR trades on same symbol
+@dataclass
+class MRState:
+    """Per-position exit management state."""
+    entry_time: float = 0
+    entry_bar_idx: int = 0
+    best_pnl_atr: float = 0
+    breakeven_locked: bool = False
 
 
 class MeanReversionStrategy(BaseStrategy):
-    """Multi-Timeframe RSI Divergence — scans 1D, 4H, 1H, 15m simultaneously."""
+    """Adaptive MR: 5m resampled bars + 1H trend filter."""
 
     def __init__(self, trading_config: TradingConfig) -> None:
         super().__init__(StrategyType.MEAN_REVERSION, trading_config)
         self._last_exit_time: Dict[str, float] = {}
-        # When True, disables live Binance API calls (backtest context).
-        # Higher TFs will only work via resampling from input data.
+        self._states: Dict[str, MRState] = {}
+        self._eval_counter: Dict[str, int] = {}
+        # Internal 5m bar cache (built from 1m input)
+        self._resampled: Dict[str, pd.DataFrame] = {}
+        self._last_resample_len: Dict[str, int] = {}
+        # 1H trend cache
+        self._h1_trend: Dict[str, int] = {}   # 1=up, -1=down, 0=neutral
+        self._h1_adx: Dict[str, float] = {}
+        self._h1_cache_bars: Dict[str, int] = {}
         self.backtest_mode: bool = False
 
     def should_activate(self, regime: MarketRegime) -> bool:
-        return regime != MarketRegime.BREAKOUT
+        return regime not in (MarketRegime.BREAKOUT, MarketRegime.UNKNOWN)
 
     def notify_external_exit(self, symbol: str, ts: float) -> None:
-        """Called when paper_sim closes position via SL/TP."""
         self._last_exit_time[symbol] = ts
+        self._states.pop(symbol, None)
 
     def generate_signals(
         self,
@@ -336,328 +113,287 @@ class MeanReversionStrategy(BaseStrategy):
     ) -> List[Signal]:
         signals: List[Signal] = []
 
-        if df.empty or len(df) < 30:
+        if df.empty or len(df) < MIN_BARS_1M:
             return signals
 
+        # Increment eval counter
+        self._eval_counter[symbol] = self._eval_counter.get(symbol, 0) + 1
+        eval_count = self._eval_counter[symbol]
+
+        # ── Resample to 5m (only when new 5m bar closes) ─────────
+        # Only resample every 5 evals (= every 5 1m bars = 1 new 5m bar)
+        if eval_count % RESAMPLE_MINUTES == 0 or symbol not in self._resampled:
+            self._resample_5m(symbol, df)
+
+        m5 = self._resampled.get(symbol)
+        if m5 is None or len(m5) < MIN_BARS_5M:
+            return signals
+
+        # ── Update 1H trend (every 12 5m-bars = 1 hour) ──────────
+        if eval_count % (RESAMPLE_MINUTES * 12) == 0 or symbol not in self._h1_trend:
+            self._update_h1_trend(symbol, df)
+
+        h1_trend = self._h1_trend.get(symbol, 0)
+        h1_adx = self._h1_adx.get(symbol, 0)
+
+        # ── EXIT check (every eval, fast response) ───────────────
         if current_position is not None:
+            exit_sig = self._check_exit(symbol, m5, current_position, snapshot)
+            if exit_sig:
+                signals.append(exit_sig)
             return signals
 
-        # Cooldown: prevent rapid-fire re-entry after SL exit
+        # ── Only evaluate entries on 5m bar close ────────────────
+        if eval_count % RESAMPLE_MINUTES != 0:
+            return signals
+
+        # ── ENTRY LOGIC ──────────────────────────────────────────
+        now = _time.time()
         last_exit = self._last_exit_time.get(symbol, 0)
-        if last_exit > 0 and (_time.time() - last_exit) < MR_COOLDOWN_SEC:
+        if last_exit > 0 and (now - last_exit) < COOLDOWN_SEC:
             return signals
 
         price = snapshot.price if snapshot.price > 0 else float(df.iloc[-1]["close"])
-        kelly_pct = kwargs.get("kelly_risk_pct")
-        obi = kwargs.get("obi")
-
-        # Z-score MR disabled — does not work on BTC 1m (not stationary).
-        # See tasks/lessons.md line 11. Only RSI divergence is viable for MR.
-
-        # ── Multi-TF RSI Divergence (rare, high conviction) ──
-        best_signal = None
-        best_tf_priority = -1
-
-        for tf_key, cfg in TF_CONFIGS.items():
-            tf_df = self._get_tf_data(symbol, df, tf_key, cfg)
-            if tf_df is None or len(tf_df) < cfg.min_bars:
-                continue
-
-            current_bar = tf_df.iloc[-1]
-            atr = float(current_bar.get("atr", 0))
-            adx = float(current_bar.get("adx", 0))
-
-            if pd.isna(atr) or atr <= 0 or pd.isna(adx):
-                continue
-
-            if adx > cfg.adx_max:
-                continue
-
-            # Ensure OBV column exists
-            if "obv" not in tf_df.columns:
-                tf_df = tf_df.copy()
-                tf_df["obv"] = (np.sign(tf_df["close"].diff()) * tf_df["volume"]).cumsum()
-
-            rsi_col = tf_df["rsi"].values if "rsi" in tf_df.columns else np.full(len(tf_df), 50)
-
-            bull, bear, obv_bull, obv_bear = _detect_divergence(
-                tf_df["low"].values, tf_df["high"].values,
-                rsi_col, tf_df["obv"].values, cfg,
-            )
-
-            if not bull and not bear:
-                continue
-
-            # Dip confirmation
-            recent = tf_df.tail(5)
-            if bull:
-                recent_low = recent["low"].min()
-                if price > recent_low + atr * 0.5:
-                    bull = False
-            if bear:
-                recent_high = recent["high"].max()
-                if price < recent_high - atr * 0.5:
-                    bear = False
-
-            if not bull and not bear:
-                continue
-
-            # Score
-            score = cfg.strength_base
-            if bull and obv_bull:
-                score += 0.1
-            if bear and obv_bear:
-                score += 0.1
-            if obi:
-                if bull and obi.weighted_imbalance > 0.10:
-                    score += 0.08
-                elif bear and obi.weighted_imbalance < -0.10:
-                    score += 0.08
-
-            # Priority: 1D=4, 4H=3, 1H=2, 15m=1
-            tf_priority = {"1d": 4, "4h": 3, "1h": 2, "15m": 1}[tf_key]
-
-            if tf_priority > best_tf_priority:
-                best_tf_priority = tf_priority
-                best_signal = {
-                    "tf": tf_key,
-                    "cfg": cfg,
-                    "bull": bull,
-                    "bear": bear,
-                    "score": score,
-                    "atr": atr,
-                    "adx": adx,
-                    "rsi": float(current_bar.get("rsi", 0)),
-                    "obv_bull": obv_bull,
-                    "obv_bear": obv_bear,
-                }
-
-            logger.info(
-                "mr_divergence_detected",
-                symbol=symbol,
-                timeframe=cfg.name,
-                side="BULL" if bull else "BEAR",
-                rsi=float(current_bar.get("rsi", 0)),
-                adx=round(adx, 1),
-                score=round(score, 2),
-            )
-
-        if best_signal is None:
+        if price <= 0:
             return signals
 
-        # Build signal from best (highest TF) divergence
-        cfg = best_signal["cfg"]
-        atr = best_signal["atr"]
-        score = best_signal["score"]
-        strength = min(score, 1.0)
+        bar = m5.iloc[-1]
+        atr = float(bar.get("atr", 0))
+        rsi = float(bar.get("rsi", 50))
+        adx = float(bar.get("adx", 0))
+        bb_lower = float(bar.get("bb_lower", 0))
+        bb_upper = float(bar.get("bb_upper", 0))
+        zscore = float(bar.get("zscore", 0))
+        close_5m = float(bar.get("close", price))
+        volume = float(bar.get("volume", 0))
 
-        # Override risk_pct based on TF (higher TF = bigger position)
-        risk_override = cfg.risk_pct
+        if pd.isna(atr) or atr <= 0 or bb_lower == 0:
+            return signals
 
-        if best_signal["bull"]:
-            stop_loss = price - cfg.sl_mult * atr
-            take_profit = price + cfg.tp_mult * atr
+        # ── TREND FILTER (1H) ────────────────────────────────────
+        # Only trade in trend direction. No trend = no trade.
+        # This is the key filter that turns losing MR into breakeven+
+        if h1_trend == 0 or h1_adx < ADX_MIN_TREND:
+            return signals
 
-            size = self._calc_position_size(
-                allocated_capital, price, stop_loss,
-                sym_config.leverage, kelly_risk_pct=risk_override,
-            )
-            size_usd = size * price
+        # ── PULLBACK DETECTION (5m) ──────────────────────────────
+        # Buy when 5m is oversold in 1H uptrend (pullback buy)
+        # Sell when 5m is overbought in 1H downtrend (rally sell)
+        bull_setup = h1_trend == 1 and rsi < RSI_OVERSOLD
+        bear_setup = h1_trend == -1 and rsi > RSI_OVERBOUGHT
 
-            if size_usd > 10:
-                signals.append(Signal(
-                    strategy=self.strategy_type, symbol=symbol,
-                    side=Side.BUY, strength=strength,
-                    entry_price=price, stop_loss=stop_loss, take_profit=take_profit,
-                    size_usd=size_usd,
-                    metadata={
-                        "trigger": f"bull_divergence_{best_signal['tf']}",
-                        "timeframe": cfg.name,
-                        "rsi": best_signal["rsi"],
-                        "adx": best_signal["adx"],
-                        "atr": atr,
-                        "obv_confirms": best_signal["obv_bull"],
-                        "score": round(score, 2),
-                        "sl_mult": cfg.sl_mult,
-                        "tp_mult": cfg.tp_mult,
-                        "risk_pct": risk_override,
-                        "obi": round(obi.weighted_imbalance, 3) if obi else 0,
-                    },
-                ))
+        if not bull_setup and not bear_setup:
+            return signals
 
-        elif best_signal["bear"]:
-            stop_loss = price + cfg.sl_mult * atr
-            take_profit = price - cfg.tp_mult * atr
+        # ── CONFIRMATION (at least 1 INDEPENDENT signal) ────────
+        # NOTE: BB touch and Z-score are colinear (both measure distance from mean
+        # in std units). Only use BB touch as the stronger structural signal.
+        vol_avg = float(m5["volume"].tail(20).mean()) if len(m5) >= 20 else 0
+        has_bb_touch = (close_5m <= bb_lower) if bull_setup else (close_5m >= bb_upper)
+        has_vol_dry = vol_avg > 0 and volume < vol_avg * 0.8  # Low volume = exhaustion
 
-            size = self._calc_position_size(
-                allocated_capital, price, stop_loss,
-                sym_config.leverage, kelly_risk_pct=risk_override,
-            )
-            size_usd = size * price
+        obi = kwargs.get("obi")
+        has_obi = False
+        if obi:
+            has_obi = (obi.weighted_imbalance > 0.05) if bull_setup else (obi.weighted_imbalance < -0.05)
 
-            if size_usd > 10:
-                signals.append(Signal(
-                    strategy=self.strategy_type, symbol=symbol,
-                    side=Side.SELL, strength=strength,
-                    entry_price=price, stop_loss=stop_loss, take_profit=take_profit,
-                    size_usd=size_usd,
-                    metadata={
-                        "trigger": f"bear_divergence_{best_signal['tf']}",
-                        "timeframe": cfg.name,
-                        "rsi": best_signal["rsi"],
-                        "adx": best_signal["adx"],
-                        "atr": atr,
-                        "obv_confirms": best_signal["obv_bear"],
-                        "score": round(score, 2),
-                        "sl_mult": cfg.sl_mult,
-                        "tp_mult": cfg.tp_mult,
-                        "risk_pct": risk_override,
-                        "obi": round(obi.weighted_imbalance, 3) if obi else 0,
-                    },
-                ))
+        # Candle rejection wick (independent of price/std relationship)
+        has_rejection = self._has_rejection_wick(bar, bull_setup)
 
-        return signals
+        confirmations = sum([has_bb_touch, has_vol_dry, has_obi, has_rejection])
+        if confirmations < 1:
+            return signals
 
-    def _check_zscore_entry(
-        self,
-        symbol: str,
-        df: pd.DataFrame,
-        price: float,
-        regime: MarketRegime,
-        sym_config: SymbolConfig,
-        allocated_capital: float,
-        kelly_pct: Optional[float],
-        obi,
-    ) -> Optional[Signal]:
-        """Z-score mean reversion: buy when price is N std below SMA, sell when above.
+        # ── SIZING & SL/TP ───────────────────────────────────────
+        kelly_pct = kwargs.get("kelly_risk_pct")
+        risk_pct = kelly_pct if kelly_pct else self.trading_config.risk_per_trade_pct
 
-        This is the bread-and-butter MR signal — fires more frequently than
-        RSI divergence, with tighter stops and smaller position sizes.
-        Only activates in RANGING regime (highest edge for MR).
-        """
-        if regime != MarketRegime.RANGING:
-            return None
-
-        if len(df) < 50:
-            return None
-
-        current = df.iloc[-1]
-        atr = float(current.get("atr", 0))
-        adx = float(current.get("adx", 0))
-        rsi = float(current.get("rsi", 50))
-
-        if pd.isna(atr) or atr <= 0 or pd.isna(adx):
-            return None
-
-        # Only in low-trend environment (ADX < 30)
-        if adx > 30:
-            return None
-
-        # Z-score: (price - SMA) / std
-        close = df["close"].values
-        lookback = min(100, len(close))
-        window = close[-lookback:]
-        sma = float(np.mean(window))
-        std = float(np.std(window))
-        if std <= 0:
-            return None
-
-        zscore = (price - sma) / std
-
-        # Entry thresholds
-        entry_z = 2.0     # Enter at 2 std deviation
-        exit_z = 0.5      # TP at 0.5 std (mean reversion target)
-
-        # RSI confirmation: don't buy if RSI not oversold, don't sell if not overbought
-        bull = zscore < -entry_z and rsi < 35
-        bear = zscore > entry_z and rsi > 65
-
-        if not bull and not bear:
-            logger.debug("mr_zscore_skip", symbol=symbol,
-                         zscore=round(zscore, 2), rsi=round(rsi, 1), adx=round(adx, 1))
-            return None
-
-        # Position sizing — conservative for z-score (smaller than divergence)
-        risk_pct = 0.01  # 1% risk per z-score trade
-        sl_mult = 1.5     # Tighter SL than divergence
-        tp_mult = 2.5     # Mean reversion target
-
-        if bull:
-            stop_loss = price - sl_mult * atr
-            take_profit = price + tp_mult * atr
+        if bull_setup:
+            stop_loss = price - SL_ATR_MULT * atr
+            take_profit = price + TP_ATR_MULT * atr
             side = Side.BUY
-            trigger = "zscore_bull"
+            trigger = "trend_pullback_bull"
         else:
-            stop_loss = price + sl_mult * atr
-            take_profit = price - tp_mult * atr
+            stop_loss = price + SL_ATR_MULT * atr
+            take_profit = price - TP_ATR_MULT * atr
             side = Side.SELL
-            trigger = "zscore_bear"
+            trigger = "trend_pullback_bear"
+
+        # Check net R:R after fees
+        rt_cost = price * 14 / 10000  # 14 bps round-trip
+        net_profit = TP_ATR_MULT * atr - rt_cost
+        if net_profit <= 0:
+            return signals
 
         size = self._calc_position_size(
             allocated_capital, price, stop_loss,
-            2,  # Conservative leverage for z-score
-            kelly_risk_pct=risk_pct,
+            sym_config.leverage, kelly_risk_pct=risk_pct,
         )
         size_usd = size * price
-        if size_usd < 10:
-            return None
 
-        strength = min(abs(zscore) / 3.0, 1.0)  # Normalize strength
+        if size_usd < 20:
+            return signals
 
-        logger.info("mr_zscore_entry", symbol=symbol, side=side.value,
-                    zscore=round(zscore, 2), rsi=round(rsi, 1), adx=round(adx, 1),
-                    size_usd=round(size_usd, 2))
+        # ── SCORE ────────────────────────────────────────────────
+        score = 0.50 + confirmations * 0.12
+        strength = min(score, 1.0)
 
-        return Signal(
+        self._states[symbol] = MRState(
+            entry_time=now,
+            entry_bar_idx=eval_count // RESAMPLE_MINUTES,
+        )
+
+        logger.info("mr_entry", symbol=symbol, side=side.value,
+                     trigger=trigger, h1_trend=h1_trend, h1_adx=round(h1_adx, 1),
+                     rsi_5m=round(rsi, 1), adx_5m=round(adx, 1),
+                     zscore=round(zscore, 2), confirmations=confirmations,
+                     atr_bps=round(atr / price * 10000, 1))
+
+        signals.append(Signal(
             strategy=self.strategy_type, symbol=symbol,
             side=side, strength=strength,
             entry_price=price, stop_loss=stop_loss, take_profit=take_profit,
             size_usd=size_usd,
             metadata={
                 "trigger": trigger,
+                "h1_trend": h1_trend,
+                "h1_adx": round(h1_adx, 1),
+                "rsi_5m": round(rsi, 1),
+                "adx_5m": round(adx, 1),
                 "zscore": round(zscore, 2),
-                "rsi": round(rsi, 1),
-                "adx": round(adx, 1),
-                "sma": round(sma, 2),
-                "std": round(std, 4),
-                "risk_pct": risk_pct,
+                "atr": round(atr, 2),
+                "atr_bps": round(atr / price * 10000, 1),
+                "confirmations": confirmations,
+                "has_bb_touch": has_bb_touch,
+                "has_vol_dry": has_vol_dry,
+                "has_obi": has_obi,
+                "has_rejection": has_rejection,
                 "obi": round(obi.weighted_imbalance, 3) if obi else 0,
+                "sl_mult": SL_ATR_MULT,
+                "tp_mult": TP_ATR_MULT,
             },
+        ))
+        return signals
+
+    def _check_exit(
+        self, symbol: str, m5: pd.DataFrame,
+        position: Position, snapshot: MarketSnapshot,
+    ) -> Optional[Signal]:
+        """Check exit conditions."""
+        state = self._states.get(symbol)
+        if not state:
+            return None
+
+        price = snapshot.price if snapshot.price > 0 else float(m5.iloc[-1]["close"])
+        if price <= 0:
+            return None
+
+        atr = float(m5.iloc[-1].get("atr", 0))
+        if atr <= 0:
+            return None
+
+        bars_held = self._eval_counter.get(symbol, 0) // RESAMPLE_MINUTES - state.entry_bar_idx
+        exit_reason = None
+
+        # Breakeven lock: after 1x ATR profit
+        if position.entry_price > 0:
+            pnl_atr = ((price - position.entry_price) / atr if position.side == Side.BUY
+                       else (position.entry_price - price) / atr)
+            if pnl_atr > 1.0:
+                state.breakeven_locked = True
+            if state.breakeven_locked and pnl_atr < 0.1:
+                exit_reason = "breakeven_stop"
+
+        # Max hold
+        if bars_held >= MAX_HOLD_BARS:
+            exit_reason = "max_hold_exceeded"
+
+        if not exit_reason:
+            return None
+
+        close_side = Side.SELL if position.side == Side.BUY else Side.BUY
+        size_usd = position.notional if position.notional > 0 else position.size * price
+
+        self._states.pop(symbol, None)
+        self._last_exit_time[symbol] = _time.time()
+
+        logger.info("mr_exit", symbol=symbol, reason=exit_reason, bars_held=bars_held)
+
+        return Signal(
+            strategy=self.strategy_type, symbol=symbol,
+            side=close_side, strength=1.0,
+            entry_price=price, stop_loss=price, take_profit=price,
+            size_usd=size_usd,
+            metadata={"action": "exit_mean_reversion", "exit_reason": exit_reason},
         )
 
-    def _get_tf_data(
-        self, symbol: str, df: pd.DataFrame, tf_key: str, cfg: TFConfig,
-    ) -> Optional[pd.DataFrame]:
-        """Get dataframe for a specific timeframe.
+    @staticmethod
+    def _has_rejection_wick(bar: pd.Series, is_bull: bool) -> bool:
+        """Check if candle has a rejection wick (exhaustion signal)."""
+        high = float(bar.get("high", 0))
+        low = float(bar.get("low", 0))
+        open_ = float(bar.get("open", 0))
+        close = float(bar.get("close", 0))
+        candle_range = high - low
+        if candle_range <= 0:
+            return False
+        body_top = max(open_, close)
+        body_bottom = min(open_, close)
+        if is_bull:
+            return (body_bottom - low) / candle_range > 0.50
+        else:
+            return (high - body_top) / candle_range > 0.50
 
-        For 15m: resample from input df (which may be 1m or 15m).
-        For 1H/4H/1D: fetch from Binance API (cached).
-        """
-        if tf_key == "15m":
-            # Try resample from input bars
-            resampled = _resample(df, 15)
-            if resampled is not None:
-                return resampled
-            # If input is already 15m, use directly
-            return df if len(df) >= cfg.min_bars else None
+    def _resample_5m(self, symbol: str, df: pd.DataFrame) -> None:
+        """Resample 1m bars to 5m with indicators."""
+        if len(df) < RESAMPLE_MINUTES * MIN_BARS_5M:
+            return
 
-        # Higher TFs: fetch from Binance (cached)
-        tf_minutes = {"1h": 60, "4h": 240, "1d": 1440}
-        target_min = tf_minutes.get(tf_key)
+        # Use last N bars for resampling
+        max_input = RESAMPLE_MINUTES * RESAMPLE_BUFFER
+        tail = df.tail(max_input).copy().reset_index(drop=True)
+        n = len(tail) // RESAMPLE_MINUTES * RESAMPLE_MINUTES
+        trim = tail.tail(n).copy().reset_index(drop=True)
 
-        if target_min is None:
-            return None
+        groups = np.arange(len(trim)) // RESAMPLE_MINUTES
+        resampled = trim.groupby(groups).agg({
+            "open": "first", "high": "max", "low": "min",
+            "close": "last", "volume": "sum",
+        }).reset_index(drop=True)
 
-        # Try resample from 1m input first (backtester and live)
-        if len(df) > target_min * cfg.min_bars:
-            resampled = _resample(df, target_min)
-            if resampled is not None and len(resampled) >= cfg.min_bars:
-                return resampled
+        self._resampled[symbol] = Indicators.compute_all(resampled)
 
-        # In backtest mode, NEVER call live API — it creates look-ahead bias.
-        # Higher TFs that can't be resampled from input data are simply skipped.
-        if self.backtest_mode:
-            return None
+    def _update_h1_trend(self, symbol: str, df: pd.DataFrame) -> None:
+        """Compute 1H trend from 1m bars."""
+        if len(df) < 60 * 30:  # Need 30 hours minimum
+            self._h1_trend[symbol] = 0
+            self._h1_adx[symbol] = 0
+            return
 
-        # Live only: fetch from Binance (cached)
-        return _fetch_klines_sync(symbol, cfg.interval, limit=100)
+        max_input = 60 * 100  # 100 hours
+        tail = df.tail(max_input).copy().reset_index(drop=True)
+        n = len(tail) // 60 * 60
+        trim = tail.tail(n).copy().reset_index(drop=True)
+
+        groups = np.arange(len(trim)) // 60
+        h1 = trim.groupby(groups).agg({
+            "open": "first", "high": "max", "low": "min",
+            "close": "last", "volume": "sum",
+        }).reset_index(drop=True)
+
+        h1 = Indicators.compute_all(h1)
+        if len(h1) < 30:
+            self._h1_trend[symbol] = 0
+            self._h1_adx[symbol] = 0
+            return
+
+        last = h1.iloc[-1]
+        ema12 = float(last.get("ema_12", 0))
+        ema26 = float(last.get("ema_26", 0))
+        adx = float(last.get("adx", 0))
+
+        if ema12 > 0 and ema26 > 0:
+            self._h1_trend[symbol] = 1 if ema12 > ema26 else -1
+        else:
+            self._h1_trend[symbol] = 0
+        self._h1_adx[symbol] = adx

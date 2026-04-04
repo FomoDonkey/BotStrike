@@ -16,8 +16,8 @@ interface StrategyInfo {
 }
 
 const FALLBACK_STRATEGIES: StrategyInfo[] = [
-  { type: "MEAN_REVERSION", active: true, allocation: 0.40, name: "MeanReversionStrategy" },
-  { type: "ORDER_FLOW_MOMENTUM", active: true, allocation: 0.60, name: "OrderFlowMomentumStrategy" },
+  { type: "MEAN_REVERSION", active: true, allocation: 1.00, name: "MeanReversionStrategy" },
+  { type: "ORDER_FLOW_MOMENTUM", active: false, allocation: 0, name: "OrderFlowMomentumStrategy" },
   { type: "TREND_FOLLOWING", active: false, allocation: 0, name: "TrendFollowingStrategy" },
   { type: "MARKET_MAKING", active: false, allocation: 0, name: "MarketMakingStrategy" },
 ];

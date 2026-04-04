@@ -311,7 +311,7 @@ class BotStrike:
                     if self.paper_sim:
                         sl_tp_trades = self.paper_sim.on_price_update(symbol, price)
                         for trade in sl_tp_trades:
-                            self._process_paper_fill(trade)
+                            await self._process_paper_fill(trade)
             except Exception as e:
                 logger.error("on_market_trade_error", error=str(e))
 
@@ -381,7 +381,7 @@ class BotStrike:
                 for b in balances:
                     if b.get("a") == "USD":
                         equity = float(b.get("wb", 0))
-                        self.risk_manager.update_equity(equity)
+                        await self.risk_manager.update_equity_safe(equity)
                         self.metrics.update_equity(equity)
 
         self.websocket.on("ACCOUNT_UPDATE", on_account_update)
@@ -499,7 +499,7 @@ class BotStrike:
                     if self.paper and self.paper_sim:
                         fills = self.paper_sim.execute_signals([], mm_signals, sym_config)
                         for trade in fills:
-                            self._process_paper_fill(trade)
+                            await self._process_paper_fill(trade)
                     elif not self.dry_run:
                         await self.execution_engine.refresh_mm_orders(symbol, mm_signals)
 
@@ -760,7 +760,7 @@ class BotStrike:
         if self.paper and self.paper_sim:
             fills = self.paper_sim.execute_signals(validated, [], sym_config)
             for trade in fills:
-                self._process_paper_fill(trade)
+                await self._process_paper_fill(trade)
         elif not self.dry_run:
             for sig in validated:
                 order = await self.execution_engine.execute_signal(sig, sym_config)
@@ -774,7 +774,7 @@ class BotStrike:
                             strategy=sig.strategy.value, side=sig.side.value,
                             price=sig.entry_price, size=sig.size_usd)
 
-    def _process_paper_fill(self, trade: "Trade") -> None:
+    async def _process_paper_fill(self, trade: "Trade") -> None:
         """Procesa un fill simulado por el paper trading, identico al pipeline live."""
         self.trading_logger.log_trade(trade)
         self.metrics.add_trade(trade)
@@ -791,10 +791,10 @@ class BotStrike:
         # Capturar equity ANTES de actualizar
         equity_before = self.risk_manager.current_equity
         new_equity = equity_before + trade.pnl
-        self.risk_manager.update_equity(new_equity)
+        await self.risk_manager.update_equity_safe(new_equity)
         self.metrics.update_equity(new_equity)
         if trade.pnl != 0:
-            self.risk_manager.record_trade_result(trade.pnl, strategy=trade.strategy)
+            await self.risk_manager.record_trade_result_safe(trade.pnl, strategy=trade.strategy)
         # Slippage tracking para paper fills
         if trade.expected_price > 0:
             self.risk_manager.slippage_tracker.record_fill(
@@ -886,7 +886,7 @@ class BotStrike:
         if self.paper and self.paper_sim:
             fills = self.paper_sim.execute_signals([unwind_signal], [], sym_config)
             for trade in fills:
-                self._process_paper_fill(trade)
+                await self._process_paper_fill(trade)
         elif not self.dry_run:
             await self.execution_engine.execute_signal(unwind_signal, sym_config)
 
@@ -897,7 +897,7 @@ class BotStrike:
         while self._running:
             try:
                 # Auto-reset daily PnL at UTC midnight (robust date-based check)
-                self.risk_manager.check_daily_reset()
+                await self.risk_manager.check_daily_reset_safe()
 
                 if self.paper and self.paper_sim:
                     # Paper mode: sync posiciones desde el simulador
@@ -911,23 +911,25 @@ class BotStrike:
                     paper_symbols = set()
                     for sym, pos_list in symbol_positions.items():
                         paper_symbols.add(sym)
-                        # Use first position as base, aggregate notional/size
+                        # Use first position as base, aggregate with weighted avg entry price
                         base = pos_list[0]
                         if len(pos_list) > 1:
                             total_size = sum(p.size for p in pos_list)
                             total_notional = sum(p.notional for p in pos_list)
                             total_unrealized = sum(p.unrealized_pnl for p in pos_list)
+                            # Weighted average entry price by position size
+                            weighted_entry = sum(p.entry_price * p.size for p in pos_list) / total_size if total_size > 0 else base.entry_price
                             base = Position(
                                 symbol=sym, side=base.side, size=total_size,
-                                entry_price=base.entry_price, mark_price=base.mark_price,
+                                entry_price=weighted_entry, mark_price=base.mark_price,
                                 unrealized_pnl=total_unrealized, strategy=base.strategy,
                             )
-                        self.risk_manager.update_position(sym, base)
+                        await self.risk_manager.update_position_safe(sym, base)
 
                     # Clear closed positions from risk_manager
                     for sym in list(self.risk_manager._positions.keys()):
                         if sym not in paper_symbols:
-                            self.risk_manager.update_position(sym, None)
+                            await self.risk_manager.update_position_safe(sym, None)
                 elif not self.dry_run and (self.settings.api_private_key or self.settings.binance_api_secret):
                     # Live: actualizar posiciones desde exchange
                     positions_data = await self.client.get_positions()
@@ -943,14 +945,17 @@ class BotStrike:
                                     mark_price=float(p.get("markPrice", 0)),
                                     unrealized_pnl=float(p.get("unrealizedProfit", 0)),
                                 )
-                                self.risk_manager.update_position(symbol, pos)
+                                await self.risk_manager.update_position_safe(symbol, pos)
                                 # Sync aggregate position for strategy decision-making.
                                 # In live mode we can't distinguish per-strategy, so store
                                 # under a generic key. Strategies check this for the symbol.
                                 self._positions[symbol] = pos
                             else:
-                                self.risk_manager.update_position(symbol, None)
+                                await self.risk_manager.update_position_safe(symbol, None)
                                 self._positions.pop(symbol, None)
+
+                # Cleanup stale orders (missed WS FILLED/CANCELED events after disconnect)
+                self.execution_engine.cleanup_stale_orders(max_age_sec=300.0)
 
                 # Verificar drawdown crítico (>= consistente con _check_max_drawdown)
                 if self.risk_manager.current_drawdown_pct >= self.settings.trading.max_drawdown_pct:

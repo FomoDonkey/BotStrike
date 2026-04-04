@@ -72,10 +72,12 @@ class Indicators:
         # Wilder's smoothing: span = 2*period - 1 (consistent with ATR)
         avg_gain = gain.ewm(span=2 * period - 1, adjust=False).mean()
         avg_loss = loss.ewm(span=2 * period - 1, adjust=False).mean()
+        # Handle avg_loss=0 (pure uptrend → RSI=100) separately from initial NaN
+        pure_gain = (avg_loss == 0) & (avg_gain > 0)
         rs = avg_gain / avg_loss.replace(0, np.nan)
         rsi = 100 - (100 / (1 + rs))
-        # NaN cases: avg_loss=0 (all gains → RSI=100) or first bar (diff=NaN → RSI=50 neutral)
-        return rsi.fillna(50.0)
+        rsi = rsi.where(~pure_gain, 100.0)  # Pure gains → RSI=100 (not 50)
+        return rsi.fillna(50.0)  # Initial NaN (first bar) → neutral
 
     @staticmethod
     def momentum(series: pd.Series, period: int) -> pd.Series:

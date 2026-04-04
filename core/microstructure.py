@@ -340,9 +340,10 @@ class HawkesEstimator:
         if events_in_window > 10:
             self._adaptive_mu = events_in_window / self.window_sec
 
-        # Baseline: blend adaptive (80%) with config mu as floor
-        # This adapts to BTC's actual activity level without absorbing current spike
-        baseline = max(self.mu, self._adaptive_mu * 0.8)
+        # Baseline: use adaptive data with config mu as minimum floor (20%).
+        # In slow markets (e.g., 0.2 ev/s), baseline tracks actual rate, not config mu.
+        # Config mu only serves as a safety floor to prevent baseline from going to 0.
+        baseline = max(self.mu * 0.2, self._adaptive_mu)
         intensity = baseline + excitation
         spike_threshold = baseline * self.spike_threshold_mult
         is_spike = intensity > spike_threshold
@@ -360,7 +361,7 @@ class HawkesEstimator:
 
         self._result = HawkesResult(
             intensity=intensity,
-            baseline=self._adaptive_mu,
+            baseline=baseline,  # Use the actual baseline (with mu*0.2 floor), not raw adaptive
             excitation=excitation,
             is_spike=is_spike,
             spike_ratio=spike_ratio,
@@ -818,9 +819,11 @@ class KyleLambdaEstimator:
             fill_price, fill_time, sign = self._pending_fills[0]
             if current_time - fill_time < self.as_horizon:
                 break  # Remaining fills are newer, stop
-            # AS: positive = price moved against us (adverse)
+            # AS: positive = price moved against us (adverse selection cost)
+            # Buy (sign=+1): price went up → we got picked off → AS positive
+            # Sell (sign=-1): price went down → we got picked off → AS positive
             if fill_price > 0:
-                as_bps = (current_price - fill_price) / fill_price * 10_000 * (-sign)
+                as_bps = (current_price - fill_price) / fill_price * 10_000 * sign
                 self._as_measurements.append(as_bps)
             self._pending_fills.popleft()
 

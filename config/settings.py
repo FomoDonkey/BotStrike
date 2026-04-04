@@ -65,9 +65,9 @@ class SymbolConfig:
     obi_decay: float = 0.5           # decay exponencial por nivel
     obi_delta_window: int = 10       # ventana para delta de imbalance
     # Kyle Lambda — market impact estimation
-    kyle_lambda_window: int = 500    # trades para rolling regression
-    kyle_lambda_ema_span: int = 100  # span del EMA smoothing
-    adverse_selection_horizon_sec: float = 300.0  # horizonte mark-to-market
+    kyle_lambda_window: int = 200    # trades para rolling regression (500 = 6-10h, too stale; 200 = 2-3h)
+    kyle_lambda_ema_span: int = 50   # span del EMA smoothing (faster adaptation)
+    adverse_selection_horizon_sec: float = 60.0  # horizonte mark-to-market (300s too long for 3s bot cycle)
 
 
 @dataclass
@@ -111,7 +111,7 @@ class TradingConfig:
     vol_target_max_scalar: float = 1.2    # Cap vol scaling (was 2.0 — too aggressive for $300)
     vol_target_lookback_days: int = 20
     # Kelly Criterion
-    kelly_min_trades: int = 50         # Trades minimos para activar Kelly
+    kelly_min_trades: int = 100        # Trades minimos para activar Kelly (50 had ±15% WR variance at 95% CI)
     kelly_floor_pct: float = 0.005     # Minimo 0.5% riesgo por trade
     kelly_ceiling_pct: float = 0.03    # Maximo 3% riesgo por trade
     # Risk of Ruin

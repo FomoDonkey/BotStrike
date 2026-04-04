@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import defaultdict
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -15,7 +15,6 @@ from config.settings import Settings, SymbolConfig
 from core.types import MarketSnapshot, OrderBook, OHLCV
 from core.indicators import Indicators
 from core.regime_detector import RegimeDetector
-from exchange.strike_client import StrikeClient
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -42,7 +41,7 @@ class MarketDataCollector:
     def __init__(
         self,
         settings: Settings,
-        client: StrikeClient,
+        client: Any,  # StrikeClient or BinanceClient — both implement get_klines()
         regime_detector: RegimeDetector,
     ) -> None:
         self.settings = settings

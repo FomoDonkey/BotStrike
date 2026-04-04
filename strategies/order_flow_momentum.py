@@ -37,8 +37,8 @@ logger = structlog.get_logger(__name__)
 COOLDOWN_SEC = 60           # Seconds between trades (applies to strategy exits AND SL/TP exits)
 MIN_ENTRY_SCORE = 0.50      # Needs 2+ microstructure signals confirming
 EXIT_SCORE_THRESHOLD = 0.15 # Exit when signal is mostly gone
-CONFIRM_TICKS = 2           # Score must persist 2 consecutive evals (10s) — was 3 (15s), alpha decays in <10s
-OBI_DELTA_EMA_ALPHA = 0.15  # Faster EMA: ~7 tick halflife (was 0.05/20 ticks — too slow, signal already arbitraged)
+CONFIRM_TICKS = 1           # Immediate entry on score confirmation — alpha decays in <10s, 2-tick (10s) confirmation loses most signal
+OBI_DELTA_EMA_ALPHA = 0.3   # ~3 tick halflife — fast enough to capture alpha before arbitrage (was 0.15/7 ticks)
 SL_SPREAD_MULT = 3.0        # SL = 3x spread
 TP_RR_MULT = 3.0            # TP = SL * 3 (R:R 3:1 gross → ~1.67:1 net after 14bps fees, breakeven WR=37.5%)
 MAX_SL_BPS = 50.0           # Emergency hard cap: 50 bps max loss
@@ -46,8 +46,8 @@ MIN_SPREAD_BPS = 3.0        # Minimum spread for SL/TP calc (floor)
 MIN_SL_ATR_MULT = 0.3       # ATR-based SL floor: SL >= 0.3x ATR (prevents tiny SLs during low spread)
 FEE_SL_MULT = 2.0           # SL must be >= 2x round-trip cost (ensures net R:R > 1:1 after fees)
 PROFIT_LOCK_MULT = 1.5      # Lock profit at 1.5x SL gain (was 2.0 — activated too late)
-MAX_HOLD_SEC = 600           # 10 min max hold — scalping alpha decays in minutes, not 30min
-MIN_HOLD_BEFORE_MICRO_EXIT = 20  # Seconds: don't exit on microprice reversal until 20s held (was 30 — too slow)
+MAX_HOLD_SEC = 180           # 3 min max hold — scalp alpha half-life is 30-60s, 10min was far too long
+MIN_HOLD_BEFORE_MICRO_EXIT = 15  # Seconds: don't exit on microprice noise until 15s held
 
 
 @dataclass
@@ -74,6 +74,8 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         self._confirm_side: Dict[str, str] = {}
         # EMA-smoothed OBI delta per symbol (removes tick-to-tick noise)
         self._obi_delta_ema: Dict[str, float] = {}
+        # Rolling baseline for depth_ratio to handle structural bid/ask imbalance
+        self._depth_ratio_ema: Dict[str, float] = {}
 
     def should_activate(self, regime: MarketRegime) -> bool:
         # OFM scalping should NOT run during BREAKOUT (directional momentum
@@ -163,7 +165,7 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         long_score, short_score = self._compute_scores(
             obi_imbalance, obi_delta, microprice_adj_bps, hawkes_ratio,
             vpin, depth_ratio, atr, price, kwargs.get("trend_info"),
-            effective_spread,
+            effective_spread, symbol=symbol,
         )
 
         # ── Exit logic (setup invalidation) ──────────────────────
@@ -344,6 +346,7 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         price: float,
         trend_info,
         effective_spread: float = 3.0,
+        **kwargs,
     ) -> tuple:
         """Compute long/short scores from microstructure signals.
 
@@ -378,9 +381,16 @@ class OrderFlowMomentumStrategy(BaseStrategy):
         elif hawkes_ratio > hawkes_threshold and obi_delta < -0.01:
             short_score += 0.20
 
-        # Signal 4: Depth ratio (15%) — relative to neutral (1.0), not absolute
-        # Use deviation from 1.0 to avoid structural bias
-        depth_dev = depth_ratio - 1.0
+        # Signal 4: Depth ratio (15%) — relative to adaptive baseline, not fixed 1.0.
+        # BTC has chronic structural ask>bid imbalance; using fixed 1.0 creates
+        # a permanent short bias. Track rolling EMA of depth_ratio as neutral point.
+        symbol = kwargs.get("symbol", "")
+        if symbol not in self._depth_ratio_ema:
+            self._depth_ratio_ema[symbol] = depth_ratio
+        else:
+            self._depth_ratio_ema[symbol] = 0.05 * depth_ratio + 0.95 * self._depth_ratio_ema[symbol]
+        depth_baseline = self._depth_ratio_ema[symbol]
+        depth_dev = depth_ratio - depth_baseline
         if depth_dev > 0.3:
             long_score += 0.15
         elif depth_dev < -0.3:
@@ -443,8 +453,9 @@ class OrderFlowMomentumStrategy(BaseStrategy):
             exit_reason = "counter_signal"
 
         # Exit 3: Microprice reversal — fair value shifted against us
-        # Requires minimum hold time to avoid noise exits from tick-level microprice fluctuation
-        if not should_exit and hold_secs >= MIN_HOLD_BEFORE_MICRO_EXIT:
+        # Shorter hold requirement (5s): microprice reversal > spread is objective signal,
+        # not noise. Only skip the very first evaluation to avoid tick-level jitter.
+        if not should_exit and hold_secs >= 5:
             if position.side == Side.BUY and microprice_adj_bps < -current_spread_bps:
                 should_exit = True
                 exit_reason = "microprice_reversal"

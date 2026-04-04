@@ -436,7 +436,7 @@ class MonteCarloResult:
     p95_max_dd: float = 0.0           # Percentil 95 de max drawdown
     prob_profitable: float = 0.0      # % de paths rentables
     prob_ruin: float = 0.0            # % de paths que tocan max DD
-    sharpe_distribution: Tuple[float, float, float] = (0.0, 0.0, 0.0)  # p5, median, p95
+    calmar_distribution: Tuple[float, float, float] = (0.0, 0.0, 0.0)  # p5, median, p95 (return / max_dd)
     n_simulations: int = 0
 
 
@@ -504,10 +504,9 @@ class MonteCarloBootstrap:
         max_dds = np.array(max_drawdowns)
 
         # Calmar ratio distribution (return / max_drawdown)
-        # Not Sharpe (which requires daily returns), but Calmar is meaningful
-        # for evaluating drawdown-adjusted return per simulation path
+        # Calmar is more relevant than Sharpe for drawdown-sensitive evaluation
         returns_pct = (final_eq - initial_equity) / initial_equity
-        sharpe_proxy = returns_pct / (max_dds + 1e-10)  # Actually Calmar ratio
+        calmar_values = returns_pct / (max_dds + 1e-10)
 
         return MonteCarloResult(
             median_final_equity=float(np.median(final_eq)),
@@ -517,10 +516,10 @@ class MonteCarloBootstrap:
             p95_max_dd=float(np.percentile(max_dds, 95)),
             prob_profitable=float(np.mean(final_eq > initial_equity)),
             prob_ruin=ruin_count / n_simulations,
-            sharpe_distribution=(
-                float(np.percentile(sharpe_proxy, 5)),
-                float(np.median(sharpe_proxy)),
-                float(np.percentile(sharpe_proxy, 95)),
+            calmar_distribution=(
+                float(np.percentile(calmar_values, 5)),
+                float(np.median(calmar_values)),
+                float(np.percentile(calmar_values, 95)),
             ),
             n_simulations=n_simulations,
         )

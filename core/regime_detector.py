@@ -29,9 +29,9 @@ class RegimeDetector:
         self._current_regime: Dict[str, MarketRegime] = {}
         # Thresholds adaptativos por símbolo (cached)
         self._adaptive_thresholds: Dict[str, Dict[str, float]] = {}
-        # Cache timer: recalcular thresholds solo cada 60s (no en cada detect)
+        # Cache timer: recalcular thresholds cada 15s (60s was too stale for 1m bar regime transitions)
         self._threshold_last_update: Dict[str, float] = {}
-        self._threshold_cache_sec: float = 60.0
+        self._threshold_cache_sec: float = 15.0
 
     def detect(
         self, df: pd.DataFrame, symbol: str, config: SymbolConfig
