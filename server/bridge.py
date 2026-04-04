@@ -843,7 +843,7 @@ async def get_trades(limit: int = 100):
         return {"trades": trades[:limit]}
     except Exception as e:
         logger.debug("trades_api_error", error=str(e))
-        return {"trades": list(state.recent_trades)}
+        return {"trades": []}
 
 
 @app.get("/api/data/catalog")
