@@ -473,7 +473,11 @@ async def market_broadcast_loop():
 
 
 async def candle_broadcast_loop():
-    """Broadcast candles from market data collector."""
+    """Broadcast candles from market data collector every second.
+
+    Sends closed bars + the forming bar (current tick buffer) so the
+    chart updates in real-time, not just when bars close.
+    """
     _last_candle_hash: Dict[str, str] = {}
     import math
 
@@ -483,58 +487,51 @@ async def candle_broadcast_loop():
                 for sym_config in state.engine.settings.symbols:
                     symbol = sym_config.symbol
                     df = state.engine.market_data.get_dataframe(symbol)
-                    if df is None or df.empty or len(df) < 2:
+                    if df is None or df.empty:
                         continue
 
-                    # Filter to recent candles only (last 4 hours of 1m data = 240 candles)
-                    # This prevents showing days-old historical data with gaps
-                    now_ts = time.time()
-                    max_age_sec = 4 * 3600  # 4 hours
-                    if "timestamp" in df.columns:
-                        ts_col = df["timestamp"].copy()
-                        # Normalize timestamps to seconds (handle both ms and s formats per-element)
-                        ts_col = ts_col.where(ts_col <= 1e12, ts_col / 1000)
-                        cutoff = now_ts - max_age_sec
-                        df_recent = df[ts_col >= cutoff]
-                        if df_recent.empty or len(df_recent) < 2:
-                            df_recent = df.tail(60)  # Fallback: at least last 60 candles
-                    else:
-                        df_recent = df.tail(240)
+                    # ── Build forming bar from tick buffer ────────────
+                    forming = None
+                    try:
+                        forming = state.engine.market_data.get_forming_bar(symbol)
+                    except Exception:
+                        pass  # get_forming_bar may not exist in older engine
 
-                    n = min(240, len(df_recent))
-                    df_tail = df_recent.tail(n)
-
-                    timestamps = df_tail["timestamp"].values if "timestamp" in df_tail.columns else []
-                    if len(timestamps) == 0:
-                        continue
-
-                    last_ts = float(timestamps[-1])
-                    last_close = float(df_tail["close"].iloc[-1])
-
-                    # Get the forming (current) bar from tick buffer — this is
-                    # the candle that's actively being built but hasn't closed yet.
-                    # Without this, the chart only updates when bars close (every 60s).
-                    forming = state.engine.market_data.get_forming_bar(symbol)
-                    forming_key = ""
-                    if forming:
-                        forming_key = f"_{forming['close']}_{forming['high']}_{forming['low']}"
-
-                    cache_key = f"{n}_{last_ts}_{last_close}{forming_key}"
+                    # ── Dedup: skip if nothing changed ───────────────
+                    last_close = float(df["close"].iloc[-1]) if len(df) > 0 else 0
+                    forming_close = forming["close"] if forming else 0
+                    cache_key = f"{len(df)}_{last_close}_{forming_close}"
                     if _last_candle_hash.get(symbol) == cache_key:
                         continue
                     _last_candle_hash[symbol] = cache_key
 
+                    # ── Collect closed bars ───────────────────────────
+                    # Send ALL available bars (up to 500) — let the frontend decide window
+                    n = min(500, len(df))
+                    df_tail = df.tail(n)
+
                     candles = []
+                    has_ts = "timestamp" in df_tail.columns
+                    has_vol = "volume" in df_tail.columns
+
+                    if has_ts:
+                        timestamps = df_tail["timestamp"].values
+                    else:
+                        # Fallback: generate synthetic timestamps (60s apart)
+                        now = time.time()
+                        timestamps = [now - (n - 1 - i) * 60 for i in range(n)]
+
                     opens = df_tail["open"].values
                     highs = df_tail["high"].values
                     lows = df_tail["low"].values
                     closes = df_tail["close"].values
-                    volumes = df_tail["volume"].values if "volume" in df_tail.columns else [0] * n
+                    volumes = df_tail["volume"].values if has_vol else [0] * n
 
                     for i in range(len(timestamps)):
                         ts = float(timestamps[i])
                         if math.isnan(ts) or ts <= 0:
                             continue
+                        # Normalize ms → s
                         if ts > 1e12:
                             ts = ts / 1000
                         o = float(opens[i])
@@ -550,20 +547,31 @@ async def candle_broadcast_loop():
                             "volume": v if not math.isnan(v) else 0,
                         })
 
-                    # Append the forming bar so the chart shows real-time
-                    # price movement within the current candle period
+                    # ── Append forming bar (real-time candle) ────────
                     if forming and candles:
                         fb_ts = forming["timestamp"]
                         if fb_ts > 1e12:
                             fb_ts = fb_ts / 1000
-                        candles.append({
-                            "time": int(fb_ts),
-                            "open": forming["open"],
-                            "high": forming["high"],
-                            "low": forming["low"],
-                            "close": forming["close"],
-                            "volume": forming["volume"],
-                        })
+                        # Only append if timestamp is after last closed bar
+                        if int(fb_ts) > candles[-1]["time"]:
+                            candles.append({
+                                "time": int(fb_ts),
+                                "open": forming["open"],
+                                "high": forming["high"],
+                                "low": forming["low"],
+                                "close": forming["close"],
+                                "volume": forming["volume"],
+                            })
+                        else:
+                            # Same timestamp as last bar — update in-place
+                            candles[-1] = {
+                                "time": int(fb_ts),
+                                "open": forming["open"],
+                                "high": forming["high"],
+                                "low": forming["low"],
+                                "close": forming["close"],
+                                "volume": forming["volume"],
+                            }
 
                     if candles:
                         await state.channels.broadcast("market", {
@@ -573,9 +581,7 @@ async def candle_broadcast_loop():
                         })
         except Exception as e:
             logger.warning("candle_broadcast_error", error=str(e), error_type=type(e).__name__)
-            import traceback
-            traceback.print_exc()
-        await asyncio.sleep(2)  # 2s — fast enough for real-time chart feel
+        await asyncio.sleep(1)  # 1s broadcast — real-time feel
 
 
 async def metrics_broadcast_loop():

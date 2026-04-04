@@ -86,6 +86,10 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
             borderColor: "rgba(255,255,255,0.05)",
             timeVisible: true,
             secondsVisible: false,
+            rightOffset: 5,         // Space after last candle
+            barSpacing: 6,          // Compact bars to show more candles
+            fixLeftEdge: false,
+            fixRightEdge: false,
           },
           handleScroll: { vertTouchDrag: false },
         });
@@ -190,6 +194,10 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
             color: c.close >= c.open ? "rgba(0,212,170,0.2)" : "rgba(255,71,87,0.2)",
           }))
         );
+        // Scroll to show latest candles on initial load
+        if (chartRef.current) {
+          chartRef.current.timeScale().scrollToRealTime();
+        }
       }
       lastCandleCount.current = candles.length;
     } catch (e) {
