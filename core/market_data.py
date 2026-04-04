@@ -425,6 +425,30 @@ class MarketDataCollector:
         """Verifica si los datos de un símbolo están stale."""
         return self.get_data_age(symbol) > threshold_sec
 
+    def get_forming_bar(self, symbol: str) -> Optional[dict]:
+        """Returns the current (not yet closed) bar from the tick buffer.
+
+        This is the bar that's actively forming — ticks are accumulating but
+        the bar_interval hasn't elapsed yet. Used by the chart bridge to show
+        real-time candle updates within the current bar period.
+
+        Returns None if no ticks are buffered.
+        """
+        ticks = self._tick_buffer.get(symbol, [])
+        if not ticks:
+            return None
+        prices = [t["price"] for t in ticks]
+        volumes = [t["quantity"] for t in ticks]
+        last_bar_ts = self._last_bar_time.get(symbol, 0)
+        return {
+            "timestamp": last_bar_ts + self.bar_interval if last_bar_ts > 0 else ticks[-1]["timestamp"],
+            "open": prices[0],
+            "high": max(prices),
+            "low": min(prices),
+            "close": prices[-1],
+            "volume": sum(volumes),
+        }
+
     def get_current_atr(self, symbol: str) -> float:
         """Obtiene el ATR actual."""
         df = self._dataframes.get(symbol)

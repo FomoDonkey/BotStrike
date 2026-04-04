@@ -510,7 +510,16 @@ async def candle_broadcast_loop():
 
                     last_ts = float(timestamps[-1])
                     last_close = float(df_tail["close"].iloc[-1])
-                    cache_key = f"{n}_{last_ts}_{last_close}"
+
+                    # Get the forming (current) bar from tick buffer — this is
+                    # the candle that's actively being built but hasn't closed yet.
+                    # Without this, the chart only updates when bars close (every 60s).
+                    forming = state.engine.market_data.get_forming_bar(symbol)
+                    forming_key = ""
+                    if forming:
+                        forming_key = f"_{forming['close']}_{forming['high']}_{forming['low']}"
+
+                    cache_key = f"{n}_{last_ts}_{last_close}{forming_key}"
                     if _last_candle_hash.get(symbol) == cache_key:
                         continue
                     _last_candle_hash[symbol] = cache_key
@@ -539,6 +548,21 @@ async def candle_broadcast_loop():
                             "time": int(ts),
                             "open": o, "high": h, "low": lo, "close": c,
                             "volume": v if not math.isnan(v) else 0,
+                        })
+
+                    # Append the forming bar so the chart shows real-time
+                    # price movement within the current candle period
+                    if forming and candles:
+                        fb_ts = forming["timestamp"]
+                        if fb_ts > 1e12:
+                            fb_ts = fb_ts / 1000
+                        candles.append({
+                            "time": int(fb_ts),
+                            "open": forming["open"],
+                            "high": forming["high"],
+                            "low": forming["low"],
+                            "close": forming["close"],
+                            "volume": forming["volume"],
                         })
 
                     if candles:

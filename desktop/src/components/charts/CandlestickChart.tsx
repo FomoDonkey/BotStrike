@@ -1,20 +1,53 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useMarketStore, type Candle } from "@/stores/marketStore";
 import { type TradeData } from "@/stores/tradingStore";
+
+export type Timeframe = "1m" | "5m" | "15m" | "1h" | "4h";
+
+const TF_SECONDS: Record<Timeframe, number> = {
+  "1m": 60,
+  "5m": 300,
+  "15m": 900,
+  "1h": 3600,
+  "4h": 14400,
+};
 
 interface CandlestickChartProps {
   symbol: string;
   className?: string;
   trades?: TradeData[];
+  timeframe?: Timeframe;
 }
 
-export function CandlestickChart({ symbol, className, trades }: CandlestickChartProps) {
+/** Resample 1m candles to a higher timeframe client-side. */
+function resampleCandles(candles: Candle[], tfSeconds: number): Candle[] {
+  if (tfSeconds <= 60 || !candles.length) return candles;
+
+  const buckets = new Map<number, Candle>();
+  for (const c of candles) {
+    const key = Math.floor(c.time / tfSeconds) * tfSeconds;
+    const existing = buckets.get(key);
+    if (!existing) {
+      buckets.set(key, { time: key, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume });
+    } else {
+      existing.high = Math.max(existing.high, c.high);
+      existing.low = Math.min(existing.low, c.low);
+      existing.close = c.close;
+      existing.volume += c.volume;
+    }
+  }
+
+  return Array.from(buckets.values()).sort((a, b) => a.time - b.time);
+}
+
+export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const seriesRef = useRef<any>(null);
   const volumeSeriesRef = useRef<any>(null);
   const lastCandleHash = useRef("");
   const lastMarkersHash = useRef("");
+  const lastCandleCount = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [chartReady, setChartReady] = useState(false);
 
@@ -86,7 +119,7 @@ export function CandlestickChart({ symbol, className, trades }: CandlestickChart
         });
         resizeObs.observe(containerRef.current);
 
-        setChartReady(true); // Signal that chart is ready for data
+        setChartReady(true);
       } catch (e: any) {
         console.error("[Chart] init error:", e);
         setError(e.message || "Chart failed to load");
@@ -105,65 +138,72 @@ export function CandlestickChart({ symbol, className, trades }: CandlestickChart
     };
   }, []);
 
-  // Step 2: Subscribe to candle data ONLY after chart is ready
-  const lastCandleCount = useRef(0);
+  // Step 2: Subscribe to candle data and update chart
+  const tfSeconds = TF_SECONDS[timeframe];
+
+  const updateChart = useCallback(() => {
+    const rawCandles = useMarketStore.getState().candles[symbol];
+    if (!rawCandles?.length || !seriesRef.current || !volumeSeriesRef.current) return;
+
+    // Resample if timeframe > 1m
+    const candles = tfSeconds > 60 ? resampleCandles(rawCandles, tfSeconds) : rawCandles;
+    if (!candles.length) return;
+
+    const last = candles[candles.length - 1];
+    const hash = `${candles.length}_${last.time}_${last.open}_${last.close}_${last.high}_${last.low}_${last.volume}`;
+    if (hash === lastCandleHash.current) return;
+    lastCandleHash.current = hash;
+
+    try {
+      // Detect incremental update (same count or +1 bar)
+      const isIncremental = candles.length === lastCandleCount.current || candles.length === lastCandleCount.current + 1;
+
+      if (isIncremental && lastCandleCount.current > 0) {
+        const lastCandle = {
+          time: last.time as any,
+          open: last.open,
+          high: last.high,
+          low: last.low,
+          close: last.close,
+        };
+        seriesRef.current.update(lastCandle);
+        volumeSeriesRef.current.update({
+          time: last.time as any,
+          value: last.volume,
+          color: last.close >= last.open ? "rgba(0,212,170,0.2)" : "rgba(255,71,87,0.2)",
+        });
+      } else {
+        // Full redraw: initial load, timeframe change, or large data change
+        seriesRef.current.setData(
+          candles.map((c: Candle) => ({
+            time: c.time as any,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+          }))
+        );
+        volumeSeriesRef.current.setData(
+          candles.map((c: Candle) => ({
+            time: c.time as any,
+            value: c.volume,
+            color: c.close >= c.open ? "rgba(0,212,170,0.2)" : "rgba(255,71,87,0.2)",
+          }))
+        );
+      }
+      lastCandleCount.current = candles.length;
+    } catch (e) {
+      console.error("[Chart] update error:", e);
+    }
+  }, [symbol, tfSeconds]);
 
   useEffect(() => {
     if (!chartReady) return;
 
-    function updateChart() {
-      const candles = useMarketStore.getState().candles[symbol];
-      if (!candles?.length || !seriesRef.current || !volumeSeriesRef.current) return;
+    // Reset state on timeframe or symbol change to force full redraw
+    lastCandleHash.current = "";
+    lastCandleCount.current = 0;
 
-      const last = candles[candles.length - 1];
-      const hash = `${candles.length}_${last.open}_${last.close}_${last.high}_${last.low}_${last.volume}`;
-      if (hash === lastCandleHash.current) return;
-      lastCandleHash.current = hash;
-
-      try {
-        const isIncremental = candles.length === lastCandleCount.current || candles.length === lastCandleCount.current + 1;
-
-        if (isIncremental && lastCandleCount.current > 0) {
-          // Incremental update: only update the last candle (much faster, no chart jump)
-          const lastCandle = {
-            time: last.time as any,
-            open: last.open,
-            high: last.high,
-            low: last.low,
-            close: last.close,
-          };
-          seriesRef.current.update(lastCandle);
-          volumeSeriesRef.current.update({
-            time: last.time as any,
-            value: last.volume,
-            color: last.close >= last.open ? "rgba(0,212,170,0.2)" : "rgba(255,71,87,0.2)",
-          });
-        } else {
-          // Full redraw: initial load or large data change
-          seriesRef.current.setData(
-            candles.map((c: Candle) => ({
-              time: c.time as any,
-              open: c.open,
-              high: c.high,
-              low: c.low,
-              close: c.close,
-            }))
-          );
-          volumeSeriesRef.current.setData(
-            candles.map((c: Candle) => ({
-              time: c.time as any,
-              value: c.volume,
-              color: c.close >= c.open ? "rgba(0,212,170,0.2)" : "rgba(255,71,87,0.2)",
-            }))
-          );
-        }
-        lastCandleCount.current = candles.length;
-      } catch (e) {
-        console.error("[Chart] update error:", e);
-      }
-    }
-
-    // Subscribe to store — filter to only act on candle changes for this symbol
     let lastCandleRef: Candle[] | undefined;
     const unsub = useMarketStore.subscribe((state) => {
       const current = state.candles[symbol];
@@ -172,14 +212,13 @@ export function CandlestickChart({ symbol, className, trades }: CandlestickChart
         updateChart();
       }
     });
-    updateChart(); // Load existing data
+    updateChart(); // Load existing data immediately
     return () => { unsub(); };
-  }, [symbol, chartReady]);
+  }, [symbol, chartReady, timeframe, updateChart]);
 
-  // Step 3: Update trade markers on chart when trades change
+  // Step 3: Update trade markers
   useEffect(() => {
     if (!chartReady || !seriesRef.current || !trades?.length) {
-      // Clear markers if no trades
       if (seriesRef.current && lastMarkersHash.current !== "") {
         try { seriesRef.current.setMarkers([]); } catch {}
         lastMarkersHash.current = "";
@@ -187,8 +226,7 @@ export function CandlestickChart({ symbol, className, trades }: CandlestickChart
       return;
     }
 
-    // Dedupe check
-    const hash = `${trades.length}_${trades[trades.length - 1]?.timestamp}`;
+    const hash = `${trades.length}_${trades[trades.length - 1]?.timestamp}_${timeframe}`;
     if (hash === lastMarkersHash.current) return;
     lastMarkersHash.current = hash;
 
@@ -197,11 +235,10 @@ export function CandlestickChart({ symbol, className, trades }: CandlestickChart
 
       for (const t of trades) {
         if (!t.timestamp || !t.price) continue;
-        // Convert unix timestamp to chart time (seconds, floored to minute for 1m candles)
-        const time = Math.floor(t.timestamp / 60) * 60;
+        // Align trade timestamp to timeframe bucket
+        const time = Math.floor(t.timestamp / tfSeconds) * tfSeconds;
 
         if (t.trade_type === "ENTRY") {
-          // Entry marker: arrow pointing in trade direction
           const isBuy = t.side === "BUY";
           markers.push({
             time,
@@ -211,11 +248,9 @@ export function CandlestickChart({ symbol, className, trades }: CandlestickChart
             text: `${isBuy ? "L" : "S"} $${t.price.toFixed(0)}`,
           });
         } else {
-          // Exit marker: circle with PnL
           const isWin = t.pnl > 0;
           const pnlStr = t.pnl >= 0 ? `+${t.pnl.toFixed(2)}` : t.pnl.toFixed(2);
-          // Position opposite to likely entry side (exit BUY = was short, exit SELL = was long)
-          const wasLong = t.side === "SELL"; // Closing a long = sell
+          const wasLong = t.side === "SELL";
           markers.push({
             time,
             position: wasLong ? "aboveBar" : "belowBar",
@@ -226,13 +261,12 @@ export function CandlestickChart({ symbol, className, trades }: CandlestickChart
         }
       }
 
-      // lightweight-charts requires markers sorted by time
       markers.sort((a, b) => a.time - b.time);
       seriesRef.current.setMarkers(markers);
     } catch (e) {
       console.error("[Chart] markers error:", e);
     }
-  }, [trades, chartReady]);
+  }, [trades, chartReady, timeframe, tfSeconds]);
 
   if (error) {
     return (

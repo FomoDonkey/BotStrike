@@ -1,7 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useShallow } from "zustand/shallow";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
-import { CandlestickChart } from "@/components/charts/CandlestickChart";
+import { CandlestickChart, type Timeframe } from "@/components/charts/CandlestickChart";
 import { AnimatedNumber } from "@/components/shared/AnimatedNumber";
 import { useMarketStore } from "@/stores/marketStore";
 import { useTradingStore } from "@/stores/tradingStore";
@@ -9,6 +9,8 @@ import { useMicroStore } from "@/stores/microStore";
 import { formatUSD, formatPrice, formatBps, cn } from "@/lib/utils";
 import { STRATEGY_COLORS, STRATEGY_LABELS } from "@/lib/constants";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
+
+const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h"];
 
 // Static glass panel — no framer-motion to avoid animation issues
 function Panel({ className, children }: { className?: string; children: React.ReactNode }) {
@@ -24,6 +26,7 @@ function Panel({ className, children }: { className?: string; children: React.Re
 
 export function TradingPage() {
   const symbol = "BTC-USD";
+  const [timeframe, setTimeframe] = useState<Timeframe>("1m");
   const price = useMarketStore((s) => s.prices[symbol] || 0);
   const prevPrice = useMarketStore((s) => s.prevPrices[symbol] || 0);
   const orderbook = useMarketStore((s) => s.orderbooks[symbol]);
@@ -46,7 +49,22 @@ export function TradingPage() {
           <div className="flex items-center justify-between px-4 py-2 border-b border-white/5">
             <div className="flex items-center gap-3">
               <span className="font-mono font-bold text-sm text-text-primary">BTC/USD</span>
-              <span className="text-xs text-text-muted">1m</span>
+              <div className="flex items-center gap-0.5 bg-white/[0.03] rounded-lg p-0.5">
+                {TIMEFRAMES.map((tf) => (
+                  <button
+                    key={tf}
+                    onClick={() => setTimeframe(tf)}
+                    className={cn(
+                      "px-2 py-0.5 rounded text-[11px] font-mono font-medium transition-all",
+                      timeframe === tf
+                        ? "bg-accent text-bg-base"
+                        : "text-text-muted hover:text-text-secondary"
+                    )}
+                  >
+                    {tf}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <span className={cn(
@@ -70,7 +88,7 @@ export function TradingPage() {
                 </div>
               }
             >
-              <CandlestickChart symbol={symbol} trades={symbolTrades} />
+              <CandlestickChart symbol={symbol} trades={symbolTrades} timeframe={timeframe} />
             </ErrorBoundary>
           </div>
         </Panel>
