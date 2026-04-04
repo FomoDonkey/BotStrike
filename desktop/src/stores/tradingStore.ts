@@ -76,19 +76,27 @@ interface TradingState {
   onMetrics: (metrics: MetricsData) => void;
 }
 
+// Restore last known metrics from localStorage to avoid showing stale $300 on reconnect
+function loadCachedMetrics(): MetricsData {
+  const fallback: MetricsData = {
+    equity: 300, pnl: 0, total_trades: 0, win_rate: 0,
+    sharpe_ratio: 0, max_drawdown: 0, total_fees: 0,
+  };
+  try {
+    const raw = localStorage.getItem("bs_last_metrics");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return { ...fallback, ...parsed };
+    }
+  } catch {}
+  return fallback;
+}
+
 export const useTradingStore = create<TradingState>((set) => ({
   positions: {},
   recentTrades: [],
   recentSignals: [],
-  metrics: {
-    equity: 300,
-    pnl: 0,
-    total_trades: 0,
-    win_rate: 0,
-    sharpe_ratio: 0,
-    max_drawdown: 0,
-    total_fees: 0,
-  },
+  metrics: loadCachedMetrics(),
 
   onPositions: (symbol, positions) =>
     set((s) => ({ positions: { ...s.positions, [symbol]: positions } })),
@@ -99,5 +107,8 @@ export const useTradingStore = create<TradingState>((set) => ({
   onSignal: (signal) =>
     set((s) => ({ recentSignals: [...s.recentSignals.slice(-49), signal] })),
 
-  onMetrics: (metrics) => set({ metrics }),
+  onMetrics: (metrics) => {
+    try { localStorage.setItem("bs_last_metrics", JSON.stringify(metrics)); } catch {}
+    set({ metrics });
+  },
 }));

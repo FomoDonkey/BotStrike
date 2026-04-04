@@ -522,7 +522,6 @@ async def candle_broadcast_loop():
                     closes = df_tail["close"].values
                     volumes = df_tail["volume"].values if "volume" in df_tail.columns else [0] * n
 
-                    prev_raw_ts = 0  # Track previous RAW timestamp (not accepted)
                     for i in range(len(timestamps)):
                         ts = float(timestamps[i])
                         if math.isnan(ts) or ts <= 0:
@@ -536,13 +535,6 @@ async def candle_broadcast_loop():
                         v = float(volumes[i])
                         if any(math.isnan(x) for x in [o, h, lo, c]):
                             continue
-                        # Skip candles with gaps > 5 minutes vs PREVIOUS RAW candle
-                        # (compare against raw sequence, not last accepted — avoids
-                        # cascading drops where gap grows indefinitely)
-                        if prev_raw_ts > 0 and (int(ts) - int(prev_raw_ts)) > 300:
-                            prev_raw_ts = ts
-                            continue  # Skip this gap candle only
-                        prev_raw_ts = ts
                         candles.append({
                             "time": int(ts),
                             "open": o, "high": h, "low": lo, "close": c,
@@ -559,7 +551,7 @@ async def candle_broadcast_loop():
             logger.warning("candle_broadcast_error", error=str(e), error_type=type(e).__name__)
             import traceback
             traceback.print_exc()
-        await asyncio.sleep(5)
+        await asyncio.sleep(2)  # 2s — fast enough for real-time chart feel
 
 
 async def metrics_broadcast_loop():

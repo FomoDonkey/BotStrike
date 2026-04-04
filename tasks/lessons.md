@@ -602,3 +602,19 @@
 ### Microprice Clamping Destruye Alpha
 - Clampear microprice adjusted entre bid-ask es correcto para Level-1, pero el adjusted microprice (con intensity + OBI) puede legítimamente exceder el spread — eso es precisamente la señal predictiva.
 - **LESSON: No aplicar restricciones de modelos simples a modelos compuestos. El rango válido de un estimador compuesto es más amplio que el de sus componentes individuales.**
+
+## Desktop Live Trading Bug Audit #25 (2026-04-04)
+
+### Chart "Real-Time" es Más Que Streaming — Es Incremental Updates
+- El chart usaba `setData()` completo (redibuja todas las velas) en cada update. Esto causa visual jump/flicker y es O(n) por frame. `update()` de lightweight-charts solo actualiza la última vela: O(1), smooth, sin salto visual.
+- Hash dedup incluía solo `close/high/low/length` — si solo `open` o `volume` cambiaban, el update se descartaba. El chart se "congelaba" visualmente.
+- El subscribe escuchaba TODO el marketStore (ticks, orderbooks, regime, etc.) — generaba cientos de llamadas/seg al updateChart(), 99% descartadas por el hash. Usar selector `state.candles[symbol]` elimina el ruido.
+- **LESSON: Para charts en tiempo real: (1) usar update() incremental para la última vela, setData() solo en carga inicial; (2) el hash dedup debe incluir TODOS los campos que afectan el visual; (3) subscribir solo al slice del estado que importa, no al store completo.**
+
+### Frontend State Fallbacks Deben Persistir
+- Metrics fallback hardcoded a $300 causaba que al reconectar el WS, el dashboard mostrara equity incorrecta hasta recibir el primer broadcast. Con localStorage se preserva el último valor real conocido.
+- **LESSON: Todo estado de UI que tenga un fallback hardcoded debe considerar si hay un valor "último conocido" que sea mejor fallback. localStorage es perfecto para esto en apps Tauri.**
+
+### Trade History Necesita Ambos Timestamps
+- El backend enviaba entry_time y exit_time correctamente, pero el frontend solo mostraba exit_time (que es null para ENTRY trades). Resultado: la mitad de las filas mostraban "---".
+- **LESSON: Al diseñar tablas de historial, siempre mapear TODOS los campos temporales del backend a columnas visibles. Si un campo puede ser null para cierto trade_type, mostrar el campo complementario.**

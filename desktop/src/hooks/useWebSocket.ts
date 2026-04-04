@@ -78,14 +78,18 @@ export function useWebSocketBridge() {
 
     // Risk channel — trigger alerts
     const unsubRisk = getChannel("risk").subscribe((msg) => {
-      if (msg.type === "risk_update") {
-        // Strip protocol fields before passing to store
-        const { type: _, timestamp: __, ...riskData } = msg;
-        useRiskStore.getState().onUpdate(riskData);
-        // Check drawdown alerts
-        useAlertStore.getState().checkAndTrigger({
-          drawdown_pct: msg.drawdown_pct,
-        });
+      try {
+        if (msg.type === "risk_update") {
+          // Strip protocol fields before passing to store
+          const { type: _, timestamp: __, ...riskData } = msg;
+          useRiskStore.getState().onUpdate(riskData);
+          // Check drawdown alerts
+          useAlertStore.getState().checkAndTrigger({
+            drawdown_pct: msg.drawdown_pct,
+          });
+        }
+      } catch (e) {
+        console.error("[ws:risk] handler error:", e);
       }
     });
 

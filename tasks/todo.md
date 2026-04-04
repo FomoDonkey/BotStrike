@@ -802,3 +802,20 @@
 - 10+ layers of protection: drawdown, daily loss, consecutive loss pause, circuit breaker, vol targeting, Kelly, RoR, correlation stress, VPIN filter, Kyle Lambda impact, funding rate
 - Stress test: $300 account survives flash crash (-5%), consecutive losses (6), and funding bleed
 - Recommendation: Deploy live with $100 (not $300) after 7-14 days profitable paper trading
+
+## Desktop Live Trading Bug Audit #25 (2026-04-04)
+
+### Chart Not Real-Time
+- [x] Fix: CandlestickChart hash dedup missing `open` and `volume` — chart froze when only those changed
+- [x] Fix: CandlestickChart used full `setData()` every update — now uses incremental `update()` for last candle (no visual jump/redraw)
+- [x] Fix: CandlestickChart subscribed to entire marketStore — now uses selector `state.candles[symbol]` (eliminates 100s of spurious calls/sec)
+- [x] Fix: Bridge candle_broadcast_loop interval 5s→2s (real-time feel)
+- [x] Fix: Bridge gap-skip logic (>5min gaps) removed — was dropping legitimate candles, breaking chart continuity
+
+### Trade History Timestamps
+- [x] Fix: PerformancePage only displayed `exit_time` (ENTRY rows showed "---") — now shows both Open and Close columns
+- [x] Fix: Column headers "Time" → separate "Open" and "Close" columns with entry_time and exit_time
+
+### Portfolio Balance
+- [x] Fix: Metrics fallback hardcoded $300 — now persists last known metrics to localStorage, restored on reconnect
+- [x] Fix: Risk channel handler missing try-catch — could crash silently on malformed data

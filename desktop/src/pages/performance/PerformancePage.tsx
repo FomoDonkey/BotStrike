@@ -186,7 +186,8 @@ export function PerformancePage() {
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-bg-surface">
                 <tr className="text-text-muted border-b border-white/5">
-                  <th className="text-left py-1">Time</th>
+                  <th className="text-left py-1">Open</th>
+                  <th className="text-left">Close</th>
                   <th className="text-left">Symbol</th>
                   <th className="text-left">Side</th>
                   <th className="text-right">Entry</th>
@@ -199,6 +200,7 @@ export function PerformancePage() {
               <tbody>
                 {trades.slice(0, 50).map((t) => (
                   <tr key={t.id} className="border-b border-white/[0.02] hover:bg-white/[0.02]">
+                    <td className="py-1 text-text-muted">{t.entry_time ? new Date(t.entry_time).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "---"}</td>
                     <td className="py-1 text-text-muted">{t.exit_time ? new Date(t.exit_time).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "---"}</td>
                     <td className="font-mono">{t.symbol}</td>
                     <td className={t.side === "BUY" ? "text-profit" : "text-loss"}>

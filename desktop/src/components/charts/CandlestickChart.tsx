@@ -105,7 +105,9 @@ export function CandlestickChart({ symbol, className, trades }: CandlestickChart
     };
   }, []);
 
-  // Step 2: Subscribe to data ONLY after chart is ready
+  // Step 2: Subscribe to candle data ONLY after chart is ready
+  const lastCandleCount = useRef(0);
+
   useEffect(() => {
     if (!chartReady) return;
 
@@ -114,33 +116,58 @@ export function CandlestickChart({ symbol, className, trades }: CandlestickChart
       if (!candles?.length || !seriesRef.current || !volumeSeriesRef.current) return;
 
       const last = candles[candles.length - 1];
-      const hash = `${candles.length}_${last.close}_${last.high}_${last.low}`;
+      const hash = `${candles.length}_${last.open}_${last.close}_${last.high}_${last.low}_${last.volume}`;
       if (hash === lastCandleHash.current) return;
       lastCandleHash.current = hash;
 
       try {
-        seriesRef.current.setData(
-          candles.map((c: Candle) => ({
-            time: c.time as any,
-            open: c.open,
-            high: c.high,
-            low: c.low,
-            close: c.close,
-          }))
-        );
-        volumeSeriesRef.current.setData(
-          candles.map((c: Candle) => ({
-            time: c.time as any,
-            value: c.volume,
-            color: c.close >= c.open ? "rgba(0,212,170,0.2)" : "rgba(255,71,87,0.2)",
-          }))
-        );
+        const isIncremental = candles.length === lastCandleCount.current || candles.length === lastCandleCount.current + 1;
+
+        if (isIncremental && lastCandleCount.current > 0) {
+          // Incremental update: only update the last candle (much faster, no chart jump)
+          const lastCandle = {
+            time: last.time as any,
+            open: last.open,
+            high: last.high,
+            low: last.low,
+            close: last.close,
+          };
+          seriesRef.current.update(lastCandle);
+          volumeSeriesRef.current.update({
+            time: last.time as any,
+            value: last.volume,
+            color: last.close >= last.open ? "rgba(0,212,170,0.2)" : "rgba(255,71,87,0.2)",
+          });
+        } else {
+          // Full redraw: initial load or large data change
+          seriesRef.current.setData(
+            candles.map((c: Candle) => ({
+              time: c.time as any,
+              open: c.open,
+              high: c.high,
+              low: c.low,
+              close: c.close,
+            }))
+          );
+          volumeSeriesRef.current.setData(
+            candles.map((c: Candle) => ({
+              time: c.time as any,
+              value: c.volume,
+              color: c.close >= c.open ? "rgba(0,212,170,0.2)" : "rgba(255,71,87,0.2)",
+            }))
+          );
+        }
+        lastCandleCount.current = candles.length;
       } catch (e) {
         console.error("[Chart] update error:", e);
       }
     }
 
-    const unsub = useMarketStore.subscribe(updateChart);
+    // Subscribe only to candle changes for this symbol (not entire store)
+    const unsub = useMarketStore.subscribe(
+      (state) => state.candles[symbol],
+      () => updateChart()
+    );
     updateChart(); // Load existing data
     return () => { unsub(); };
   }, [symbol, chartReady]);
