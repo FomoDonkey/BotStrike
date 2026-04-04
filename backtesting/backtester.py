@@ -28,9 +28,20 @@ from core.indicators import Indicators
 from core.regime_detector import RegimeDetector
 from strategies.base import BaseStrategy
 from strategies.mean_reversion import MeanReversionStrategy
-from strategies.trend_following import TrendFollowingStrategy
-from strategies.market_making import MarketMakingStrategy
-from strategies.order_flow_momentum import OrderFlowMomentumStrategy
+
+# Archived strategies — lazy import only if explicitly requested in backtest
+def _get_strategy_class(name: str):
+    """Lazy-load archived strategies for backtest-only use."""
+    if name == "TREND_FOLLOWING":
+        from archive.strategies.trend_following import TrendFollowingStrategy
+        return TrendFollowingStrategy
+    elif name == "MARKET_MAKING":
+        from archive.strategies.market_making import MarketMakingStrategy
+        return MarketMakingStrategy
+    elif name == "ORDER_FLOW_MOMENTUM":
+        from archive.strategies.order_flow_momentum import OrderFlowMomentumStrategy
+        return OrderFlowMomentumStrategy
+    return None
 from risk.risk_manager import RiskManager
 from portfolio.portfolio_manager import PortfolioManager
 from execution.slippage import compute_slippage, compute_slippage_bps
@@ -300,17 +311,17 @@ class Backtester:
 
         # Inicializar estrategias
         active_strategies: List[BaseStrategy] = []
-        strat_names = strategies or ["MEAN_REVERSION", "TREND_FOLLOWING", "MARKET_MAKING"]
+        strat_names = strategies or ["MEAN_REVERSION"]
         if "MEAN_REVERSION" in strat_names:
             _mr = MeanReversionStrategy(trading_config)
-            _mr.backtest_mode = True  # Disable live API calls — use resampled data only
+            _mr.backtest_mode = True
             active_strategies.append(_mr)
-        if "TREND_FOLLOWING" in strat_names:
-            active_strategies.append(TrendFollowingStrategy(trading_config))
-        if "MARKET_MAKING" in strat_names:
-            active_strategies.append(MarketMakingStrategy(trading_config))
-        if "ORDER_FLOW_MOMENTUM" in strat_names:
-            active_strategies.append(OrderFlowMomentumStrategy(trading_config))
+        # Archived strategies (lazy-loaded if explicitly requested)
+        for archived_name in ["TREND_FOLLOWING", "MARKET_MAKING", "ORDER_FLOW_MOMENTUM"]:
+            if archived_name in strat_names:
+                cls = _get_strategy_class(archived_name)
+                if cls:
+                    active_strategies.append(cls(trading_config))
 
         regime_detector = RegimeDetector()
 
@@ -667,17 +678,16 @@ class RealisticBacktester:
         # ── Inicializar componentes (idéntico a BotStrike.__init__) ──
 
         active_strategies: List[BaseStrategy] = []
-        strat_names = strategies or ["MEAN_REVERSION", "TREND_FOLLOWING", "MARKET_MAKING", "ORDER_FLOW_MOMENTUM"]
+        strat_names = strategies or ["MEAN_REVERSION"]
         if "MEAN_REVERSION" in strat_names:
             _mr = MeanReversionStrategy(trading_config)
-            _mr.backtest_mode = True  # Disable live API calls — use resampled data only
+            _mr.backtest_mode = True
             active_strategies.append(_mr)
-        if "TREND_FOLLOWING" in strat_names:
-            active_strategies.append(TrendFollowingStrategy(trading_config))
-        if "MARKET_MAKING" in strat_names:
-            active_strategies.append(MarketMakingStrategy(trading_config))
-        if "ORDER_FLOW_MOMENTUM" in strat_names:
-            active_strategies.append(OrderFlowMomentumStrategy(trading_config))
+        for archived_name in ["TREND_FOLLOWING", "MARKET_MAKING", "ORDER_FLOW_MOMENTUM"]:
+            if archived_name in strat_names:
+                cls = _get_strategy_class(archived_name)
+                if cls:
+                    active_strategies.append(cls(trading_config))
 
         regime_detector = RegimeDetector()
         risk_manager = RiskManager(self.settings)

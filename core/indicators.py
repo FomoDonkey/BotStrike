@@ -58,7 +58,9 @@ class Indicators:
     ) -> tuple[pd.Series, pd.Series, pd.Series]:
         """Bandas de Bollinger: (upper, middle, lower)."""
         middle = series.rolling(window=period, min_periods=period).mean()
-        std = series.rolling(window=period, min_periods=period).std().fillna(0)
+        # NaN stays NaN during warmup — fillna(0) would collapse bands to SMA,
+        # causing false BB touch signals. Consumers must check for NaN.
+        std = series.rolling(window=period, min_periods=period).std()
         upper = middle + num_std * std
         lower = middle - num_std * std
         return upper, middle, lower

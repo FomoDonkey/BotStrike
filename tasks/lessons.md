@@ -618,3 +618,52 @@
 ### Trade History Necesita Ambos Timestamps
 - El backend enviaba entry_time y exit_time correctamente, pero el frontend solo mostraba exit_time (que es null para ENTRY trades). Resultado: la mitad de las filas mostraban "---".
 - **LESSON: Al diseñar tablas de historial, siempre mapear TODOS los campos temporales del backend a columnas visibles. Si un campo puede ser null para cierto trade_type, mostrar el campo complementario.**
+
+## Architecture & Overengineering (2026-04-04)
+
+### Sobreingeniería masiva para micro cuenta
+- El sistema fue diseñado como hedge fund multi-estrategia institucional pero opera como bot de $300 con 1 sola estrategia. 31,000 LOC para lo que necesita ~4,500.
+- **LESSON: La complejidad del código debe escalar con la complejidad PROBADA del problema. No construir para "cuando tenga $10M" — construir para lo que opera HOY.**
+
+### Estrategias desactivadas corriendo en runtime
+- 3 de 4 estrategias tenían `should_activate() → False` o allocation=0%, pero se instanciaban, se iteraban en cada ciclo, se les verificaba régimen, portfolio allocation, research status... para NUNCA generar señales.
+- El _mm_loop corría un bucle async de 500ms en paralelo para una estrategia permanentemente desactivada.
+- **LESSON: Si una feature está desactivada, SACARLA del runtime. No dejar dead code corriendo "por si acaso". Un flag return False no es suficiente — el módulo entero debe dejar de existir en el hot path.**
+
+### MTF resampling sin consumidores
+- `_process_symbol()` generaba DataFrames de 5m/15m/1h en cada ciclo (cada 3s) y los pasaba como `mtf=mtf_signals` — pero NINGUNA estrategia usaba ese parámetro. Computación pura desperdiciada.
+- **LESSON: Antes de agregar un pipeline de datos, verificar que hay un consumidor. Si nadie lee el output, no generarlo.**
+
+### Archive pattern funciona bien
+- Mover módulos desactivados a `archive/` con lazy-loading permite limpiar el runtime sin perder la posibilidad de reactivarlos. Backtester puede cargar estrategias archivadas on-demand.
+- **LESSON: `archive/` > borrar. Los módulos archivados mantienen el conocimiento sin contaminar el runtime. Lazy imports (`_get_strategy_class()`) son el puente correcto.**
+
+### La regla de oro para features en trading
+- Si no tiene 100+ trades de backtest con datos reales mostrando PF > 1.0, no debería existir en el codebase activo. Smart Router con VWAP/QueuePosition para órdenes de $100, Kyle Lambda para scalping de $20, Portfolio Manager multi-activo para 1 símbolo — todo overengineering sin evidencia.
+- **LESSON: En trading, la evidencia estadística precede a la sofisticación técnica. Un IF/ELSE simple con edge probado vale más que un modelo de 500 LOC sin trades.**
+
+## Audit #20 — Silent bugs are the most dangerous (2026-04-04)
+
+### bar_interval mismatch (the system-killing silent bug)
+- `market_data.py` had `bar_interval = 900` (15m) but MR strategy assumed 1m bars and resampled to 5m internally. Result: all indicators (RSI, ATR, BB) computed on wrong timeframe. No crash, no error, just garbage signals.
+- **LESSON: When two modules have an implicit contract (producer's output format = consumer's expected input), it MUST be documented or validated. A single constant change in one file silently broke the entire trading pipeline.**
+
+### Resample triggers must be data-driven, not time-driven
+- Using `eval_count % 5 == 0` to trigger resample assumed 1 eval = 1 bar. With strategy_interval_sec=3s and bar_interval=60s, there were ~20 evals per bar. The resample ran on stale data 19 out of 20 times.
+- **LESSON: Always trigger resampling on actual data changes (`len(df) changed`), never on a counter that assumes a specific calling frequency.**
+
+### Cold start periods must match data seeding
+- h1_trend required 1800 bars (30 hours) but Binance seed only provides 360 bars (6 hours). The bot was inoperative for the first 24 hours after startup with zero warning logs.
+- **LESSON: Every warmup requirement must be ≤ the data available at startup. If you seed 6h, your warmup can't require 30h. Log a WARNING when warmup is incomplete.**
+
+### Funding rate feeds need explicit handlers
+- The funding rate was populated once at startup from REST, then never updated. The WS markPrice stream was subscribed but no handler existed to parse it. Risk filter used stale data.
+- **LESSON: Subscribing to a WS stream is not the same as processing it. Every subscription needs a handler, a parser, and a target field to update.**
+
+### Position.notional fallback prevents exposure bypass
+- `notional = size * mark_price`. If mark_price=0 (API partial failure), notional=0, exposure check=0, unlimited positions possible.
+- **LESSON: Financial calculations must never silently degrade to 0. Always fallback to the next best estimate (entry_price in this case).**
+
+### Paper simulator SL/TP needs running high/low
+- Paper sim's `on_price_update(symbol, price)` checked SL/TP against the exact trade price. In live, SL becomes a market order that can fill at any price within the bar's range. Paper was systematically optimistic.
+- **LESSON: Paper trading must model worst-case fills, not best-case. SL should trigger if ANY price in the interval crossed the level, not just the last trade.**

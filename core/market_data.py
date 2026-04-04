@@ -59,8 +59,9 @@ class MarketDataCollector:
         # Último dato recibido por símbolo (para detección de stale data)
         self._last_data_time: Dict[str, float] = {}
         # Intervalo de barras en segundos
-        # 900 = 15min — timeframe óptimo para divergencias RSI+OBV
-        self.bar_interval = 900
+        # 60 = 1min — MR strategy resamples 1m bars to 5m internally.
+        # Must be 60 for indicator math to be correct (ATR, RSI, BB).
+        self.bar_interval = 60
 
         # ── Tick quality state ───────────────────────────────────
         # Timestamp de última conexión/reconexión WS (para warmup)
@@ -163,9 +164,14 @@ class MarketDataCollector:
                     self._snapshots[symbol] = MarketSnapshot(
                         symbol=symbol, timestamp=self._last_bar_time[symbol],
                         price=last_price, mark_price=last_price, index_price=last_price,
+                        funding_rate=0.0, volume_24h=0.0, open_interest=0.0,
                     )
                 else:
                     self._snapshots[symbol].price = last_price
+
+            # Initialize _last_data_time so stale data guard doesn't block
+            # strategy until first WS tick arrives (prevents seed-then-stale gap)
+            self._last_data_time[symbol] = time.time()
 
             logger.info("binance_seed_loaded", symbol=symbol, bars=len(df), hours=hours)
 

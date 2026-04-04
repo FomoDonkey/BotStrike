@@ -84,11 +84,11 @@ class TradingConfig:
     max_total_exposure_pct: float = 0.6  # 60% max exposure (was 0.8)
     max_open_positions: int = 2          # Max concurrent positions (flash crash protection for $300 account)
     risk_per_trade_pct: float = 0.015   # 1.5% = $4.50 risk budget (was 1%)
-    # Asignación por estrategia — OFM desactivado hasta validación estadística (0 backtests)
-    allocation_mean_reversion: float = 1.00   # 100% — única estrategia con evidencia (was 0.40)
-    allocation_trend_following: float = 0.00
-    allocation_market_making: float = 0.00
-    allocation_order_flow_momentum: float = 0.00  # DESACTIVADO: sin backtest, breakeven WR=37.5% (was 0.60)
+    # Asignación por estrategia — solo MR activa (TF/MM/OFM archivadas)
+    allocation_mean_reversion: float = 1.00
+    allocation_trend_following: float = 0.00   # archived
+    allocation_market_making: float = 0.00     # archived
+    allocation_order_flow_momentum: float = 0.00  # archived
     # Fees — Binance Futures defaults (VIP 0)
     maker_fee: float = 0.0002           # 2 bps — Binance Futures maker
     taker_fee: float = 0.0004           # 4 bps — Binance Futures taker (was 5 bps Strike)

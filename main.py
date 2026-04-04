@@ -26,8 +26,6 @@ from exchange.strike_client import StrikeClient
 from exchange.binance_client import BinanceClient
 from exchange.websocket_client import StrikeWebSocket
 from strategies.mean_reversion import MeanReversionStrategy
-from strategies.trend_following import TrendFollowingStrategy
-from strategies.market_making import MarketMakingStrategy
 from strategies.base import BaseStrategy
 from risk.risk_manager import RiskManager
 from portfolio.portfolio_manager import PortfolioManager
@@ -36,7 +34,6 @@ from logging_metrics.logger import TradingLogger, MetricsCollector
 from core.microstructure import MicrostructureEngine
 from core.orderbook_alpha import OrderBookImbalance
 from core.microprice import MicropriceCalculator
-from core.quant_models import MonteCarloBootstrap
 from backtesting.backtester import Backtester
 from trade_database.repository import TradeRepository
 from trade_database.adapter import TradeDBAdapter
@@ -106,17 +103,9 @@ class BotStrike:
             self.trade_repo, source="paper" if self.paper else "live"
         )
 
-        # Trend Provider — tendencia real de Binance 4H/1D klines
-        from core.trend_provider import TrendProvider
-        self.trend_provider = TrendProvider()
-
-        # Estrategias
-        from strategies.order_flow_momentum import OrderFlowMomentumStrategy
+        # Estrategias — solo MR activa (TF/MM/OFM archivadas hasta validación estadística)
         self.strategies: List[BaseStrategy] = [
             MeanReversionStrategy(settings.trading),
-            TrendFollowingStrategy(settings.trading),
-            MarketMakingStrategy(settings.trading),
-            OrderFlowMomentumStrategy(settings.trading),
         ]
 
         # Microprice calculator por símbolo
@@ -132,15 +121,6 @@ class BotStrike:
                 decay=sym.obi_decay,
                 delta_window=sym.obi_delta_window,
             )
-
-        # Monte Carlo para análisis periódico
-        self.monte_carlo = MonteCarloBootstrap(
-            max_drawdown_pct=settings.trading.max_drawdown_pct,
-        )
-
-        # Research Engine — quantitative validation of strategies
-        from analytics.research_engine import ResearchEngine
-        self.research = ResearchEngine(settings)
 
         # Telegram notifications
         self.notifier = get_notifier(settings)
@@ -186,16 +166,14 @@ class BotStrike:
         # Registrar callbacks de WebSocket
         self._setup_ws_callbacks()
 
-        # Arrancar loops
+        # Arrancar loops (MM loop eliminado — estrategia desactivada)
         self._running = True
         tasks = [
             asyncio.create_task(self.websocket.connect_market()),
             asyncio.create_task(self._strategy_loop()),
-            asyncio.create_task(self._mm_loop()),
             asyncio.create_task(self._risk_monitor_loop()),
             asyncio.create_task(self._data_refresh_loop()),
             asyncio.create_task(self._metrics_loop()),
-            asyncio.create_task(self._daily_analysis_loop()),
         ]
 
         # WebSocket de usuario solo si hay API key Y no estamos en paper mode
@@ -233,7 +211,7 @@ class BotStrike:
         Si un task no-crítico (metrics, data_refresh) muere, se reinicia.
         Si un task crítico (strategy, mm, risk, websocket) muere 3 veces, se hace shutdown.
         """
-        task_names = ["ws_market", "strategy", "mm", "risk_monitor", "data_refresh", "metrics"]
+        task_names = ["ws_market", "strategy", "risk_monitor", "data_refresh", "metrics"]
         if len(tasks) > len(task_names):
             task_names.append("ws_user")
 
@@ -386,6 +364,32 @@ class BotStrike:
 
         self.websocket.on("ACCOUNT_UPDATE", on_account_update)
 
+        # Mark price updates → update funding rate in snapshot
+        async def on_markprice_update(data: Dict):
+            try:
+                symbol = data.get("s", "")
+                if not symbol:
+                    return
+                # Normalize Binance symbol if needed
+                from exchange.binance_client import SYMBOL_MAP_REVERSE as BIN_REV
+                symbol = BIN_REV.get(symbol, symbol)
+                funding = data.get("r", data.get("lastFundingRate"))
+                configured_syms = [s.symbol for s in self.settings.symbols]
+                if funding is not None and symbol in configured_syms:
+                    snap = self.market_data.get_snapshot(symbol)
+                    if snap:
+                        snap.funding_rate = float(funding)
+                mark = data.get("p", data.get("markPrice"))
+                if mark and symbol in configured_syms:
+                    snap = self.market_data.get_snapshot(symbol)
+                    if snap:
+                        snap.mark_price = float(mark)
+            except Exception as e:
+                logger.error("on_markprice_error", error=str(e))
+
+        self.websocket.on("markPrice", on_markprice_update)
+        self.websocket.on("markPriceUpdate", on_markprice_update)
+
         # Suscribir a canales de mercado para cada símbolo
         for sym in self.settings.symbols:
             asyncio.ensure_future(self.websocket.subscribe("trade", sym.symbol))
@@ -410,112 +414,6 @@ class BotStrike:
                 logger.error("strategy_loop_error", error=str(e))
                 await asyncio.sleep(5)
 
-    async def _mm_loop(self) -> None:
-        """Loop dedicado para Market Making — refresha quotes cada mm_interval_sec.
-
-        Mas rapido que el strategy_loop (500ms vs 5s) porque MM necesita
-        quotes frescas para capturar spread. NO recalcula indicadores ni regimen
-        — usa los valores cacheados del ultimo ciclo de _strategy_loop.
-        """
-        await asyncio.sleep(8)  # esperar que _strategy_loop haya corrido al menos 1 vez
-
-        mm_strategy = None
-        for s in self.strategies:
-            if s.strategy_type == StrategyType.MARKET_MAKING:
-                mm_strategy = s
-                break
-        if mm_strategy is None:
-            return
-
-        while self._running:
-            try:
-                for sym_config in self.settings.symbols:
-                    symbol = sym_config.symbol
-
-                    # No hacer MM con datos stale
-                    if self.market_data.is_data_stale(
-                        symbol, self.settings.trading.data_stale_warn_sec
-                    ):
-                        continue
-
-                    regime = self._last_regime.get(symbol, MarketRegime.UNKNOWN)
-
-                    # Verificar si MM esta activa en este regimen
-                    mm_active = (
-                        mm_strategy.should_activate(regime)
-                        and self.portfolio_manager.should_strategy_trade(
-                            StrategyType.MARKET_MAKING, regime
-                        )
-                    )
-
-                    # Si MM no esta activa pero hay inventory, cerrar posicion
-                    if not mm_active:
-                        await self._unwind_mm_inventory(symbol, sym_config)
-                        continue
-
-                    # Obtener datos frescos (snapshot se actualiza tick-a-tick via WS)
-                    df = self.market_data.get_dataframe(symbol)
-                    snapshot = self.market_data.get_snapshot(symbol)
-                    if df.empty or snapshot is None:
-                        continue
-
-                    snapshot.regime = regime
-                    micro = self.microstructure.get_snapshot(symbol)
-
-                    allocated = self.portfolio_manager.get_allocation(
-                        symbol, regime, StrategyType.MARKET_MAKING
-                    )
-
-                    if self.paper_sim:
-                        current_pos = self.paper_sim.get_position(symbol, StrategyType.MARKET_MAKING)
-                    else:
-                        current_pos = self._positions.get(symbol)
-
-                    # OBI para MM spread skew
-                    obi_result = None
-                    if symbol in self.obi and snapshot.orderbook:
-                        obi_result = self.obi[symbol].compute(snapshot.orderbook)
-
-                    mm_signals = mm_strategy.generate_signals(
-                        symbol, df, snapshot, regime, sym_config, allocated, current_pos,
-                        micro=micro,
-                        obi=obi_result,
-                    )
-
-                    if not mm_signals:
-                        continue
-
-                    # MM safety: skip si circuit breaker o max drawdown excedido
-                    if self.risk_manager.is_circuit_breaker_active:
-                        continue
-                    if self.risk_manager.current_drawdown_pct >= self.settings.trading.max_drawdown_pct:
-                        continue
-
-                    # Inyectar régimen en metadata para slippage por régimen
-                    for sig in mm_signals:
-                        sig.metadata["regime"] = regime.value
-
-                    # Ejecutar
-                    if self.paper and self.paper_sim:
-                        fills = self.paper_sim.execute_signals([], mm_signals, sym_config)
-                        for trade in fills:
-                            await self._process_paper_fill(trade)
-                    elif not self.dry_run:
-                        await self.execution_engine.refresh_mm_orders(symbol, mm_signals)
-
-                await asyncio.sleep(self.settings.trading.mm_interval_sec)
-
-            except Exception as e:
-                logger.error("mm_loop_error", error=str(e))
-                await asyncio.sleep(2)
-
-    async def _update_trend_background(self, symbol: str) -> None:
-        """Fetch trend data in background (non-blocking)."""
-        try:
-            await self.trend_provider.update(symbol)
-        except Exception as e:
-            logger.debug("trend_bg_update_failed", symbol=symbol, error=str(e))
-
     async def _process_symbol(self, symbol: str, sym_config: SymbolConfig) -> None:
         """Procesa un símbolo: régimen → señales → ejecución."""
         # Protección de datos stale: no operar si no hay datos frescos
@@ -533,36 +431,6 @@ class BotStrike:
 
         if df.empty or snapshot is None:
             return
-
-        # Trend from Binance 4H/1D (use cached, update in background to avoid blocking)
-        trend_info = self.trend_provider.get_trend(symbol)
-        if trend_info is None or (time.time() - trend_info.timestamp > 900):
-            asyncio.ensure_future(self._update_trend_background(symbol))
-
-        # Multi-timeframe: generar DataFrames de 5m, 15m, 1h para estrategias
-        mtf_signals = {}
-        if len(df) > 30 and "timestamp" in df.columns:
-            try:
-                from core.indicators import Indicators
-                ts_unit = "s" if df["timestamp"].max() < 1e12 else "ms"
-                df_indexed = df.set_index(pd.to_datetime(df["timestamp"], unit=ts_unit))
-                for tf_label, tf_rule in [("5m", "5min"), ("15m", "15min"), ("1h", "1h")]:
-                    resampled = df_indexed.resample(tf_rule).agg({
-                        "open": "first", "high": "max", "low": "min",
-                        "close": "last", "volume": "sum",
-                    }).dropna()
-                    if len(resampled) > 20:
-                        resampled = Indicators.compute_all(resampled.reset_index(drop=True))
-                        last = resampled.iloc[-1]
-                        mtf_signals[tf_label] = {
-                            "rsi": float(last.get("rsi", 50)),
-                            "bb_upper": float(last.get("bb_upper", 0)),
-                            "bb_lower": float(last.get("bb_lower", 0)),
-                            "adx": float(last.get("adx", 0)),
-                            "atr": float(last.get("atr", 0)),
-                        }
-            except Exception:
-                pass
 
         # 1. Detectar régimen
         regime = self.regime_detector.detect(df, symbol, sym_config)
@@ -632,87 +500,39 @@ class BotStrike:
                 "adverse_selection_bps": micro.kyle_lambda.adverse_selection_bps,
             })
 
-        # 2. Generar señales de cada estrategia (MR + TF — MM en _mm_loop)
+        # 2. Generar señales de cada estrategia
         all_signals: List[Signal] = []
 
-        # Check if ANY strategy already has a position on this symbol
-        # to prevent multiple strategies from trading the same symbol simultaneously
-        symbol_has_position = False
-        if self.paper_sim:
-            for strat_type in [StrategyType.MEAN_REVERSION, StrategyType.ORDER_FLOW_MOMENTUM,
-                               StrategyType.TREND_FOLLOWING]:
-                if self.paper_sim.get_position(symbol, strat_type) is not None:
-                    symbol_has_position = True
-                    break
-        elif self._positions.get(symbol) is not None:
-            # Live mode: exchange has one aggregate position per symbol
-            symbol_has_position = True
-
         for strategy in self.strategies:
-            # MM se maneja en _mm_loop (refresh 500ms, no aqui cada 5s)
-            if strategy.strategy_type == StrategyType.MARKET_MAKING:
-                continue
-            # Kill switch: check if research engine disabled this strategy
-            is_active, kill_reason = self.research.get_strategy_status(strategy.strategy_type)
-            if not is_active:
-                logger.info("strategy_killed_by_research",
-                            strategy=strategy.strategy_type.value,
-                            symbol=symbol, reason=kill_reason)
-                continue
-            # Verificar si la estrategia debe operar
             if not strategy.should_activate(regime):
-                logger.debug("strategy_regime_skip",
-                             strategy=strategy.strategy_type.value,
-                             regime=regime.value, symbol=symbol)
                 continue
             if not self.portfolio_manager.should_strategy_trade(
                 strategy.strategy_type, regime
             ):
-                logger.debug("strategy_portfolio_skip",
-                             strategy=strategy.strategy_type.value,
-                             regime=regime.value, symbol=symbol)
                 continue
 
-            # Obtener capital asignado
             allocated = self.portfolio_manager.get_allocation(
                 symbol, regime, strategy.strategy_type
             )
 
-            # Posición actual para esta estrategia
             if self.paper_sim:
                 current_pos = self.paper_sim.get_position(symbol, strategy.strategy_type)
             else:
-                # Live: exchange has one aggregate position per symbol
                 current_pos = self._positions.get(symbol)
 
-            # Block new entries if another strategy already has a position on this symbol
-            # (exits are always allowed — must be able to close existing positions)
-            if symbol_has_position and current_pos is None:
-                logger.info("position_blocked_symbol_locked",
-                            strategy=strategy.strategy_type.value,
-                            symbol=symbol,
-                            mode="paper" if self.paper_sim else "live",
-                            reason="another_strategy_has_position")
-                continue
-
-            # Kelly risk fraction para esta estrategia
             kelly_pct = self.risk_manager.get_kelly_risk_pct(strategy.strategy_type)
 
-            # Generar señales (pasar micro, OBI, Kelly, trend vía kwargs)
             signals = strategy.generate_signals(
                 symbol, df, snapshot, regime, sym_config, allocated, current_pos,
                 micro=micro,
                 obi=obi_result,
                 kelly_risk_pct=kelly_pct,
-                mtf=mtf_signals,
-                trend_info=trend_info,
             )
 
             for sig in signals:
                 self.trading_logger.log_signal(sig)
                 asyncio.ensure_future(self.notifier.notify_signal(sig))
                 all_signals.append(sig)
-                # Only log as "generated" if it's an entry signal, not exit
                 is_exit = sig.metadata.get("action", "").startswith("exit") or sig.metadata.get("exit_reason")
                 log_type = "signal_exit" if is_exit else "signal_generated"
                 logger.info(log_type,
@@ -739,7 +559,7 @@ class BotStrike:
         if blocked_count > 0:
             logger.info("signals_blocked", count=blocked_count, total=len(all_signals))
 
-        # 4. Ejecutar (MR + TF solamente — MM se maneja en _mm_loop)
+        # 4. Ejecutar señales validadas
         # Inyectar datos de mercado en metadata para smart router y paper_sim
         for sig in validated:
             sig.metadata["regime"] = regime.value
@@ -767,7 +587,7 @@ class BotStrike:
                 if order:
                     logger.info("signal_executed", symbol=symbol,
                                 strategy=sig.strategy.value, side=sig.side.value)
-            # MM execution handled by _mm_loop (faster refresh rate)
+            # Log dry-run signals
         else:
             for sig in validated:
                 logger.info("dry_run_signal", symbol=symbol,
@@ -804,21 +624,6 @@ class BotStrike:
                 regime=self._last_regime.get(trade.symbol, MarketRegime.UNKNOWN).value,
                 size_usd=trade.price * trade.quantity,
             )
-        # Feed to Research Engine — only closed trades (pnl != 0)
-        if trade.pnl != 0:
-            research_report = self.research.on_trade(trade)
-            if research_report:
-                # Auto-report triggered — log and notify
-                report_text = self.research.format_report(research_report)
-                logger.info("research_report_generated",
-                            report_number=research_report.report_number,
-                            trades=research_report.total_trades)
-                asyncio.ensure_future(
-                    self.notifier.notify_risk_event("research_report", {
-                        "report": report_text[:2000],  # Truncate for Telegram
-                    })
-                )
-
         # Persistir en trade database — extract execution quality from signal_features
         regime = self._last_regime.get(trade.symbol, MarketRegime.UNKNOWN)
         micro = self.microstructure.get_snapshot(trade.symbol)
@@ -846,49 +651,6 @@ class BotStrike:
             atr=sf.get("atr_at_entry", sf.get("atr", 0)),
             pnl_pct=(trade.pnl / equity_before * 100) if equity_before > 0 else 0,
         )
-
-    async def _unwind_mm_inventory(self, symbol: str, sym_config: SymbolConfig) -> None:
-        """Cierra inventory de Market Making cuando la estrategia se desactiva.
-
-        Genera una señal de cierre market order para devolver inventory a cero.
-        Se llama cuando el régimen cambia y MM deja de estar activa.
-        """
-        if self.paper_sim:
-            current_pos = self.paper_sim.get_position(symbol, StrategyType.MARKET_MAKING)
-        else:
-            current_pos = self._positions.get(symbol)
-
-        if current_pos is None or current_pos.size == 0:
-            return
-
-        price = self.market_data.get_current_price(symbol)
-        if price <= 0:
-            return
-
-        close_side = Side.SELL if current_pos.side == Side.BUY else Side.BUY
-        exit_size = current_pos.notional if current_pos.notional > 0 else current_pos.size * price
-
-        unwind_signal = Signal(
-            strategy=StrategyType.MARKET_MAKING,
-            symbol=symbol,
-            side=close_side,
-            strength=1.0,
-            entry_price=price,
-            stop_loss=price,
-            take_profit=price,
-            size_usd=exit_size,
-            metadata={"action": "mm_unwind", "reason": "regime_change"},
-        )
-
-        logger.info("mm_inventory_unwind", symbol=symbol, side=close_side.value,
-                     size_usd=round(exit_size, 2))
-
-        if self.paper and self.paper_sim:
-            fills = self.paper_sim.execute_signals([unwind_signal], [], sym_config)
-            for trade in fills:
-                await self._process_paper_fill(trade)
-        elif not self.dry_run:
-            await self.execution_engine.execute_signal(unwind_signal, sym_config)
 
     # ── Loops auxiliares ──────────────────────────────────────────
 
@@ -1027,73 +789,6 @@ class BotStrike:
                 logger.error("metrics_error", error=str(e))
                 await asyncio.sleep(30)
 
-    async def _daily_analysis_loop(self) -> None:
-        """Ejecuta análisis IA cada 24h y envía reporte a Telegram."""
-        from core.ai_analyst import AIAnalyst
-
-        analyst = AIAnalyst()
-        # Esperar 1 hora antes del primer análisis (acumular datos)
-        await asyncio.sleep(3600)
-
-        while self._running:
-            try:
-                # Recopilar datos from trade database (metrics.get_metrics() has no recent_trades key)
-                trades = []
-                if hasattr(self, 'trade_repo') and self.trade_repo:
-                    try:
-                        db_trades = self.trade_repo.get_trades(limit=50)
-                        trades = [{"pnl": t.pnl, "strategy": t.strategy, "symbol": t.symbol,
-                                   "side": t.side, "entry_price": t.entry_price,
-                                   "exit_price": t.exit_price, "duration_sec": t.duration_sec}
-                                  for t in db_trades if t.pnl is not None]
-                    except Exception:
-                        pass
-
-                sym = self.settings.symbols[0]
-                df = self.market_data.get_dataframe(sym.symbol)
-                last = df.iloc[-1] if not df.empty else {}
-
-                market_state = {
-                    "regime": self._last_regime.get(sym.symbol, MarketRegime.UNKNOWN).value,
-                    "adx": float(last.get("adx", 0)) if not df.empty else 0,
-                    "momentum": float(last.get("momentum_20", 0)) if not df.empty else 0,
-                    "vol_pct": float(last.get("vol_pct", 0.5)) if not df.empty else 0.5,
-                    "price": self.market_data.get_snapshot(sym.symbol).price if self.market_data.get_snapshot(sym.symbol) else 0,
-                    "rsi": float(last.get("rsi", 50)) if not df.empty else 50,
-                }
-
-                current_config = {
-                    "leverage": sym.leverage,
-                    "sl_mult": sym.mr_atr_mult_sl,
-                    "tp_mult": sym.mr_atr_mult_tp,
-                    "rsi_oversold": 40,
-                    "rsi_overbought": 60,
-                    "adx_max": 30,
-                    "risk_pct": self.settings.trading.risk_per_trade_pct * 100,
-                }
-
-                result = analyst.analyze(
-                    trades=trades,
-                    equity=self.risk_manager.current_equity,
-                    initial_capital=self.settings.trading.initial_capital,
-                    market_state=market_state,
-                    current_config=current_config,
-                )
-
-                # Enviar a Telegram
-                telegram_text = analyst.format_telegram(result)
-                await self.notifier.notify(telegram_text)
-                logger.info("daily_analysis_sent", source=result.get("source", "?"))
-
-                # Esperar 24h
-                await asyncio.sleep(86400)
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error("daily_analysis_error", error=str(e))
-                await asyncio.sleep(3600)  # Retry en 1h
-
     async def shutdown(self) -> None:
         """Apaga el sistema de forma limpia."""
         logger.info("botstrike_shutting_down")
@@ -1169,12 +864,11 @@ def run_backtest(settings: Settings, csv_path: Optional[str] = None) -> None:
             notes=f"bar-by-bar backtest {symbol}",
         )
 
-        # Backtest individual por estrategia
-        for strat_name in ["MEAN_REVERSION", "TREND_FOLLOWING", "MARKET_MAKING"]:
-            print(f"\n  --- Solo {strat_name} ---")
-            result = backtester.run(df, symbol, strategies=[strat_name])
-            summary = result.summary()
-            _print_summary(summary)
+        # Backtest individual — solo MR activa
+        print(f"\n  --- Solo MEAN_REVERSION ---")
+        result = backtester.run(df, symbol, strategies=["MEAN_REVERSION"])
+        summary = result.summary()
+        _print_summary(summary)
 
     logging.disable(logging.NOTSET)
 
@@ -1276,7 +970,7 @@ def run_data_collector(settings: Settings) -> None:
     SIEMPRE recolecta de MAINNET — los datos para backtesting/simulacion
     deben reflejar el mercado real, no testnet.
     """
-    from data.collector import StrikeDataCollector
+    from archive.data.collector import StrikeDataCollector
 
     # NO aplicar testnet — el collector siempre usa mainnet
     notifier = get_notifier(settings)
@@ -1396,8 +1090,8 @@ def run_backtest_with_real_data(settings: Settings, days: int = 7) -> None:
 
 def run_storage_optimize(settings: Settings) -> None:
     """Ejecuta optimizacion de almacenamiento: compactacion + agregacion + limpieza."""
-    from data_lifecycle.storage_manager import StorageManager
-    from data_lifecycle.catalog import DataCatalog
+    from archive.data_lifecycle.storage_manager import StorageManager
+    from archive.data_lifecycle.catalog import DataCatalog
 
     print(f"\n{'='*60}")
     print(f"  BotStrike Storage Optimization")
@@ -1593,7 +1287,7 @@ def run_stress_test(settings: Settings, symbol: str = "BTC-USD") -> None:
     logging.disable(logging.CRITICAL)
     structlog.configure(wrapper_class=structlog.BoundLogger, logger_factory=structlog.ReturnLoggerFactory())
 
-    from backtesting.stress_test import StressTestGenerator
+    from archive.backtesting.stress_test import StressTestGenerator
 
     print(f"\n{'='*60}")
     print(f"  STRESS TEST: {symbol}")
@@ -1645,7 +1339,7 @@ def run_walk_forward(settings: Settings, symbol: str = "BTC-USD", n_folds: int =
     logging.disable(logging.CRITICAL)
     structlog.configure(wrapper_class=structlog.BoundLogger, logger_factory=structlog.ReturnLoggerFactory())
 
-    from backtesting.optimizer import WalkForwardBacktester
+    from archive.backtesting.optimizer import WalkForwardBacktester
     from backtesting.backtester import Backtester
 
     print(f"\n{'='*60}")
@@ -1685,7 +1379,7 @@ def run_optimizer(settings: Settings, symbol: str = "BTC-USD", metric: str = "sh
     logging.disable(logging.CRITICAL)
     structlog.configure(wrapper_class=structlog.BoundLogger, logger_factory=structlog.ReturnLoggerFactory())
 
-    from backtesting.optimizer import ParameterOptimizer
+    from archive.backtesting.optimizer import ParameterOptimizer
     from backtesting.backtester import Backtester
 
     print(f"\n{'='*60}")
@@ -1770,7 +1464,7 @@ def main() -> None:
     settings = Settings(use_testnet=use_testnet)
 
     if args.catalog:
-        from data_lifecycle.catalog import DataCatalog
+        from archive.data_lifecycle.catalog import DataCatalog
         catalog = DataCatalog("data")
         catalog.refresh()
         summary = catalog.summary()

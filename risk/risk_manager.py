@@ -288,6 +288,14 @@ class RiskManager:
 
         # Aplicar tamaño final (todas las reducciones ya están en adjusted_size)
         signal.size_usd = adjusted_size
+
+        # Log total sizing pipeline result for debugging silent over-reduction
+        logger.info("sizing_final",
+                    symbol=signal.symbol,
+                    strategy=signal.strategy.value,
+                    final_size_usd=round(adjusted_size, 2),
+                    dd_pct=round(self.current_drawdown_pct, 4),
+                    consec_losses=self._consecutive_losses)
         return signal
 
     def _check_max_drawdown(self) -> bool:

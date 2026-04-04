@@ -197,6 +197,10 @@ class PaperTradingSimulator:
         self._positions: Dict[str, PaperPosition] = {}  # key: symbol_STRATEGY
         self._last_prices: Dict[str, float] = {}  # symbol -> last known price
         self._trade_count = 0
+        # Running high/low per symbol since last SL/TP check — ensures wicks
+        # that cross SL/TP between ticks are not missed (paper realism fix)
+        self._running_high: Dict[str, float] = {}
+        self._running_low: Dict[str, float] = {}
 
         # SmartOrderRouter for execution parity with live mode
         from execution.smart_router import SmartOrderRouter
@@ -240,10 +244,12 @@ class PaperTradingSimulator:
         Llamar en cada tick o cada ciclo de estrategia con el precio actual.
         high/low opcionales para verificacion intra-bar mas precisa.
         """
-        if high <= 0:
-            high = price
-        if low <= 0:
-            low = price
+        # Maintain running high/low from tick stream so wicks between
+        # individual trade ticks are captured for SL/TP checks
+        prev_high = self._running_high.get(symbol, price)
+        prev_low = self._running_low.get(symbol, price)
+        effective_high = max(price, prev_high) if high <= 0 else max(high, prev_high)
+        effective_low = min(price, prev_low) if low <= 0 else min(low, prev_low)
 
         self._last_prices[symbol] = price
         trades: List[Trade] = []
@@ -253,7 +259,7 @@ class PaperTradingSimulator:
             if pos.symbol != symbol:
                 continue
 
-            trigger = pos.check_sl_tp(price, high, low)
+            trigger = pos.check_sl_tp(price, effective_high, effective_low)
             if trigger is None:
                 pos.update_pnl(price)
                 continue
@@ -304,6 +310,10 @@ class PaperTradingSimulator:
 
         for key in keys_to_close:
             del self._positions[key]
+
+        # Reset running high/low after SL/TP evaluation cycle
+        self._running_high[symbol] = price
+        self._running_low[symbol] = price
 
         return trades
 

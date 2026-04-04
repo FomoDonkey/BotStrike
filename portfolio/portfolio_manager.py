@@ -94,11 +94,26 @@ class PortfolioManager:
         self._last_prices: Dict[str, float] = {}
 
     def on_price_update(self, symbol: str, price: float) -> None:
-        """Registra precio para calcular returns diarios (para correlacion)."""
-        if symbol in self._last_prices and self._last_prices[symbol] > 0:
-            daily_ret = (price - self._last_prices[symbol]) / self._last_prices[symbol]
-            # Alimentar correlation regime del risk manager
-            self.risk_manager.correlation_regime.on_return(symbol, daily_ret)
+        """Registra precio para calcular returns diarios (para correlacion).
+
+        Only feeds correlation regime on day boundaries (UTC) to avoid
+        inflating correlations with micro-returns from 3s strategy ticks.
+        """
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        day_key = f"{symbol}_{today}"
+
+        # Store first price of the day as anchor for daily return
+        anchor_key = f"_anchor_{symbol}"
+        if anchor_key not in self._last_prices or self._last_prices.get(f"_day_{symbol}") != today:
+            # New day: compute yesterday's daily return from anchor → current price
+            old_anchor = self._last_prices.get(anchor_key, 0)
+            if old_anchor > 0 and price > 0:
+                daily_ret = (price - old_anchor) / old_anchor
+                self.risk_manager.correlation_regime.on_return(symbol, daily_ret)
+            self._last_prices[anchor_key] = price
+            self._last_prices[f"_day_{symbol}"] = today
+
         self._last_prices[symbol] = price
 
     def on_strategy_return(self, key: str, daily_return: float) -> None:

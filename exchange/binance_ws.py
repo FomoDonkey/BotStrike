@@ -73,6 +73,7 @@ class BinanceWebSocket:
             streams.append(f"{binance_sym}@trade")
             streams.append(f"{binance_sym}@depth20@100ms")
             streams.append(f"{binance_sym}@kline_1m")
+            streams.append(f"{binance_sym}@markPrice@1s")
         return streams
 
     async def connect_market(self) -> None:
@@ -170,6 +171,20 @@ class BinanceWebSocket:
             }
             await self._emit("kline", kline_data)
             await self._emit("kline_1m", kline_data)
+
+        elif "@markPrice" in stream:
+            # Mark price + funding rate update
+            binance_sym = data.get("s", "")
+            symbol = SYMBOL_MAP_REVERSE.get(binance_sym, binance_sym)
+            mark_data = {
+                "s": symbol,
+                "p": data.get("p", "0"),        # mark price
+                "r": data.get("r", "0"),         # funding rate
+                "T": data.get("T", int(time.time() * 1000)),
+                "e": "markPriceUpdate",
+            }
+            await self._emit("markPrice", mark_data)
+            await self._emit("markPriceUpdate", mark_data)
 
     async def subscribe(self, channel: str, symbol: str) -> None:
         """No-op: Binance subscriptions are done via URL at connect time."""

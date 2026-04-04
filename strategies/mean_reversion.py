@@ -94,7 +94,9 @@ class MeanReversionStrategy(BaseStrategy):
         self.backtest_mode: bool = False
 
     def should_activate(self, regime: MarketRegime) -> bool:
-        return regime not in (MarketRegime.BREAKOUT, MarketRegime.UNKNOWN)
+        # Allow UNKNOWN (startup) — the 1H trend filter already gates entries.
+        # BREAKOUT is still blocked: MR bets on reversion, breakouts extend.
+        return regime != MarketRegime.BREAKOUT
 
     def notify_external_exit(self, symbol: str, ts: float) -> None:
         self._last_exit_time[symbol] = ts
@@ -120,17 +122,23 @@ class MeanReversionStrategy(BaseStrategy):
         self._eval_counter[symbol] = self._eval_counter.get(symbol, 0) + 1
         eval_count = self._eval_counter[symbol]
 
-        # ── Resample to 5m (only when new 5m bar closes) ─────────
-        # Only resample every 5 evals (= every 5 1m bars = 1 new 5m bar)
-        if eval_count % RESAMPLE_MINUTES == 0 or symbol not in self._resampled:
+        # ── Resample to 5m (only when NEW 1m bar arrives) ────────
+        # Trigger on actual data change, not eval counter (strategy runs
+        # every 3s but new bars arrive every 60s).
+        current_len = len(df)
+        last_len = self._last_resample_len.get(symbol, 0)
+        new_bar_arrived = current_len != last_len
+        if new_bar_arrived or symbol not in self._resampled:
+            self._last_resample_len[symbol] = current_len
             self._resample_5m(symbol, df)
 
         m5 = self._resampled.get(symbol)
         if m5 is None or len(m5) < MIN_BARS_5M:
             return signals
 
-        # ── Update 1H trend (every 12 5m-bars = 1 hour) ──────────
-        if eval_count % (RESAMPLE_MINUTES * 12) == 0 or symbol not in self._h1_trend:
+        # ── Update 1H trend (every 12 new bars ~= 1 hour of 5m data) ─
+        h1_stale = (eval_count % (RESAMPLE_MINUTES * 12) == 0) if not new_bar_arrived else (current_len % 60 == 0)
+        if h1_stale or symbol not in self._h1_trend:
             self._update_h1_trend(symbol, df)
 
         h1_trend = self._h1_trend.get(symbol, 0)
@@ -143,8 +151,8 @@ class MeanReversionStrategy(BaseStrategy):
                 signals.append(exit_sig)
             return signals
 
-        # ── Only evaluate entries on 5m bar close ────────────────
-        if eval_count % RESAMPLE_MINUTES != 0:
+        # ── Only evaluate entries when new data arrives ──────────
+        if not new_bar_arrived:
             return signals
 
         # ── ENTRY LOGIC ──────────────────────────────────────────
@@ -167,7 +175,7 @@ class MeanReversionStrategy(BaseStrategy):
         close_5m = float(bar.get("close", price))
         volume = float(bar.get("volume", 0))
 
-        if pd.isna(atr) or atr <= 0 or bb_lower == 0:
+        if pd.isna(atr) or atr <= 0 or pd.isna(bb_lower) or bb_lower == 0:
             return signals
 
         # ── TREND FILTER (1H) ────────────────────────────────────
@@ -289,7 +297,7 @@ class MeanReversionStrategy(BaseStrategy):
             return None
 
         atr = float(m5.iloc[-1].get("atr", 0))
-        if atr <= 0:
+        if pd.isna(atr) or atr <= 0:
             return None
 
         bars_held = self._eval_counter.get(symbol, 0) // RESAMPLE_MINUTES - state.entry_bar_idx
@@ -365,7 +373,7 @@ class MeanReversionStrategy(BaseStrategy):
 
     def _update_h1_trend(self, symbol: str, df: pd.DataFrame) -> None:
         """Compute 1H trend from 1m bars."""
-        if len(df) < 60 * 30:  # Need 30 hours minimum
+        if len(df) < 60 * 6:  # Need 6 hours minimum (matches Binance seed)
             self._h1_trend[symbol] = 0
             self._h1_adx[symbol] = 0
             return
@@ -382,7 +390,7 @@ class MeanReversionStrategy(BaseStrategy):
         }).reset_index(drop=True)
 
         h1 = Indicators.compute_all(h1)
-        if len(h1) < 30:
+        if len(h1) < 5:  # Minimum 5 hourly bars for EMA to start converging
             self._h1_trend[symbol] = 0
             self._h1_adx[symbol] = 0
             return

@@ -393,9 +393,13 @@ class OrderExecutionEngine:
             )
             self._recent_trades.append(trade)
 
-            # Actualizar risk manager con PnL
+            # Actualizar risk manager con PnL (use async-safe to prevent
+            # race condition with _risk_monitor_loop / _process_paper_fill)
             if realized_pnl != 0:
-                self.risk_manager.record_trade_result(realized_pnl, strategy=trade.strategy)
+                import asyncio as _asyncio
+                _asyncio.ensure_future(
+                    self.risk_manager.record_trade_result_safe(realized_pnl, strategy=trade.strategy)
+                )
 
             logger.info(
                 "trade_fill", symbol=symbol, side=side.value,

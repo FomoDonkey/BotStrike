@@ -24,8 +24,8 @@ from core.microstructure import (
 )
 from strategies.base import BaseStrategy
 from strategies.mean_reversion import MeanReversionStrategy
-from strategies.trend_following import TrendFollowingStrategy
-from strategies.market_making import MarketMakingStrategy
+from archive.strategies.trend_following import TrendFollowingStrategy
+from archive.strategies.market_making import MarketMakingStrategy
 
 
 # ── Helpers ──────────────────────────────────────────────────────────

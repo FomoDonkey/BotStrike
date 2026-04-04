@@ -855,7 +855,11 @@ async def get_data_catalog():
 # ── Backtest ─────────────────────────────────────────────────────
 @app.post("/api/backtest/run")
 async def run_backtest(body: dict = {}):
-    """Run a backtest with the specified parameters."""
+    """Run a backtest with the specified parameters.
+
+    Accepts: { symbol, strategy, start_date?, end_date?, bars? }
+    Returns flat structure matching desktop BacktestResult interface.
+    """
     try:
         from backtesting.backtester import Backtester
         from config.settings import Settings
@@ -863,19 +867,28 @@ async def run_backtest(body: dict = {}):
         symbol = body.get("symbol", "BTC-USD")
         start_date = body.get("start_date", "")
         end_date = body.get("end_date", "")
-        strategies_filter = body.get("strategies", [])
+        # Accept both singular "strategy" (from desktop) and plural "strategies" (from scripts)
+        strategy_param = body.get("strategy", "")
+        strategies_list = body.get("strategies", [])
+        if strategy_param and not strategies_list:
+            strategies_list = [strategy_param]
+        max_bars = body.get("bars", 0)  # 0 = use all available data
 
         settings = Settings()
         bt = Backtester(settings)
 
-        # Try to load Binance data
+        # Load Binance klines — directory uses BotStrike symbol format (BTC-USD)
         data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "data", "binance", "klines")
-        binance_sym = symbol.replace("-", "")
-        parquet_path = os.path.join(data_dir, binance_sym, "1m.parquet")
+        parquet_path = os.path.join(data_dir, symbol, "1m.parquet")
 
         if not os.path.exists(parquet_path):
-            return {"error": f"No data available for {symbol}. Download data first."}
+            # Fallback: try without dash (legacy format)
+            legacy_path = os.path.join(data_dir, symbol.replace("-", ""), "1m.parquet")
+            if os.path.exists(legacy_path):
+                parquet_path = legacy_path
+            else:
+                return {"error": f"No data for {symbol}. Run: python main.py --download-binance"}
 
         import pandas as pd
         df = pd.read_parquet(parquet_path)
@@ -883,16 +896,37 @@ async def run_backtest(body: dict = {}):
             df = df[df["timestamp"] >= pd.Timestamp(start_date).timestamp()]
         if end_date:
             df = df[df["timestamp"] <= pd.Timestamp(end_date).timestamp()]
+        if max_bars > 0 and len(df) > max_bars:
+            df = df.tail(max_bars).reset_index(drop=True)
 
         if len(df) < 100:
             return {"error": f"Insufficient data: {len(df)} bars (need 100+)"}
 
-        result = bt.run(df, symbol=symbol)
+        # Pass strategy filter to backtester (default: MEAN_REVERSION only)
+        result = bt.run(df, symbol=symbol,
+                        strategies=strategies_list if strategies_list else None)
         summary = result.summary()
+
+        # Return flat structure matching desktop BacktestResult interface
+        equity_curve = result.equity_curve
+        if len(equity_curve) > 500:
+            # Downsample to ~500 points for chart performance
+            step = max(1, len(equity_curve) // 500)
+            equity_curve = equity_curve[::step]
+
         return {
-            "summary": summary,
-            "equity_curve": result.equity_curve[-200:] if len(result.equity_curve) > 200 else result.equity_curve,
+            "equity_curve": equity_curve,
             "total_trades": summary.get("total_trades", 0),
+            "win_rate": summary.get("win_rate", 0),
+            "pnl": summary.get("net_pnl", 0),
+            "sharpe_ratio": summary.get("sharpe_ratio", 0),
+            "max_drawdown": summary.get("max_drawdown", 0),
+            "profit_factor": summary.get("profit_factor", 0),
+            "avg_trade_pnl": summary.get("avg_trade_pnl", 0),
+            "total_fees": summary.get("total_fees", 0),
+            "return_pct": summary.get("return_pct", 0),
+            "by_strategy": summary.get("by_strategy", {}),
+            "bars_tested": len(df),
         }
     except Exception as e:
         logger.error("backtest_api_error", error=str(e))

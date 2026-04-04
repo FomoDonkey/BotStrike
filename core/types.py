@@ -183,7 +183,10 @@ class Position:
 
     @property
     def notional(self) -> float:
-        return abs(self.size * self.mark_price)
+        # Fallback to entry_price if mark_price is 0 (e.g. API partial failure)
+        # to prevent exposure check bypass
+        price = self.mark_price if self.mark_price > 0 else self.entry_price
+        return abs(self.size * price)
 
     @property
     def pnl_pct(self) -> float:

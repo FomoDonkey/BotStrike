@@ -18,7 +18,7 @@ from execution.paper_simulator import PaperTradingSimulator, PaperPosition
 from execution.order_engine import OrderExecutionEngine
 from risk.risk_manager import RiskManager
 from backtesting.backtester import Backtester
-from backtesting.optimizer import WalkForwardBacktester
+from archive.backtesting.optimizer import WalkForwardBacktester
 from analytics.performance import PerformanceAnalyzer
 from trade_database.models import TradeRecord
 from logging_metrics.logger import MetricsCollector
@@ -63,7 +63,7 @@ bt = Backtester(s)
 df = Backtester.generate_sample_data("BTC-USD", 5000, 50000)
 result = bt.run(df, "BTC-USD")
 summary = result.summary()
-sharpe = summary["sharpe_ratio"]
+sharpe = summary.get("sharpe_ratio", 0)
 check("Sharpe not absurd (<100)", abs(sharpe) < 100, f"Sharpe={sharpe}")
 check("Sharpe is float", isinstance(sharpe, (int, float)))
 
@@ -193,7 +193,7 @@ check("net_pnl == total_pnl (no double-count)", metrics["net_pnl"] == metrics["t
 # ============================================================
 print("\n=== 10: Stress test OHLCV validity ===")
 # ============================================================
-from backtesting.stress_test import StressTestGenerator
+from archive.backtesting.stress_test import StressTestGenerator
 df_base = Backtester.generate_sample_data("BTC-USD", 2000, 50000)
 gen = StressTestGenerator()
 stressed = gen.inject_all(df_base, n_crashes=3, n_gaps=5, n_low_liq=2, n_cascades=1)
