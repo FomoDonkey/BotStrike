@@ -163,11 +163,15 @@ export function CandlestickChart({ symbol, className, trades }: CandlestickChart
       }
     }
 
-    // Subscribe only to candle changes for this symbol (not entire store)
-    const unsub = useMarketStore.subscribe(
-      (state) => state.candles[symbol],
-      () => updateChart()
-    );
+    // Subscribe to store — filter to only act on candle changes for this symbol
+    let lastCandleRef: Candle[] | undefined;
+    const unsub = useMarketStore.subscribe((state) => {
+      const current = state.candles[symbol];
+      if (current !== lastCandleRef) {
+        lastCandleRef = current;
+        updateChart();
+      }
+    });
     updateChart(); // Load existing data
     return () => { unsub(); };
   }, [symbol, chartReady]);
