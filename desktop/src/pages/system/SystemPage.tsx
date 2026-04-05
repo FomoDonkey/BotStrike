@@ -83,7 +83,7 @@ export function SystemPage() {
               <>
                 <div className="flex justify-between">
                   <span className="text-text-muted">Equity</span>
-                  <span className="font-mono text-text-primary">${(botStatus.equity ?? 300).toFixed(2)}</span>
+                  <span className="font-mono text-text-primary">${(botStatus.equity ?? 1000).toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-text-muted">PnL</span>
@@ -192,7 +192,7 @@ export function SystemPage() {
             <div className="space-y-1 text-xs">
               <div className="flex justify-between">
                 <span className="text-text-muted">Version</span>
-                <span className="font-mono text-text-secondary">2.10.3</span>
+                <span className="font-mono text-text-secondary">2.11.0</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-text-muted">Framework</span>

@@ -26,11 +26,11 @@ function safeSetItem(key: string, value: string) {
   try { localStorage.setItem(key, value); } catch { /* ignore */ }
 }
 
-// Restore last known equity from localStorage (prevents flash of $300 on reload)
-const savedEquity = parseFloat(safeGetItem("botstrike-last-equity") || "300");
+// Restore last known equity from localStorage (prevents flash of $1000 on reload)
+const savedEquity = parseFloat(safeGetItem("botstrike-last-equity") || "1000");
 
 export const useRiskStore = create<RiskState>((set) => ({
-  equity: Number.isFinite(savedEquity) ? savedEquity : 300,
+  equity: Number.isFinite(savedEquity) ? savedEquity : 1000,
   drawdown_pct: 0,
   max_drawdown_pct: 0.10,
   circuit_breaker_active: false,

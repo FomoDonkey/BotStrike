@@ -77,13 +77,13 @@ class TradingConfig:
     # Exchange venue — Binance for liquidity, Strike when ready
     exchange_venue: str = "binance"      # "binance" or "strike"
     # Capital
-    initial_capital: float = 300.0
-    # Riesgo global — calibrado para $300 micro account
-    max_drawdown_pct: float = 0.10      # $30 max loss before circuit break (was 0.15)
-    max_daily_loss_pct: float = 0.05    # $15 max daily loss — prevents single bad day from hitting drawdown limit
+    initial_capital: float = 1000.0
+    # Riesgo global — calibrado para $1,000 account
+    max_drawdown_pct: float = 0.10      # $100 max loss before circuit break
+    max_daily_loss_pct: float = 0.05    # $50 max daily loss
     max_leverage: int = 5               # Safer for micro account (was 20)
     max_total_exposure_pct: float = 0.6  # 60% max exposure (was 0.8)
-    max_open_positions: int = 4          # Max concurrent positions (one per symbol, $300 account)
+    max_open_positions: int = 4          # Max concurrent positions (one per symbol)
     risk_per_trade_pct: float = 0.015   # 1.5% = $4.50 risk budget (was 1%)
     # Asignación por estrategia — MR (conservative) + Fib (growth)
     allocation_mean_reversion: float = 0.50
@@ -110,7 +110,7 @@ class TradingConfig:
     # Volatility Targeting
     vol_target_annual: float = 0.15    # Vol anualizada objetivo del portfolio
     vol_target_min_scalar: float = 0.5
-    vol_target_max_scalar: float = 1.2    # Cap vol scaling (was 2.0 — too aggressive for $300)
+    vol_target_max_scalar: float = 1.5    # Cap vol scaling (was 1.2 for $300, more room with $1,000)
     vol_target_lookback_days: int = 20
     # Kelly Criterion
     kelly_min_trades: int = 100        # Trades minimos para activar Kelly (50 had ±15% WR variance at 95% CI)
@@ -176,32 +176,28 @@ class Settings:
     # Usar testnet por defecto para desarrollo
     use_testnet: bool = True
 
-    # Símbolos a operar (4 assets, $300 account, max 4 concurrent positions)
-    # SL/TP calibrated per-symbol from backtest analysis:
-    #   ETH: SL=1.5 (tight, 56% WR), TP=4.0 → best PF
-    #   ADA: SL=2.0 (needs room, volatile), TP=4.0 → was PF=1.03 with SL=2.0
-    #   SOL: SL=1.8 (moderate), TP=4.0
-    #   BTC: SL=1.5 (tight, but structurally unprofitable with MR at 14bps fees)
+    # Símbolos a operar (4 assets, $1,000 account, max 4 concurrent positions)
+    # SL/TP calibrated per-symbol from backtest analysis
     symbols: List[SymbolConfig] = field(default_factory=lambda: [
         SymbolConfig(
-            symbol="BTC-USD", leverage=2, max_position_usd=150,
+            symbol="BTC-USD", leverage=2, max_position_usd=500,
             vpin_bucket_size=50_000.0,
             mr_atr_mult_sl=1.5, mr_atr_mult_tp=4.0,
         ),
         SymbolConfig(
-            symbol="ETH-USD", leverage=2, max_position_usd=120,
+            symbol="ETH-USD", leverage=2, max_position_usd=400,
             vpin_bucket_size=30_000.0,
             kyle_lambda_window=150, kyle_lambda_ema_span=40,
             mr_atr_mult_sl=1.5, mr_atr_mult_tp=4.0,
         ),
         SymbolConfig(
-            symbol="SOL-USD", leverage=2, max_position_usd=80,
+            symbol="SOL-USD", leverage=2, max_position_usd=250,
             vpin_bucket_size=15_000.0,
             kyle_lambda_window=150, kyle_lambda_ema_span=40,
             mr_atr_mult_sl=1.8, mr_atr_mult_tp=4.0,
         ),
         SymbolConfig(
-            symbol="ADA-USD", leverage=2, max_position_usd=50,
+            symbol="ADA-USD", leverage=2, max_position_usd=150,
             vpin_bucket_size=5_000.0,
             kyle_lambda_window=100, kyle_lambda_ema_span=30,
             mr_atr_mult_sl=2.0, mr_atr_mult_tp=4.0,

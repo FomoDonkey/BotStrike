@@ -71,7 +71,7 @@ export function PerformancePage() {
 
   const equityCurveData = useMemo(() => {
     if (!perfData?.equity_curve?.length) return [];
-    return perfData.equity_curve.map((v, i) => ({ idx: i, equity: typeof v === "number" ? v : 300 }));
+    return perfData.equity_curve.map((v, i) => ({ idx: i, equity: typeof v === "number" ? v : 1000 }));
   }, [perfData?.equity_curve]);
 
   const p = perfData || metrics;

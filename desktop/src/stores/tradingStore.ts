@@ -76,10 +76,10 @@ interface TradingState {
   onMetrics: (metrics: MetricsData) => void;
 }
 
-// Restore last known metrics from localStorage to avoid showing stale $300 on reconnect
+// Restore last known metrics from localStorage to avoid showing stale value on reconnect
 function loadCachedMetrics(): MetricsData {
   const fallback: MetricsData = {
-    equity: 300, pnl: 0, total_trades: 0, win_rate: 0,
+    equity: 1000, pnl: 0, total_trades: 0, win_rate: 0,
     sharpe_ratio: 0, max_drawdown: 0, total_fees: 0,
   };
   try {
