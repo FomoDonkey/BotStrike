@@ -9,6 +9,8 @@ import { useMicroStore } from "@/stores/microStore";
 import { formatUSD, formatPrice, formatBps, cn } from "@/lib/utils";
 import { STRATEGY_COLORS, STRATEGY_LABELS } from "@/lib/constants";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { SymbolSelector } from "@/components/shared/SymbolSelector";
+import { SYMBOL_LABELS } from "@/lib/constants";
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h"];
 
@@ -25,7 +27,7 @@ function Panel({ className, children }: { className?: string; children: React.Re
 }
 
 export function TradingPage() {
-  const symbol = "BTC-USD";
+  const [symbol, setSymbol] = useState("BTC-USD");
   const [timeframe, setTimeframe] = useState<Timeframe>("1m");
   const price = useMarketStore((s) => s.prices[symbol] || 0);
   const prevPrice = useMarketStore((s) => s.prevPrices[symbol] || 0);
@@ -48,7 +50,7 @@ export function TradingPage() {
         <Panel className="flex-1 flex flex-col overflow-hidden">
           <div className="flex items-center justify-between px-4 py-2 border-b border-white/5">
             <div className="flex items-center gap-3">
-              <span className="font-mono font-bold text-sm text-text-primary">BTC/USD</span>
+              <SymbolSelector value={symbol} onChange={setSymbol} variant="tabs" />
               <div className="flex items-center gap-0.5 bg-white/[0.03] rounded-lg p-0.5">
                 {TIMEFRAMES.map((tf) => (
                   <button

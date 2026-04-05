@@ -9,6 +9,24 @@ export const WS_CHANNELS = {
   SYSTEM: "system",
 } as const;
 
+// All tradeable symbols — single source of truth for UI
+export const SYMBOLS = ["BTC-USD", "ETH-USD", "SOL-USD", "ADA-USD"] as const;
+export type SymbolId = (typeof SYMBOLS)[number];
+
+export const SYMBOL_LABELS: Record<string, string> = {
+  "BTC-USD": "BTC",
+  "ETH-USD": "ETH",
+  "SOL-USD": "SOL",
+  "ADA-USD": "ADA",
+};
+
+export const SYMBOL_COLORS: Record<string, string> = {
+  "BTC-USD": "#F7931A",
+  "ETH-USD": "#627EEA",
+  "SOL-USD": "#00FFA3",
+  "ADA-USD": "#0033AD",
+};
+
 export const STRATEGY_COLORS: Record<string, string> = {
   MEAN_REVERSION: "#6C5CE7",
   ORDER_FLOW_MOMENTUM: "#00CEC9",

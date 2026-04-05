@@ -7,7 +7,6 @@ import { Waves, Activity, TrendingUp, Shield } from "lucide-react";
 
 export function OrderFlowPage() {
   const snapshots = useMicroStore(useShallow((s) => s.snapshots));
-  const history = useMicroStore(useShallow((s) => s.history));
   const entries = Object.entries(snapshots);
 
   return (

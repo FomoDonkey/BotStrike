@@ -16,6 +16,7 @@ import {
   DollarSign, TrendingUp, Target, BarChart3, ShieldAlert, Activity,
   Zap, CircleDot, ArrowUpRight, ArrowDownRight,
 } from "lucide-react";
+import { SYMBOLS, SYMBOL_LABELS, SYMBOL_COLORS } from "@/lib/constants";
 
 const stagger = {
   hidden: {},
@@ -48,9 +49,8 @@ export function DashboardPage() {
       if (data.length > 0) setAllocation(data);
     }).catch(() => {});
   }, []);
-  const btcPrice = useMarketStore((s) => s.prices["BTC-USD"] || 0);
-  const btcPrev = useMarketStore((s) => s.prevPrices["BTC-USD"] || 0);
-  const ethPrice = useMarketStore((s) => s.prices["ETH-USD"] || 0);
+  const prices = useMarketStore(useShallow((s) => s.prices));
+  const prevPrices = useMarketStore(useShallow((s) => s.prevPrices));
   const metrics = useTradingStore(useShallow((s) => s.metrics));
   const drawdown_pct = useRiskStore((s) => s.drawdown_pct);
   const max_drawdown_pct = useRiskStore((s) => s.max_drawdown_pct);
@@ -61,7 +61,6 @@ export function DashboardPage() {
 
   const allPositions = useMemo(() => Object.values(positions).flat(), [positions]);
   const recentSignals = useMemo(() => [...signals].reverse().slice(0, 8), [signals]);
-  const btcUp = btcPrice > btcPrev;
 
   return (
     <motion.div
@@ -97,26 +96,29 @@ export function DashboardPage() {
                 <span className="text-xs text-text-muted">{metrics.total_trades} trades</span>
               </div>
             </div>
-            {/* Mini Tickers */}
-            <div className="flex gap-5">
-              <div className="text-right">
-                <p className="text-[10px] text-text-muted uppercase tracking-wider">BTC</p>
-                <div className="flex items-center gap-1 justify-end">
-                  <p className={cn("font-mono text-lg font-semibold", btcUp ? "text-profit" : "text-loss")}>
-                    {btcPrice > 0 ? `$${formatPrice(btcPrice)}` : "---"}
-                  </p>
-                  {btcPrice > 0 && (btcUp ?
-                    <ArrowUpRight className="w-3.5 h-3.5 text-profit" /> :
-                    <ArrowDownRight className="w-3.5 h-3.5 text-loss" />
-                  )}
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="text-[10px] text-text-muted uppercase tracking-wider">ETH</p>
-                <p className="font-mono text-lg font-semibold text-text-primary">
-                  {ethPrice > 0 ? `$${formatPrice(ethPrice)}` : "---"}
-                </p>
-              </div>
+            {/* Mini Tickers — all symbols */}
+            <div className="flex gap-4">
+              {SYMBOLS.map((sym) => {
+                const p = prices[sym] || 0;
+                const prev = prevPrices[sym] || 0;
+                const up = p > prev;
+                return (
+                  <div key={sym} className="text-right">
+                    <p className="text-[10px] uppercase tracking-wider" style={{ color: SYMBOL_COLORS[sym] || "#888" }}>
+                      {SYMBOL_LABELS[sym]}
+                    </p>
+                    <div className="flex items-center gap-1 justify-end">
+                      <p className={cn("font-mono text-base font-semibold", p > 0 && (up ? "text-profit" : "text-loss"), p === 0 && "text-text-muted")}>
+                        {p > 0 ? `$${formatPrice(p)}` : "---"}
+                      </p>
+                      {p > 0 && (up ?
+                        <ArrowUpRight className="w-3 h-3 text-profit" /> :
+                        <ArrowDownRight className="w-3 h-3 text-loss" />
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </GlassPanel>

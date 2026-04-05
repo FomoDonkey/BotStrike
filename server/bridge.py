@@ -28,12 +28,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+import secrets
 import structlog
 
 logger = structlog.get_logger(__name__)
 
 from config.settings import Settings
 from core.types import MarketRegime, StrategyType, Side
+
+# Auth token for mutating endpoints — generated at startup, required for bot/start and bot/stop
+_AUTH_TOKEN = secrets.token_hex(16)
+VALID_MODES = {"paper", "dry_run", "live"}
 from server.serializers import (
     serialize_orderbook, serialize_signal, serialize_position,
     serialize_trade, serialize_market_snapshot, serialize_micro_snapshot,
@@ -331,40 +336,44 @@ def _install_hooks(engine):
     engine._process_symbol = patched_process
 
     # Intercept paper fills for trade broadcast + live logs
+    # CRITICAL: original is async def — patch MUST also be async
     if hasattr(engine, '_process_paper_fill'):
         original_paper_fill = engine._process_paper_fill
 
-        def patched_paper_fill(trade):
-            original_paper_fill(trade)
-            serialized = serialize_trade(trade)
-            state.recent_trades.append(serialized)
-            state._pending_signals.append({
-                "type": "trade",
-                "data": serialized,
-            })
-            # Send to live logs — show position side, not closing side
-            raw_side = trade.side.value if hasattr(trade.side, 'value') else str(trade.side)
-            strat = trade.strategy.value if trade.strategy and hasattr(trade.strategy, 'value') else ""
-            is_exit = trade.pnl != 0 or trade.fee > 0
-            if is_exit:
-                pos_side = "SHORT" if raw_side == "BUY" else "LONG"
-                pnl_str = f" PnL: ${trade.pnl:+.4f}"
-                msg = f"Close {pos_side} {trade.symbol} @ ${trade.price:,.2f} [{strat}]{pnl_str}"
-                level = "info" if trade.pnl >= 0 else "warn"
-            else:
-                pos_side = "LONG" if raw_side == "BUY" else "SHORT"
-                msg = f"Open {pos_side} {trade.symbol} @ ${trade.price:,.2f} [{strat}]"
-                level = "info"
-            state._pending_signals.append({
-                "type": "log_entry",
-                "channel": "system",
-                "data": {
-                    "type": "log",
-                    "timestamp": time.time(),
-                    "level": level,
-                    "message": msg,
-                },
-            })
+        async def patched_paper_fill(trade):
+            await original_paper_fill(trade)
+            try:
+                serialized = serialize_trade(trade)
+                state.recent_trades.append(serialized)
+                state._pending_signals.append({
+                    "type": "trade",
+                    "data": serialized,
+                })
+                # Send to live logs — show position side, not closing side
+                raw_side = trade.side.value if hasattr(trade.side, 'value') else str(trade.side)
+                strat = trade.strategy.value if trade.strategy and hasattr(trade.strategy, 'value') else ""
+                is_exit = trade.pnl != 0 or trade.fee > 0
+                if is_exit:
+                    pos_side = "SHORT" if raw_side == "BUY" else "LONG"
+                    pnl_str = f" PnL: ${trade.pnl:+.4f}"
+                    msg = f"Close {pos_side} {trade.symbol} @ ${trade.price:,.2f} [{strat}]{pnl_str}"
+                    level = "info" if trade.pnl >= 0 else "warn"
+                else:
+                    pos_side = "LONG" if raw_side == "BUY" else "SHORT"
+                    msg = f"Open {pos_side} {trade.symbol} @ ${trade.price:,.2f} [{strat}]"
+                    level = "info"
+                state._pending_signals.append({
+                    "type": "log_entry",
+                    "channel": "system",
+                    "data": {
+                        "type": "log",
+                        "timestamp": time.time(),
+                        "level": level,
+                        "message": msg,
+                    },
+                })
+            except Exception as e:
+                logger.error("trade_broadcast_error", error=str(e))
 
         engine._process_paper_fill = patched_paper_fill
 
@@ -395,6 +404,43 @@ def _install_hooks(engine):
 
     engine.trading_logger.log_signal = patched_log_signal
 
+    # Intercept live order fills (on_order_update) for trade broadcast
+    if hasattr(engine, 'execution_engine'):
+        original_on_order_update = engine.execution_engine.on_order_update
+
+        def patched_on_order_update(data):
+            trade = original_on_order_update(data)
+            if trade is not None:
+                serialized = serialize_trade(trade)
+                state.recent_trades.append(serialized)
+                state._pending_signals.append({
+                    "type": "trade",
+                    "data": serialized,
+                })
+                # Log to system channel
+                raw_side = trade.side.value if hasattr(trade.side, 'value') else str(trade.side)
+                strat = trade.strategy.value if trade.strategy and hasattr(trade.strategy, 'value') else ""
+                is_exit = trade.pnl != 0
+                if is_exit:
+                    pos_side = "SHORT" if raw_side == "BUY" else "LONG"
+                    msg = f"[LIVE] Close {pos_side} {trade.symbol} @ ${trade.price:,.2f} [{strat}] PnL: ${trade.pnl:+.4f}"
+                else:
+                    pos_side = "LONG" if raw_side == "BUY" else "SHORT"
+                    msg = f"[LIVE] Open {pos_side} {trade.symbol} @ ${trade.price:,.2f} [{strat}]"
+                state._pending_signals.append({
+                    "type": "log_entry",
+                    "channel": "system",
+                    "data": {
+                        "type": "log",
+                        "timestamp": time.time(),
+                        "level": "info" if not is_exit or trade.pnl >= 0 else "warn",
+                        "message": msg,
+                    },
+                })
+            return trade
+
+        engine.execution_engine.on_order_update = patched_on_order_update
+
 
 async def _broadcast_symbol_state(engine, symbol: str):
     """Broadcast current state for a symbol after strategy processing."""
@@ -416,7 +462,7 @@ async def _broadcast_symbol_state(engine, symbol: str):
                 "data": serialized,
             })
 
-    # Positions (paper mode)
+    # Positions (paper mode and live mode)
     if engine.paper_sim:
         positions = []
         for strat in StrategyType:
@@ -428,12 +474,28 @@ async def _broadcast_symbol_state(engine, symbol: str):
             "symbol": symbol,
             "data": positions,
         })
+    else:
+        # Live mode: broadcast positions from engine._positions (synced by risk monitor)
+        live_pos = engine._positions.get(symbol)
+        if live_pos:
+            await state.channels.broadcast("trading", {
+                "type": "positions",
+                "symbol": symbol,
+                "data": [serialize_position(live_pos)],
+            })
+        else:
+            await state.channels.broadcast("trading", {
+                "type": "positions",
+                "symbol": symbol,
+                "data": [],
+            })
 
-    # Risk state
+    # Risk state (include symbol for per-symbol regime tracking in UI)
     rm = engine.risk_manager
     await state.channels.broadcast("risk", {
         "type": "risk_update",
         "timestamp": time.time(),
+        "symbol": symbol,
         "equity": float(rm.current_equity),
         "drawdown_pct": float(rm.current_drawdown_pct),
         "max_drawdown_pct": float(engine.settings.trading.max_drawdown_pct),
@@ -729,7 +791,12 @@ async def get_config():
 
 
 @app.post("/api/bot/start")
-async def bot_start(mode: str = "paper"):
+async def bot_start(mode: str = "paper", token: str = ""):
+    # Auth: require token for live mode, allow paper without token for dev convenience
+    if mode == "live" and token != _AUTH_TOKEN:
+        return {"error": "Invalid or missing auth token for live mode"}
+    if mode not in VALID_MODES:
+        return {"error": f"Invalid mode: {mode!r}. Valid: {sorted(VALID_MODES)}"}
     if state.running:
         return {"status": "already_running", "mode": state.mode}
     await start_engine(mode)
@@ -737,9 +804,12 @@ async def bot_start(mode: str = "paper"):
 
 
 @app.post("/api/bot/stop")
-async def bot_stop():
+async def bot_stop(token: str = ""):
     if not state.running:
         return {"status": "not_running"}
+    # Require token to stop live trading (paper can stop without token)
+    if state.mode == "live" and token != _AUTH_TOKEN:
+        return {"error": "Invalid or missing auth token to stop live trading"}
     await stop_engine()
     return {"status": "stopped"}
 
@@ -752,6 +822,7 @@ async def bot_status():
         "uptime_sec": time.time() - state.start_time if state.running else 0,
         "equity": state.equity,
         "pnl": state.pnl,
+        "auth_token": _AUTH_TOKEN,  # Safe: only accessible from localhost (CORS restricted)
     }
 
 

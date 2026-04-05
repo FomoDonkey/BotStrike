@@ -881,3 +881,65 @@
 - [ ] FASE 4: Simplify execution pipeline (smart_router 950 LOC → ~200 LOC)
 - [ ] FASE 5: Merge trade_database 3 files → single trade_store.py
 - [ ] FASE 6: Extract CLI from main.py to cli.py
+
+## Audit Institucional E2E #26 — Full End-to-End Deep Audit (2026-04-04)
+
+### TIER 1 — CRITICAL (blocks safe live trading) — ALL FIXED
+- [x] CRIT-01: WS URL spot→futures (binance_ws.py:25-26) — ALL market data was spot, not futures. Every trading decision was on wrong prices
+- [x] CRIT-02: ACCOUNT_UPDATE checked "USD" not "USDT" (main.py:360) — risk manager equity NEVER updated from WS
+- [x] CRIT-03: bars_held used eval_counter not real bar count (mean_reversion.py:251,303) — positions closed in 15min not 5h, live/backtest divergence
+- [x] CRIT-04: No software SL/TP safety net in _check_exit (mean_reversion.py:286-336) — added SL/TP price checks as backup when exchange orders fail
+- [x] CRIT-05: Protective orders fire-and-forget (order_engine.py:214-255) — added emergency market close if BOTH SL+TP placement fail
+- [x] CRIT-06: Live positions stored as "BTCUSDT" but looked up as "BTC-USD" (main.py:700-714) — normalized via SYMBOL_MAP_REVERSE
+- [x] CRIT-07: validate_signal not async-safe (risk_manager.py:93) — added drawdown_halted check to block new entries
+- [x] CRIT-08: Circuit breaker timer reset on every equity update (risk_manager.py:390-401) — now only sets on first activation
+- [x] CRIT-09: Max drawdown didn't halt strategy loop (main.py:722-734) — added _drawdown_halted flag with recovery reset
+- [x] HIGH-05: Stale tick guard permanently blocked after price gap (market_data.py:248-257) — added 5-tick consecutive override
+- [x] HIGH-06: _last_data_time updated before tick acceptance (market_data.py:308) — moved after _should_accept_tick
+
+### TIER 2 — ALL FIXED
+- [x] HIGH-07: seed_from_binance now uses futures API fapi.binance.com (market_data.py:128)
+- [x] HIGH-08: WS SYMBOL_MAP now imports from binance_client as single source of truth (binance_ws.py:33)
+- [x] HIGH-04: Breakeven stop threshold 0.1→0.5x ATR — covers round-trip fees (mean_reversion.py:323)
+- [x] HIGH-03: H1 trend updates on every new 1m bar, not hourly modulo (mean_reversion.py:139)
+- [x] HIGH-13: Periodic order reconciliation with exchange every ~10s (order_engine.py + main.py)
+- [x] HIGH-09: Paper sim SL slippage 0.5x→1.5x base (realistic adverse fills) (paper_simulator.py:270)
+- [x] HIGH-10: Paper sim stores entry_fee_rate per position — close() uses correct entry/exit rates (paper_simulator.py:65,99-111)
+- [x] CRIT-10: CI no longer swallows test failures — removed `|| echo` (ci.yml:56)
+- [x] CRIT-11: CI path filter now includes all Python modules (ci.yml:5-25)
+
+### TIER 3 — ALL FIXED
+- [x] CRIT-12: Auth token for live mode + mode whitelist (paper/dry_run/live only) (bridge.py:36-37,735-757)
+- [x] HIGH-11: Live positions broadcast from engine._positions when paper_sim is None (bridge.py:422-443)
+- [x] HIGH-12: Live order fills intercepted via patched on_order_update → trade broadcast (bridge.py:399-435)
+- [x] HIGH-01: Bracket order uses executedQty + retry SL/TP once on failure (binance_client.py:421-482)
+- [x] HIGH-02: Replace order retries new order if cancel succeeded but place failed (binance_client.py:484-505)
+- [x] CFG-01: Leveraged notional validation in __post_init__ (settings.py:201-209)
+- [x] CFG-03: apply_testnet() now sets Binance testnet flag + WS uses testnet URL (settings.py:261-269, binance_ws.py:29,42,87)
+
+### 70 total issues found: 12 CRITICAL, 17 HIGH, 24 MEDIUM, 17 LOW
+### ALL 3 TIERS COMPLETE: 27 fixes applied — Tests: 36/36 pass
+
+## Multi-Symbol Support (2026-04-04)
+- [x] CONFIG: Added ETH-USD ($120 max, 2x lev, VPIN 30K), SOL-USD ($80, 2x, 15K), ADA-USD ($50, 2x, 5K)
+- [x] CONFIG: max_open_positions 2→4 (one per symbol)
+- [x] CONFIG: Kyle Lambda window/EMA tuned per asset liquidity (ETH/SOL: 150/40, ADA: 100/30)
+- [x] DESKTOP: Created SymbolSelector component (tabs + dropdown variants, color-coded)
+- [x] DESKTOP: TopBar shows all 4 symbols dynamically (was hardcoded BTC+ETH)
+- [x] DESKTOP: DashboardPage mini-tickers show all 4 with per-symbol colors
+- [x] DESKTOP: TradingPage has symbol selector tabs (was hardcoded BTC-USD)
+- [x] DESKTOP: BacktestPage dropdown includes SOL-USD
+- [x] DESKTOP: Added SYMBOLS, SYMBOL_LABELS, SYMBOL_COLORS to constants.ts
+- [x] TypeScript: 0 errors, Vite build passes, Python tests: 36/36
+
+## MR Strategy Profitability Improvements (2026-04-04)
+### Diagnosis: PF=0.73 combined, -$18.89 in 14d, 279 trades across BTC/ETH/ADA
+### Root causes: fees 173% of gross profit, WR 38% vs 56% needed, too many marginal exits
+- [x] FIX 1: Trailing stop replaces fixed breakeven — activates at 1 ATR, trails 0.6 ATR behind peak
+- [x] FIX 2: Minimum confirmations 1→2 — filters out weak single-confirmation entries
+- [x] FIX 3: TP 3x→4x ATR — gross R:R 2:1, net ~1.1:1 after 14bps fees
+- [x] FIX 4: RSI adaptive by volatility percentile — high vol: deeper pullback (30/70), low vol: shallower (38/62)
+- [x] FIX 5: Breakeven stop removed — was generating micro-wins below fee cost
+- [x] Bug fix: new_bar_arrived detection (len→tuple key) for backtester
+- [x] Bug fix: cooldown uses bar timestamps in backtest_mode
+- [x] Tests: 36/36 pass

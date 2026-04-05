@@ -51,6 +51,7 @@ class RiskManager:
         self._last_daily_reset_date: str = ""  # ISO date of last daily reset (e.g. "2026-04-03")
         self._consecutive_loss_pause: bool = False
         self._consecutive_loss_pause_until: float = 0.0
+        self._drawdown_halted: bool = False  # Set by risk monitor when max drawdown exceeded
 
         # ── Modelos cuantitativos avanzados ──────────────────────────
         # Risk of Ruin: probabilidad de alcanzar max drawdown
@@ -109,6 +110,8 @@ class RiskManager:
         """
         # Trabajar sobre copia para no mutar señal original si es rechazada
         signal = copy.copy(signal)
+        if signal.metadata:
+            signal.metadata = signal.metadata.copy()
 
         # Exit signals ALWAYS pass — closing a position must never be blocked
         is_exit = (
@@ -117,6 +120,11 @@ class RiskManager:
         )
         if is_exit:
             return signal
+
+        # Block new entries when max drawdown halted
+        if self._drawdown_halted:
+            logger.warning("signal_blocked_drawdown_halt", symbol=signal.symbol)
+            return None
 
         # ── Filtro de microestructura (VPIN + Hawkes) ─────────────
         # VPIN alto para MR: no entrar (flujo informado puede romper reversión)
@@ -389,7 +397,7 @@ class RiskManager:
         # Activar circuit breaker si drawdown es severo (>80% of max)
         if self.current_drawdown_pct > self.config.max_drawdown_pct * 0.8:
             if not self._circuit_breaker_active:
-                # Only log on first activation (not on repeated triggers)
+                # Only set timer on FIRST activation — don't keep resetting it
                 logger.warning("circuit_breaker_triggered",
                                drawdown_pct=round(self.current_drawdown_pct, 4),
                                trigger_threshold=round(self.config.max_drawdown_pct * 0.8, 4),
@@ -397,8 +405,8 @@ class RiskManager:
                                equity=round(self._current_equity, 2),
                                equity_peak=round(self._equity_peak, 2),
                                cooldown_sec=300)
-            self._circuit_breaker_active = True
-            self._circuit_breaker_until = time.time() + 300  # 5 min cooldown
+                self._circuit_breaker_active = True
+                self._circuit_breaker_until = time.time() + 300  # 5 min cooldown
 
     async def update_equity_safe(self, equity: float, timestamp: float = 0.0) -> None:
         """Async-safe version of update_equity — acquires lock."""

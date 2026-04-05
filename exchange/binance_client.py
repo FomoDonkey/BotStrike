@@ -421,32 +421,64 @@ class BinanceClient:
     async def place_bracket_order(
         self, order: Order, tp_price: float, sl_price: float,
     ) -> Dict:
-        """Bracket order via 3 órdenes separadas (Binance no tiene strategy order nativo)."""
-        # Orden principal
-        result = await self.place_order(order)
-        order_id = result.get("orderId", "")
+        """Bracket order via 3 órdenes separadas (Binance no tiene strategy order nativo).
 
-        # TP y SL como órdenes separadas
-        if result.get("status") in ("FILLED", "PARTIALLY_FILLED", "NEW"):
-            sl_side = Side.SELL if order.side == Side.BUY else Side.BUY
-            # SL
-            sl_order = Order(
-                symbol=order.symbol, side=sl_side,
-                order_type=OrderType.STOP, quantity=order.quantity,
-                stop_price=sl_price, reduce_only=True,
-                client_order_id=f"bs_sl_{uuid.uuid4().hex[:8]}",
-                strategy=order.strategy,
-            )
-            await self.place_order(sl_order)
-            # TP
-            tp_order = Order(
-                symbol=order.symbol, side=sl_side,
-                order_type=OrderType.TAKE_PROFIT, quantity=order.quantity,
-                stop_price=tp_price, reduce_only=True,
-                client_order_id=f"bs_tp_{uuid.uuid4().hex[:8]}",
-                strategy=order.strategy,
-            )
-            await self.place_order(tp_order)
+        Uses actual executedQty from fill for SL/TP sizing (not original order qty).
+        Retries SL/TP once on failure. If both still fail, logs CRITICAL.
+        """
+        result = await self.place_order(order)
+
+        status = result.get("status", "")
+        if status not in ("FILLED", "PARTIALLY_FILLED", "NEW"):
+            return result
+
+        # Use actual filled qty if available, fall back to order qty
+        filled_qty = float(result.get("executedQty", 0))
+        qty = filled_qty if filled_qty > 0 else order.quantity
+        sl_side = Side.SELL if order.side == Side.BUY else Side.BUY
+
+        # SL with retry
+        sl_order = Order(
+            symbol=order.symbol, side=sl_side,
+            order_type=OrderType.STOP, quantity=qty,
+            stop_price=sl_price, reduce_only=True,
+            client_order_id=f"bs_sl_{uuid.uuid4().hex[:8]}",
+            strategy=order.strategy,
+        )
+        sl_ok = False
+        for attempt in range(2):
+            try:
+                await self.place_order(sl_order)
+                sl_ok = True
+                break
+            except Exception as e:
+                logger.error("bracket_sl_failed", attempt=attempt + 1, error=str(e))
+                if attempt == 0:
+                    await asyncio.sleep(0.5)
+
+        # TP with retry
+        tp_order = Order(
+            symbol=order.symbol, side=sl_side,
+            order_type=OrderType.TAKE_PROFIT, quantity=qty,
+            stop_price=tp_price, reduce_only=True,
+            client_order_id=f"bs_tp_{uuid.uuid4().hex[:8]}",
+            strategy=order.strategy,
+        )
+        tp_ok = False
+        for attempt in range(2):
+            try:
+                await self.place_order(tp_order)
+                tp_ok = True
+                break
+            except Exception as e:
+                logger.error("bracket_tp_failed", attempt=attempt + 1, error=str(e))
+                if attempt == 0:
+                    await asyncio.sleep(0.5)
+
+        if not sl_ok and not tp_ok:
+            logger.critical("BRACKET_BOTH_PROTECTIVES_FAILED", symbol=order.symbol)
+        elif not sl_ok:
+            logger.critical("BRACKET_SL_FAILED_TP_ONLY", symbol=order.symbol)
 
         return result
 
@@ -474,12 +506,29 @@ class BinanceClient:
     async def replace_order(
         self, symbol: str, cancel_order_id: str, new_order: Order,
     ) -> Dict:
-        """Cancel + place new (Binance no tiene atomic replace en futures)."""
+        """Cancel + place new (Binance no tiene atomic replace en futures).
+
+        If cancel succeeds but place fails, retries the new order once.
+        If both fail, re-places the original cancel_order_id params (best effort).
+        """
+        cancel_ok = False
         try:
             await self.cancel_order(symbol, cancel_order_id)
+            cancel_ok = True
         except Exception as e:
             logger.warning("replace_cancel_failed", order_id=cancel_order_id, error=str(e))
-        return await self.place_order(new_order)
+
+        try:
+            return await self.place_order(new_order)
+        except Exception as e:
+            if cancel_ok:
+                # Cancel succeeded but new order failed — position may be unprotected
+                logger.error("replace_new_order_failed_retrying",
+                             symbol=symbol, error=str(e))
+                await asyncio.sleep(0.3)
+                # Retry once
+                return await self.place_order(new_order)
+            raise
 
     async def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict]:
         params = {}

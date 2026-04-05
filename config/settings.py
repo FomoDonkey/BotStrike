@@ -82,7 +82,7 @@ class TradingConfig:
     max_daily_loss_pct: float = 0.05    # $15 max daily loss — prevents single bad day from hitting drawdown limit
     max_leverage: int = 5               # Safer for micro account (was 20)
     max_total_exposure_pct: float = 0.6  # 60% max exposure (was 0.8)
-    max_open_positions: int = 2          # Max concurrent positions (flash crash protection for $300 account)
+    max_open_positions: int = 4          # Max concurrent positions (one per symbol, $300 account)
     risk_per_trade_pct: float = 0.015   # 1.5% = $4.50 risk budget (was 1%)
     # Asignación por estrategia — solo MR activa (TF/MM/OFM archivadas)
     allocation_mean_reversion: float = 1.00
@@ -166,10 +166,36 @@ class Settings:
     # Usar testnet por defecto para desarrollo
     use_testnet: bool = True
 
-    # Símbolos a operar
+    # Símbolos a operar (4 assets, $300 account, max 4 concurrent positions)
+    # SL/TP calibrated per-symbol from backtest analysis:
+    #   ETH: SL=1.5 (tight, 56% WR), TP=4.0 → best PF
+    #   ADA: SL=2.0 (needs room, volatile), TP=4.0 → was PF=1.03 with SL=2.0
+    #   SOL: SL=1.8 (moderate), TP=4.0
+    #   BTC: SL=1.5 (tight, but structurally unprofitable with MR at 14bps fees)
     symbols: List[SymbolConfig] = field(default_factory=lambda: [
-        SymbolConfig(symbol="BTC-USD", leverage=2, max_position_usd=150,
-                     vpin_bucket_size=50_000.0),
+        SymbolConfig(
+            symbol="BTC-USD", leverage=2, max_position_usd=150,
+            vpin_bucket_size=50_000.0,
+            mr_atr_mult_sl=1.5, mr_atr_mult_tp=4.0,
+        ),
+        SymbolConfig(
+            symbol="ETH-USD", leverage=2, max_position_usd=120,
+            vpin_bucket_size=30_000.0,
+            kyle_lambda_window=150, kyle_lambda_ema_span=40,
+            mr_atr_mult_sl=1.5, mr_atr_mult_tp=4.0,
+        ),
+        SymbolConfig(
+            symbol="SOL-USD", leverage=2, max_position_usd=80,
+            vpin_bucket_size=15_000.0,
+            kyle_lambda_window=150, kyle_lambda_ema_span=40,
+            mr_atr_mult_sl=1.8, mr_atr_mult_tp=4.0,
+        ),
+        SymbolConfig(
+            symbol="ADA-USD", leverage=2, max_position_usd=50,
+            vpin_bucket_size=5_000.0,
+            kyle_lambda_window=100, kyle_lambda_ema_span=30,
+            mr_atr_mult_sl=2.0, mr_atr_mult_tp=4.0,
+        ),
     ])
 
     trading: TradingConfig = field(default_factory=TradingConfig)
@@ -197,6 +223,16 @@ class Settings:
                     f"exceeds max_total_exposure={max_exposure_usd:.0f} "
                     f"(capital={self.trading.initial_capital} × exposure_pct={self.trading.max_total_exposure_pct}). "
                     f"Reduce max_position_usd to <= {max_exposure_usd:.0f}"
+                )
+            # Validate leveraged notional doesn't exceed capital
+            leveraged_notional = sym.max_position_usd * sym.leverage
+            if leveraged_notional > self.trading.initial_capital * self.trading.max_leverage:
+                raise ValueError(
+                    f"Config incoherence: {sym.symbol} leveraged notional "
+                    f"({sym.max_position_usd} × {sym.leverage}x = ${leveraged_notional}) "
+                    f"exceeds max allowed (${self.trading.initial_capital} × {self.trading.max_leverage}x "
+                    f"= ${self.trading.initial_capital * self.trading.max_leverage:.0f}). "
+                    f"Reduce max_position_usd or leverage."
                 )
 
     def get_symbol_config(self, symbol: str) -> SymbolConfig:
@@ -247,9 +283,14 @@ class Settings:
         return self.trading.exchange_venue == "strike"
 
     def apply_testnet(self) -> None:
-        """Cambia URLs a testnet."""
+        """Cambia URLs a testnet (both Strike and Binance)."""
         if self.use_testnet:
-            self.api_base_url = "https://api-v2-testnet.strikefinance.org"
-            self.api_price_url = "https://api-v2-testnet.strikefinance.org/price"
-            self.ws_market_url = "wss://api-v2-testnet.strikefinance.org/ws/price"
-            self.ws_user_url = "wss://api-v2-testnet.strikefinance.org/ws/user-api"
+            if self.is_strike:
+                self.api_base_url = "https://api-v2-testnet.strikefinance.org"
+                self.api_price_url = "https://api-v2-testnet.strikefinance.org/price"
+                self.ws_market_url = "wss://api-v2-testnet.strikefinance.org/ws/price"
+                self.ws_user_url = "wss://api-v2-testnet.strikefinance.org/ws/user-api"
+            elif self.is_binance:
+                # Binance Futures testnet — important: prevents trading mainnet
+                # when use_testnet=True. BinanceClient reads these in __init__.
+                self.binance_testnet = True  # Flag for BinanceClient to use testnet URLs

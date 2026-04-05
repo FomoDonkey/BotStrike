@@ -1,5 +1,33 @@
 # BotStrike — Lessons Learned
 
+## Backtester Bug: Zero Signals (2026-04-04)
+- CRITICAL BUG FOUND: `new_bar_arrived` detection in MeanReversionStrategy used `len(df)` to detect new bars. The backtester's sliding window (`df.iloc[max(0,i-500):i+1]`) stabilizes at len=501 after bar 500, so `new_bar_arrived` was permanently False after ~8 hours of simulated data. Result: ZERO trades generated on any symbol.
+- FIX: Changed detection to use `(last_close, last_ts)` tuple instead of `len(df)`.
+- SECONDARY BUG: Cooldown used `time.time()` (wall-clock) in backtest mode. Since all 43k bars process in minutes of wall time, cooldown was either always blocking or never blocking depending on timing. FIX: Use bar timestamp (ms -> sec conversion) in backtest mode.
+- After fix: BTC generates 114 trades/14 days, ETH 86, ADA 79.
+
+## MR Backtest Results — 14-day window (2026-04-04)
+- BTC-USD: 114 trades, 32% WR, PF=0.66, -3.02% return, -$9.06 PnL, max DD 3.64%, 13 consec losses
+- ETH-USD: 86 trades, 43% WR, PF=0.98, -0.11% return, -$0.34 PnL, max DD 3.06%, 7 consec losses (nearly breakeven)
+- ADA-USD: 79 trades, 42% WR, PF=0.62, -3.16% return, -$9.49 PnL, max DD 4.40%, 8 consec losses
+- COMBINED: 279 trades across 14 days (~20/day), -$18.89 PnL, fees $32.63 (fees are 173% of gross losses)
+- Strategy correctly identified as "capital preservation, not alpha" — the docstring is honest
+- ETH is closest to breakeven (PF=0.98), BTC worst (PF=0.66 with 13 consecutive losses)
+- Avg win ($0.47-0.58) vs avg loss ($0.35-0.54) shows decent R:R but win rate too low
+- 58/114 BTC exits are CLOSE (not TP/SL) — strategy exits too many trades at marginal PnL
+
+## MR Deep Analysis (2026-04-04)
+- BTC position sizing dead zone: at $300/2x/1.5% risk, BTC 5m ATR ~17bps produces notional below $20 min. BTC effectively blocked.
+- SymbolConfig MR fields (mr_zscore_entry, mr_atr_mult_sl, etc.) are dead code — strategy uses module-level constants, per-symbol tuning impossible.
+- Hardcoded 14bps in entry gate vs 11bps in sizing — inconsistent fee assumptions.
+- Index-based resampling (not timestamp-based) will produce wrong bars if 1m data has gaps.
+- No trailing stop between 1 ATR and 3 ATR — trades reaching 2.5 ATR then reversing exit at 0.5 ATR, surrendering 2 ATR profit.
+- Net R:R after fees: BTC 0.77:1 (needs 56.5% WR), ETH 0.95:1 (needs 51.3% WR).
+- Breakeven stop at 0.5 ATR creates bimodal distribution: many micro-wins (0.36 ATR net) vs fewer large losses (2.14 ATR).
+- RSI 35/65 thresholds are uniform across symbols — should be tighter for high-vol assets (SOL/ADA).
+- slippage_bps 1.5 is too optimistic for ADA/SOL — real slippage likely 3-5 bps.
+- Strategy is honest capital-preservation vehicle, not alpha generator. Real edge comes from OFM.
+
 ## Data Collection & Storage
 - Los archivos Parquet se corrompen si el PC se apaga durante una escritura. Solución: escritura atómica (tempfile + os.replace, que es atómico en NTFS/ext4).
 - Al cargar trades históricos via REST (initial load), NO meter todos en el archivo de "hoy". Particionar por la fecha real del timestamp del trade.
@@ -667,3 +695,29 @@
 ### Paper simulator SL/TP needs running high/low
 - Paper sim's `on_price_update(symbol, price)` checked SL/TP against the exact trade price. In live, SL becomes a market order that can fill at any price within the bar's range. Paper was systematically optimistic.
 - **LESSON: Paper trading must model worst-case fills, not best-case. SL should trigger if ANY price in the interval crossed the level, not just the last trade.**
+
+## Audit #26 — End-to-End Deep Audit (2026-04-04)
+
+### WebSocket spot vs futures — the most subtle and devastating bug
+- `wss://stream.binance.com:9443/stream` is the SPOT WebSocket. Futures is `wss://fstream.binance.com/stream`. The bot received spot prices but traded futures. Every indicator, every entry, every SL/TP — all calculated on wrong prices. This passed 20+ audits because the URL "looks right" and spot/futures prices are close enough (~0.01-0.5% basis) to not cause obvious failures.
+- **LESSON: When switching exchanges (Strike→Binance), verify EVERY endpoint URL. Have a startup validation that logs the data source and cross-checks first received price against REST API.**
+
+### Symbol naming convention mismatch — silent failure across module boundaries
+- Binance REST returns "BTCUSDT", BotStrike uses "BTC-USD", WS returns lowercase "btcusdt". The risk monitor stored positions as "BTCUSDT" but strategy looked up "BTC-USD" → always None → duplicate positions. This was caused by 3 separate SYMBOL_MAP dicts in different files with slightly different content (SOL missing from WS map).
+- **LESSON: Symbol normalization must happen at ONE point (the exchange adapter layer) and use ONE shared map. Never allow raw exchange symbols to propagate beyond the adapter.**
+
+### eval_counter is not a bar counter — live/backtest divergence
+- `eval_counter // RESAMPLE_MINUTES` was used to track bar position. In backtest (1 eval per bar), this equals bar count. In live (~20 evals per minute), it grows 100x faster. MAX_HOLD_BARS=60 was reached in 15 minutes instead of 5 hours. The strategy ran untested code in production.
+- **LESSON: Never derive time/bar state from invocation counters. Use the actual data length (`len(resampled_df)`) or wall-clock time. If a variable's meaning changes between live and backtest, it's not a variable — it's a bug.**
+
+### Circuit breaker timer reset on every check — never expires
+- The circuit breaker timer was reset to `time.time() + 300` on every equity update while the condition was true. Since equity updates arrive every 2-3 seconds, the 5-minute cooldown never starts counting down.
+- **LESSON: Circuit breakers must only arm on first activation. Subsequent checks should only monitor for recovery, not re-arm. The pattern is: `if not already_active: activate()` — never unconditionally set the timer.**
+
+### Stale tick guard can permanently blind the system
+- After a >15% price gap (flash crash/pump), every subsequent tick at the new price was rejected because delta > 15%. The reference price never updated, creating permanent blindness. Combined with `_last_data_time` being set BEFORE tick acceptance, `is_data_stale()` returned False (data "fresh") while all ticks were rejected.
+- **LESSON: Any rejection guard must have an override mechanism (consecutive rejection counter, time-based reset). AND freshness tracking must only update after successful acceptance.**
+
+### Fire-and-forget protective orders = naked positions
+- If SL and TP placement both fail (network blip, rate limit), the position is open with ZERO protection. The error was logged but no action taken. On 5x leverage, a 10% move = 50% of account gone.
+- **LESSON: Every position MUST have protection. If protective orders fail, the immediate response is emergency close, not logging. Defense must be active, not observational.**

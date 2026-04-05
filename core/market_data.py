@@ -70,6 +70,8 @@ class MarketDataCollector:
         self._first_tick_skipped: Dict[str, bool] = {}
         # Último precio aceptado por símbolo (para stale tick guard)
         self._last_accepted_price: Dict[str, float] = {}
+        # Consecutive stale tick rejection counter per symbol (prevents permanent block)
+        self._stale_reject_streak: Dict[str, int] = {}
         # Jitter EMA: intervalo promedio entre ticks (para quality monitoring)
         self._tick_jitter_ema: Dict[str, float] = {}
         self._last_tick_time: Dict[str, float] = {}
@@ -120,10 +122,11 @@ class MarketDataCollector:
         """
         try:
             import aiohttp
-            _SYMBOL_MAP = {"BTC-USD": "BTCUSDT", "ETH-USD": "ETHUSDT", "ADA-USD": "ADAUSDT"}
+            from exchange.binance_client import SYMBOL_MAP as _SYMBOL_MAP
             binance_sym = _SYMBOL_MAP.get(symbol, symbol.replace("-", ""))
             limit = hours * 60  # 1m bars
-            url = f"https://api.binance.com/api/v3/klines?symbol={binance_sym}&interval=1m&limit={limit}"
+            # Use FUTURES API (fapi), not spot API — prices differ by basis/funding
+            url = f"https://fapi.binance.com/fapi/v1/klines?symbol={binance_sym}&interval=1m&limit={limit}"
 
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
@@ -210,6 +213,7 @@ class MarketDataCollector:
         """Notifica que el WebSocket se (re)conectó. Inicia warmup period."""
         self._ws_connect_time = time.time()
         self._first_tick_skipped = {}
+        self._stale_reject_streak = {}
         logger.info("tick_guard_warmup_started", duration_sec=self.WARMUP_SEC)
 
     def _should_accept_tick(self, symbol: str, price: float) -> bool:
@@ -246,15 +250,29 @@ class MarketDataCollector:
             return False
 
         # Guard 3: Stale tick guard (precio con delta excesivo)
+        # Uses a consecutive rejection counter to prevent permanent blocking
+        # after legitimate large price gaps (flash crash/pump).
         last_price = self._last_accepted_price.get(symbol, 0)
         if last_price > 0:
             delta_pct = abs(price - last_price) / last_price
             if delta_pct > self.STALE_TICK_MAX_PCT:
-                self._ticks_rejected_stale += 1
-                logger.warning("stale_tick_rejected", symbol=symbol,
-                               price=price, last_price=last_price,
-                               delta_pct=round(delta_pct * 100, 2))
-                return False
+                consec = self._stale_reject_streak.get(symbol, 0) + 1
+                self._stale_reject_streak[symbol] = consec
+                if consec <= 5:
+                    self._ticks_rejected_stale += 1
+                    logger.warning("stale_tick_rejected", symbol=symbol,
+                                   price=price, last_price=last_price,
+                                   delta_pct=round(delta_pct * 100, 2),
+                                   consecutive=consec)
+                    return False
+                else:
+                    # After 5 consecutive rejections, accept the new price level
+                    logger.warning("stale_guard_override_accepting_new_price",
+                                   symbol=symbol, price=price, last_price=last_price,
+                                   delta_pct=round(delta_pct * 100, 2))
+                    self._stale_reject_streak[symbol] = 0
+            else:
+                self._stale_reject_streak[symbol] = 0
 
         # Tick aceptado: actualizar tracking
         self._last_accepted_price[symbol] = price
@@ -305,11 +323,13 @@ class MarketDataCollector:
         Aplica tick quality guards antes de procesar:
         warmup, first-tick skip, stale-tick rejection.
         """
-        self._last_data_time[symbol] = time.time()
-
         # Tick quality guard: rechazar ticks de baja calidad
+        # NOTE: _last_data_time is updated AFTER acceptance to avoid fooling
+        # is_data_stale() into thinking data is fresh when all ticks are rejected.
         if not self._should_accept_tick(symbol, price):
             return
+
+        self._last_data_time[symbol] = time.time()
 
         tick = {"price": price, "quantity": quantity, "timestamp": ts}
 

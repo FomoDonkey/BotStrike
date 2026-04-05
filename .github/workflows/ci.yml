@@ -4,16 +4,26 @@ on:
   push:
     branches: [main]
     paths:
+      - "*.py"
+      - "core/**"
+      - "strategies/**"
+      - "risk/**"
+      - "execution/**"
+      - "portfolio/**"
+      - "exchange/**"
+      - "analytics/**"
+      - "backtesting/**"
+      - "trade_database/**"
+      - "logging_metrics/**"
+      - "notifications/**"
+      - "config/**"
+      - "tests/**"
       - "desktop/**"
       - "server/**"
       - "requirements.txt"
       - ".github/workflows/ci.yml"
   pull_request:
     branches: [main]
-    paths:
-      - "desktop/**"
-      - "server/**"
-      - "requirements.txt"
 
 jobs:
   check-frontend:
@@ -47,13 +57,19 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
 
-      - name: Verify bridge compiles
-        run: python -c "from server.bridge import app; print('OK')"
+      - name: Verify imports compile
+        run: |
+          python -c "from server.bridge import app; print('Bridge OK')"
+          python -c "from strategies.mean_reversion import MeanReversionStrategy; print('MR OK')"
+          python -c "from risk.risk_manager import RiskManager; print('Risk OK')"
+          python -c "from execution.order_engine import OrderExecutionEngine; print('Execution OK')"
 
-      - name: Run existing tests
-        run: python -m pytest tests/ -x -q --timeout=30 2>&1 || echo "Tests completed"
+      - name: Run tests
+        run: python -m pytest tests/ -x -q
 
   check-tauri:
     runs-on: windows-latest

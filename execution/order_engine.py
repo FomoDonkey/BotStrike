@@ -214,9 +214,16 @@ class OrderExecutionEngine:
     async def _place_protective_orders(
         self, signal: Signal, size: float, sym_config: SymbolConfig
     ) -> None:
-        """Coloca órdenes de stop loss y take profit."""
-        # Stop Loss
+        """Coloca órdenes de stop loss y take profit.
+
+        CRITICAL: If both SL and TP fail, emergency-close the position
+        via market order to prevent unprotected exposure.
+        """
+        sl_ok = False
+        tp_ok = False
         sl_side = Side.SELL if signal.side == Side.BUY else Side.BUY
+
+        # Stop Loss
         sl_order = Order(
             symbol=signal.symbol,
             side=sl_side,
@@ -232,6 +239,7 @@ class OrderExecutionEngine:
             sl_order.order_id = result.get("orderId", result.get("order_id", ""))
             if sl_order.order_id:
                 self._active_orders[sl_order.order_id] = sl_order
+                sl_ok = True
         except Exception as e:
             logger.error("sl_order_failed", symbol=signal.symbol, error=str(e))
 
@@ -251,8 +259,31 @@ class OrderExecutionEngine:
             tp_order.order_id = result.get("orderId", result.get("order_id", ""))
             if tp_order.order_id:
                 self._active_orders[tp_order.order_id] = tp_order
+                tp_ok = True
         except Exception as e:
             logger.error("tp_order_failed", symbol=signal.symbol, error=str(e))
+
+        # EMERGENCY: If BOTH protective orders failed, close the position immediately
+        if not sl_ok and not tp_ok:
+            logger.critical("BOTH_PROTECTIVES_FAILED_emergency_close",
+                            symbol=signal.symbol, size=size)
+            emergency = Order(
+                symbol=signal.symbol,
+                side=sl_side,
+                order_type=OrderType.MARKET,
+                quantity=size,
+                reduce_only=True,
+                client_order_id=f"bs_emg_{uuid.uuid4().hex[:8]}",
+                strategy=signal.strategy,
+            )
+            try:
+                await self.client.place_order(emergency)
+                logger.warning("emergency_close_sent", symbol=signal.symbol)
+            except Exception as e2:
+                logger.critical("EMERGENCY_CLOSE_ALSO_FAILED", symbol=signal.symbol,
+                                error=str(e2))
+        elif not sl_ok:
+            logger.critical("SL_FAILED_position_has_TP_only", symbol=signal.symbol)
 
     # ── Market Making: cancel/replace ──────────────────────────────
 
@@ -450,3 +481,38 @@ class OrderExecutionEngine:
     @property
     def recent_trades(self) -> List[Trade]:
         return list(self._recent_trades)[-100:]  # últimos 100 trades
+
+    async def reconcile_orders_with_exchange(self) -> int:
+        """Query open orders from exchange and reconcile with local tracking.
+
+        Removes locally tracked orders that no longer exist on exchange
+        (filled/cancelled during WS disconnect). Returns count of reconciled orders.
+        """
+        try:
+            if not hasattr(self.client, 'get_open_orders'):
+                return 0
+            exchange_orders = await self.client.get_open_orders()
+            if not isinstance(exchange_orders, list):
+                return 0
+
+            exchange_ids = {
+                str(o.get("orderId", o.get("order_id", "")))
+                for o in exchange_orders
+            }
+            stale = [
+                oid for oid in self._active_orders
+                if oid and oid not in exchange_ids
+            ]
+            for oid in stale:
+                order = self._active_orders.pop(oid, None)
+                if order:
+                    logger.warning("reconciled_stale_order",
+                                   order_id=oid, symbol=order.symbol,
+                                   order_type=order.order_type.value)
+            if stale:
+                logger.info("order_reconciliation_complete",
+                            removed=len(stale), remaining=len(self._active_orders))
+            return len(stale)
+        except Exception as e:
+            logger.error("order_reconciliation_failed", error=str(e))
+            return 0

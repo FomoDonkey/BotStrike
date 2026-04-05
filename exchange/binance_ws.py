@@ -21,26 +21,27 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-# Binance WebSocket endpoints
-BINANCE_WS_URL = "wss://stream.binance.com:9443/ws"
-BINANCE_WS_COMBINED = "wss://stream.binance.com:9443/stream"
+# Binance Futures WebSocket endpoints (mainnet)
+BINANCE_WS_URL = "wss://fstream.binance.com/ws"
+BINANCE_WS_COMBINED = "wss://fstream.binance.com/stream"
 BINANCE_FAPI_BASE = "https://fapi.binance.com"
 BINANCE_FAPI_WS = "wss://fstream.binance.com/ws"
+# Testnet endpoints
+BINANCE_WS_TESTNET = "wss://stream.binancefuture.com/ws"
+BINANCE_WS_COMBINED_TESTNET = "wss://stream.binancefuture.com/stream"
 
-# Mapeo BotStrike → Binance
-SYMBOL_MAP = {
-    "BTC-USD": "btcusdt",
-    "ETH-USD": "ethusdt",
-    "ADA-USD": "adausdt",
-}
-SYMBOL_MAP_REVERSE = {v.upper(): k for k, v in SYMBOL_MAP.items()}
+# Mapeo BotStrike → Binance (lowercase for WS stream names)
+# Uses the canonical map from binance_client as source of truth.
+from exchange.binance_client import SYMBOL_MAP as _CLIENT_MAP, SYMBOL_MAP_REVERSE
+SYMBOL_MAP = {k: v.lower() for k, v in _CLIENT_MAP.items()}
 
 
 class BinanceWebSocket:
     """WebSocket client de Binance para datos de mercado en tiempo real."""
 
-    def __init__(self, symbols: Optional[List[str]] = None):
+    def __init__(self, symbols: Optional[List[str]] = None, use_testnet: bool = False):
         self.symbols = symbols or ["BTC-USD", "ETH-USD", "ADA-USD"]
+        self._use_testnet = use_testnet
         self._callbacks: Dict[str, List[Callable]] = {}
         self._running = False
         self._connected = False  # Bridge reads this for health status
@@ -80,7 +81,8 @@ class BinanceWebSocket:
         """Conecta al stream combinado de Binance y procesa mensajes."""
         self._running = True
         streams = self._build_streams()
-        url = f"{BINANCE_WS_COMBINED}?streams={'/'.join(streams)}"
+        base_url = BINANCE_WS_COMBINED_TESTNET if self._use_testnet else BINANCE_WS_COMBINED
+        url = f"{base_url}?streams={'/'.join(streams)}"
 
         while self._running:
             try:

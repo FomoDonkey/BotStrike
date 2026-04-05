@@ -9,6 +9,7 @@ import { AnimatedNumber } from "@/components/shared/AnimatedNumber";
 import { formatUSD, formatPct, formatDuration } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { Wifi, WifiOff, Clock } from "lucide-react";
+import { SYMBOLS, SYMBOL_LABELS } from "@/lib/constants";
 
 // Isolated clock — only this re-renders every second
 const ClockDisplay = memo(function ClockDisplay() {
@@ -73,8 +74,9 @@ export function TopBar() {
     <header className="flex items-center justify-between h-11 px-4 bg-bg-surface/30 backdrop-blur-xl border-b border-white/5 text-xs select-none">
       {/* Left: Prices + Regime */}
       <div className="flex items-center gap-4">
-        <PriceTicker symbol="BTC-USD" label="BTC" />
-        <PriceTicker symbol="ETH-USD" label="ETH" />
+        {SYMBOLS.map((sym) => (
+          <PriceTicker key={sym} symbol={sym} label={SYMBOL_LABELS[sym] || sym} />
+        ))}
         <div className="w-px h-4 bg-white/5" />
         <div className="flex items-center gap-1.5">
           <span className="text-text-muted">Regime</span>

@@ -63,6 +63,7 @@ class PaperPosition:
 
         # Execution metadata (set by paper_sim after routing)
         self.order_type: str = ""           # LIMIT or MARKET
+        self.entry_fee_rate: float = 0.0    # Fee rate used at entry (taker or maker)
         self.expected_cost_bps: float = 0.0
         self.fill_probability: float = 0.0
         self.routing_reason: str = ""
@@ -98,14 +99,16 @@ class PaperPosition:
     def close(self, exit_price: float, fee_rate: float) -> tuple:
         """Cierra posicion. Retorna (pnl_neto, fee_total).
 
-        Cobra round-trip fees: entry + exit.
+        Cobra round-trip fees: entry (stored rate) + exit (passed rate).
+        This correctly models MARKET entry (taker) + LIMIT exit (maker) scenarios.
         """
         if self.side == Side.BUY:
             gross = (exit_price - self.entry_price) * self.size
         else:
             gross = (self.entry_price - exit_price) * self.size
-        # Round-trip fee: entry fee + exit fee
-        entry_fee = self.entry_price * self.size * fee_rate
+        # Round-trip fee: entry uses stored rate, exit uses passed rate
+        actual_entry_rate = self.entry_fee_rate if self.entry_fee_rate > 0 else fee_rate
+        entry_fee = self.entry_price * self.size * actual_entry_rate
         exit_fee = exit_price * self.size * fee_rate
         total_fee = entry_fee + exit_fee
         return gross - total_fee, total_fee
@@ -266,8 +269,9 @@ class PaperTradingSimulator:
 
             # Determinar precio de exit (with adverse slippage on SL fills)
             if trigger == "SL":
-                # SL orders become market orders — add slippage
-                sl_slip_bps = self.config.slippage_bps * 0.5  # Half base slippage on SL
+                # SL orders trigger as market orders during adverse moves — slippage
+                # is HIGHER than normal (spreads widen when SLs trigger en masse)
+                sl_slip_bps = self.config.slippage_bps * 1.5  # 1.5x base slippage on SL
                 sl_slip = sl_slip_bps * pos.stop_loss / 10_000
                 if pos.side == Side.BUY:
                     exit_price = pos.stop_loss - sl_slip  # Worse for longs
@@ -502,6 +506,9 @@ class PaperTradingSimulator:
         )
         # Store execution metadata for later analysis
         pos.order_type = routing.order_type
+        # Store entry fee rate: MARKET→taker, LIMIT→maker
+        pos.entry_fee_rate = (self.config.taker_fee if routing.order_type == "MARKET"
+                              else self.config.maker_fee)
         pos.expected_cost_bps = routing.expected_cost_bps
         pos.fill_probability = routing.fill_probability
         pos.routing_reason = routing.reason

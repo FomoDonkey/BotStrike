@@ -93,6 +93,7 @@ export function BacktestPage() {
               >
                 <option value="BTC-USD">BTC-USD</option>
                 <option value="ETH-USD">ETH-USD</option>
+                <option value="SOL-USD">SOL-USD</option>
                 <option value="ADA-USD">ADA-USD</option>
               </select>
             </div>

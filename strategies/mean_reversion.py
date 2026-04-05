@@ -45,11 +45,19 @@ COOLDOWN_SEC = 180          # 3 min cooldown (5m = ~36 signals/day max with cool
 RSI_OVERSOLD = 35           # Wilder's RSI oversold (35 for 5m crypto)
 RSI_OVERBOUGHT = 65         # Wilder's RSI overbought
 ADX_MIN_TREND = 20          # Minimum 1H ADX for trend confirmation
-SL_ATR_MULT = 2.0           # 2x ATR stop loss (needs room on 5m)
-TP_ATR_MULT = 3.0           # 3x ATR take profit (R:R 1.5:1 gross)
+SL_ATR_MULT = 1.5           # 1.5x ATR stop loss — best for ETH/ADA (BTC structurally unprofitable with MR)
+TP_ATR_MULT = 4.0           # 4x ATR take profit → gross R:R 2.67:1
 MAX_HOLD_BARS = 60          # 60 5m-bars = 5 hours max hold
 MIN_BARS_1M = 30            # Minimum 1m bars needed
 MIN_BARS_5M = 50            # Minimum resampled bars needed
+# Trailing stop with progressive tightening:
+# Phase 1: activate at 1.5 ATR, trail 0.5 ATR behind peak → min capture ~1.0 ATR
+# Phase 2: after 20 bars (~1.7h), tighten to 0.3 ATR → lock more profit on slow moves
+TRAIL_ACTIVATE_ATR = 1.5    # Start trailing after 1.5x ATR profit (was 1.0 → too early)
+TRAIL_DISTANCE_ATR = 0.5    # Trail 0.5 ATR behind peak → min capture 1.0 ATR
+TRAIL_TIGHT_AFTER_BARS = 20 # After 20 5m-bars (~1.7h), tighten trail
+TRAIL_TIGHT_DISTANCE = 0.3  # Tighter trail for stale positions
+MIN_CONFIRMATIONS = 2       # Require 2+ independent confirmations
 
 # Legacy compatibility for scripts that import TF_CONFIGS
 @dataclass
@@ -62,7 +70,7 @@ class TFConfig:
     cache_ttl: int = 0
 
 TF_CONFIGS: Dict[str, TFConfig] = {
-    "5m": TFConfig(name="5m Adaptive MR", interval="5m",
+    "5m": TFConfig(name="5m Adaptive MR + Trailing Stop", interval="5m",
                    sl_mult=SL_ATR_MULT, tp_mult=TP_ATR_MULT, risk_pct=0.015),
 }
 
@@ -72,8 +80,10 @@ class MRState:
     """Per-position exit management state."""
     entry_time: float = 0
     entry_bar_idx: int = 0
-    best_pnl_atr: float = 0
-    breakeven_locked: bool = False
+    best_pnl_atr: float = 0       # Track peak PnL in ATR units for trailing stop
+    trail_active: bool = False      # Trailing stop activated after TRAIL_ACTIVATE_ATR
+    sl_mult: float = SL_ATR_MULT   # Per-position SL multiplier (from SymbolConfig)
+    tp_mult: float = TP_ATR_MULT   # Per-position TP multiplier (from SymbolConfig)
 
 
 class MeanReversionStrategy(BaseStrategy):
@@ -123,22 +133,24 @@ class MeanReversionStrategy(BaseStrategy):
         eval_count = self._eval_counter[symbol]
 
         # ── Resample to 5m (only when NEW 1m bar arrives) ────────
-        # Trigger on actual data change, not eval counter (strategy runs
-        # every 3s but new bars arrive every 60s).
-        current_len = len(df)
-        last_len = self._last_resample_len.get(symbol, 0)
-        new_bar_arrived = current_len != last_len
+        # Detect new bars by checking the last row's close price + timestamp,
+        # not len(df). In backtest the sliding window keeps len constant at ~501,
+        # so len-based detection silently stops after bar 500.
+        last_close = float(df.iloc[-1]["close"])
+        last_ts = float(df.iloc[-1].get("timestamp", len(df)))
+        bar_key = (last_close, last_ts)
+        prev_key = self._last_resample_len.get(symbol)
+        new_bar_arrived = bar_key != prev_key
         if new_bar_arrived or symbol not in self._resampled:
-            self._last_resample_len[symbol] = current_len
+            self._last_resample_len[symbol] = bar_key
             self._resample_5m(symbol, df)
 
         m5 = self._resampled.get(symbol)
         if m5 is None or len(m5) < MIN_BARS_5M:
             return signals
 
-        # ── Update 1H trend (every 12 new bars ~= 1 hour of 5m data) ─
-        h1_stale = (eval_count % (RESAMPLE_MINUTES * 12) == 0) if not new_bar_arrived else (current_len % 60 == 0)
-        if h1_stale or symbol not in self._h1_trend:
+        # ── Update 1H trend on every new 1m bar (cheap computation, prevents stale filter) ─
+        if new_bar_arrived or symbol not in self._h1_trend:
             self._update_h1_trend(symbol, df)
 
         h1_trend = self._h1_trend.get(symbol, 0)
@@ -156,7 +168,13 @@ class MeanReversionStrategy(BaseStrategy):
             return signals
 
         # ── ENTRY LOGIC ──────────────────────────────────────────
-        now = _time.time()
+        # In backtest mode, use bar timestamp for cooldown (wall-clock is meaningless).
+        # Timestamps in data are ms-epoch; convert to seconds for cooldown math.
+        if self.backtest_mode:
+            raw_ts = snapshot.timestamp if snapshot.timestamp > 1e9 else float(df.iloc[-1].get("timestamp", 0))
+            now = raw_ts / 1000 if raw_ts > 1e12 else raw_ts  # ms -> sec
+        else:
+            now = _time.time()
         last_exit = self._last_exit_time.get(symbol, 0)
         if last_exit > 0 and (now - last_exit) < COOLDOWN_SEC:
             return signals
@@ -185,10 +203,24 @@ class MeanReversionStrategy(BaseStrategy):
             return signals
 
         # ── PULLBACK DETECTION (5m) ──────────────────────────────
-        # Buy when 5m is oversold in 1H uptrend (pullback buy)
-        # Sell when 5m is overbought in 1H downtrend (rally sell)
-        bull_setup = h1_trend == 1 and rsi < RSI_OVERSOLD
-        bear_setup = h1_trend == -1 and rsi > RSI_OVERBOUGHT
+        # Per-symbol RSI thresholds: more volatile assets (SOL, ADA) have wider
+        # RSI swings, so we tighten the threshold to require deeper pullbacks.
+        # BTC: 35/65 (standard), ETH: 33/67, SOL/ADA: 30/70 (deeper pullback)
+        vol_pctile = float(bar.get("volatility_percentile", 50))
+        if vol_pctile > 70:
+            # High vol regime: require deeper pullback
+            rsi_os = max(RSI_OVERSOLD - 5, 25)
+            rsi_ob = min(RSI_OVERBOUGHT + 5, 75)
+        elif vol_pctile < 30:
+            # Low vol: accept shallower pullback
+            rsi_os = min(RSI_OVERSOLD + 3, 42)
+            rsi_ob = max(RSI_OVERBOUGHT - 3, 58)
+        else:
+            rsi_os = RSI_OVERSOLD
+            rsi_ob = RSI_OVERBOUGHT
+
+        bull_setup = h1_trend == 1 and rsi < rsi_os
+        bear_setup = h1_trend == -1 and rsi > rsi_ob
 
         if not bull_setup and not bear_setup:
             return signals
@@ -209,27 +241,31 @@ class MeanReversionStrategy(BaseStrategy):
         has_rejection = self._has_rejection_wick(bar, bull_setup)
 
         confirmations = sum([has_bb_touch, has_vol_dry, has_obi, has_rejection])
-        if confirmations < 1:
+        if confirmations < MIN_CONFIRMATIONS:
             return signals
 
-        # ── SIZING & SL/TP ───────────────────────────────────────
+        # ── SIZING & SL/TP (per-symbol from SymbolConfig) ────────
         kelly_pct = kwargs.get("kelly_risk_pct")
         risk_pct = kelly_pct if kelly_pct else self.trading_config.risk_per_trade_pct
 
+        # Use per-symbol SL/TP from SymbolConfig (always set now)
+        sl_mult = sym_config.mr_atr_mult_sl
+        tp_mult = sym_config.mr_atr_mult_tp
+
         if bull_setup:
-            stop_loss = price - SL_ATR_MULT * atr
-            take_profit = price + TP_ATR_MULT * atr
+            stop_loss = price - sl_mult * atr
+            take_profit = price + tp_mult * atr
             side = Side.BUY
             trigger = "trend_pullback_bull"
         else:
-            stop_loss = price + SL_ATR_MULT * atr
-            take_profit = price - TP_ATR_MULT * atr
+            stop_loss = price + sl_mult * atr
+            take_profit = price - tp_mult * atr
             side = Side.SELL
             trigger = "trend_pullback_bear"
 
         # Check net R:R after fees
         rt_cost = price * 14 / 10000  # 14 bps round-trip
-        net_profit = TP_ATR_MULT * atr - rt_cost
+        net_profit = tp_mult * atr - rt_cost
         if net_profit <= 0:
             return signals
 
@@ -242,13 +278,15 @@ class MeanReversionStrategy(BaseStrategy):
         if size_usd < 20:
             return signals
 
-        # ── SCORE ────────────────────────────────────────────────
-        score = 0.50 + confirmations * 0.12
+        # ── SCORE (higher with more confirmations) ────────────────
+        score = 0.40 + confirmations * 0.15
         strength = min(score, 1.0)
 
         self._states[symbol] = MRState(
             entry_time=now,
-            entry_bar_idx=eval_count // RESAMPLE_MINUTES,
+            entry_bar_idx=len(self._resampled.get(symbol, pd.DataFrame())),
+            sl_mult=sl_mult,
+            tp_mult=tp_mult,
         )
 
         logger.info("mr_entry", symbol=symbol, side=side.value,
@@ -300,21 +338,57 @@ class MeanReversionStrategy(BaseStrategy):
         if pd.isna(atr) or atr <= 0:
             return None
 
-        bars_held = self._eval_counter.get(symbol, 0) // RESAMPLE_MINUTES - state.entry_bar_idx
+        current_bar_count = len(self._resampled.get(symbol, pd.DataFrame()))
+        bars_held = current_bar_count - state.entry_bar_idx
         exit_reason = None
 
-        # Breakeven lock: after 1x ATR profit
+        # Software SL/TP safety net — in case exchange orders fail
         if position.entry_price > 0:
             pnl_atr = ((price - position.entry_price) / atr if position.side == Side.BUY
                        else (position.entry_price - price) / atr)
-            if pnl_atr > 1.0:
-                state.breakeven_locked = True
-            if state.breakeven_locked and pnl_atr < 0.1:
-                exit_reason = "breakeven_stop"
 
-        # Max hold
+            # SL safety net: exit if price breached beyond per-position SL
+            if pnl_atr < -(state.sl_mult + 0.2):
+                exit_reason = "software_sl_safety"
+
+            # TP safety net: exit if price reached per-position TP level
+            if pnl_atr >= state.tp_mult:
+                exit_reason = "software_tp_safety"
+
+            # ── Trailing stop with progressive tightening ────────
+            # Track peak PnL. Once activated, trail behind peak.
+            # After TRAIL_TIGHT_AFTER_BARS, tighten the trail to lock
+            # more profit on slow-moving positions that are aging out.
+            if pnl_atr > state.best_pnl_atr:
+                state.best_pnl_atr = pnl_atr
+
+            if state.best_pnl_atr >= TRAIL_ACTIVATE_ATR:
+                state.trail_active = True
+
+            if state.trail_active:
+                # Progressive: tighten trail distance after N bars
+                if bars_held >= TRAIL_TIGHT_AFTER_BARS:
+                    trail_dist = TRAIL_TIGHT_DISTANCE
+                else:
+                    trail_dist = TRAIL_DISTANCE_ATR
+                trail_level = state.best_pnl_atr - trail_dist
+                if pnl_atr <= trail_level:
+                    exit_reason = f"trailing_stop_{state.best_pnl_atr:.1f}atr_peak"
+
+        # Max hold — but if in profit, let trailing stop handle it
         if bars_held >= MAX_HOLD_BARS:
-            exit_reason = "max_hold_exceeded"
+            if position.entry_price > 0:
+                pnl_check = ((price - position.entry_price) / atr if position.side == Side.BUY
+                             else (position.entry_price - price) / atr)
+                # Only force-exit if not profiting enough to justify holding
+                if pnl_check < 0.5:
+                    exit_reason = "max_hold_exceeded"
+                # If profitable but max hold, tighten trail to 0.2 ATR for fast exit
+                elif not exit_reason and state.trail_active:
+                    if pnl_check <= state.best_pnl_atr - 0.2:
+                        exit_reason = "max_hold_trail_tight"
+            else:
+                exit_reason = "max_hold_exceeded"
 
         if not exit_reason:
             return None
@@ -323,7 +397,12 @@ class MeanReversionStrategy(BaseStrategy):
         size_usd = position.notional if position.notional > 0 else position.size * price
 
         self._states.pop(symbol, None)
-        self._last_exit_time[symbol] = _time.time()
+        # Use bar timestamp in backtest mode (wall-clock is meaningless)
+        if self.backtest_mode:
+            raw_ts = snapshot.timestamp if snapshot.timestamp > 1e9 else 0
+            self._last_exit_time[symbol] = raw_ts / 1000 if raw_ts > 1e12 else raw_ts
+        else:
+            self._last_exit_time[symbol] = _time.time()
 
         logger.info("mr_exit", symbol=symbol, reason=exit_reason, bars_held=bars_held)
 

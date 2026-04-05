@@ -68,7 +68,10 @@ class BotStrike:
         if self._venue == ExchangeVenue.BINANCE:
             self.client = BinanceClient(settings)
             from exchange.binance_ws import BinanceWebSocket
-            self.websocket = BinanceWebSocket(symbols=settings.symbol_names)
+            self.websocket = BinanceWebSocket(
+                symbols=settings.symbol_names,
+                use_testnet=settings.use_testnet and not self.paper,
+            )
             self.use_binance = True  # Force Binance WS for data
         else:
             self.client = StrikeClient(settings)
@@ -357,7 +360,7 @@ class BotStrike:
                 # Actualizar equity
                 balances = data.get("a", {}).get("B", [])
                 for b in balances:
-                    if b.get("a") == "USD":
+                    if b.get("a") in ("USDT", "USD"):
                         equity = float(b.get("wb", 0))
                         await self.risk_manager.update_equity_safe(equity)
                         self.metrics.update_equity(equity)
@@ -696,8 +699,11 @@ class BotStrike:
                     # Live: actualizar posiciones desde exchange
                     positions_data = await self.client.get_positions()
                     if isinstance(positions_data, list):
+                        from exchange.binance_ws import SYMBOL_MAP_REVERSE
                         for p in positions_data:
-                            symbol = p.get("symbol", "")
+                            raw_symbol = p.get("symbol", "")
+                            # Normalize Binance symbol (BTCUSDT) → BotStrike (BTC-USD)
+                            symbol = SYMBOL_MAP_REVERSE.get(raw_symbol, raw_symbol)
                             size = float(p.get("positionAmt", p.get("size", 0)))
                             if size != 0:
                                 side = Side.BUY if size > 0 else Side.SELL
@@ -708,9 +714,6 @@ class BotStrike:
                                     unrealized_pnl=float(p.get("unrealizedProfit", 0)),
                                 )
                                 await self.risk_manager.update_position_safe(symbol, pos)
-                                # Sync aggregate position for strategy decision-making.
-                                # In live mode we can't distinguish per-strategy, so store
-                                # under a generic key. Strategies check this for the symbol.
                                 self._positions[symbol] = pos
                             else:
                                 await self.risk_manager.update_position_safe(symbol, None)
@@ -719,18 +722,33 @@ class BotStrike:
                 # Cleanup stale orders (missed WS FILLED/CANCELED events after disconnect)
                 self.execution_engine.cleanup_stale_orders(max_age_sec=300.0)
 
+                # Periodic order reconciliation with exchange (every ~10s = 5 risk cycles)
+                if not self.paper and not self.dry_run:
+                    reconcile_counter = getattr(self, '_reconcile_counter', 0) + 1
+                    self._reconcile_counter = reconcile_counter
+                    if reconcile_counter % 5 == 0:
+                        await self.execution_engine.reconcile_orders_with_exchange()
+
                 # Verificar drawdown crítico (>= consistente con _check_max_drawdown)
                 if self.risk_manager.current_drawdown_pct >= self.settings.trading.max_drawdown_pct:
-                    logger.warning("MAX_DRAWDOWN_EXCEEDED — cancelling all orders")
-                    self.trading_logger.log_risk_event("max_drawdown", {
-                        "drawdown": self.risk_manager.current_drawdown_pct,
-                    })
-                    await self.notifier.notify_risk_event("max_drawdown", {
-                        "drawdown_pct": f"{self.risk_manager.current_drawdown_pct:.2%}",
-                        "threshold": f"{self.settings.trading.max_drawdown_pct:.2%}",
-                    })
+                    if not self.risk_manager._drawdown_halted:
+                        logger.warning("MAX_DRAWDOWN_EXCEEDED — halting strategy and cancelling orders")
+                        self.trading_logger.log_risk_event("max_drawdown", {
+                            "drawdown": self.risk_manager.current_drawdown_pct,
+                        })
+                        await self.notifier.notify_risk_event("max_drawdown", {
+                            "drawdown_pct": f"{self.risk_manager.current_drawdown_pct:.2%}",
+                            "threshold": f"{self.settings.trading.max_drawdown_pct:.2%}",
+                        })
+                    self.risk_manager._drawdown_halted = True
                     if not self.dry_run and not self.paper:
                         await self.execution_engine.cancel_all()
+                else:
+                    # Reset halt when drawdown recovers below threshold
+                    if self.risk_manager._drawdown_halted:
+                        logger.info("drawdown_recovered_below_threshold",
+                                    drawdown=f"{self.risk_manager.current_drawdown_pct:.2%}")
+                    self.risk_manager._drawdown_halted = False
 
                 await asyncio.sleep(self.settings.trading.risk_check_interval_sec)
 
