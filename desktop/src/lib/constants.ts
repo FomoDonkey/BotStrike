@@ -43,6 +43,11 @@ export const STRATEGY_LABELS: Record<string, string> = {
   MARKET_MAKING: "Market Making",
 };
 
+export const EXCHANGE_LABELS: Record<string, string> = {
+  binance: "Binance",
+  hyperliquid: "Hyperliquid",
+};
+
 export const REGIME_COLORS: Record<string, string> = {
   RANGING: "#74B9FF",
   TRENDING_UP: "#00D4AA",

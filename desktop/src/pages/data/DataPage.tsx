@@ -64,7 +64,7 @@ export function DataPage() {
               <p className="font-mono text-sm text-accent">${t.lastPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
             </div>
           )) : (
-            <div className="col-span-3 text-center py-4 text-text-muted text-sm">
+            <div className="col-span-4 text-center py-4 text-text-muted text-sm">
               <PulsingDot active={system.wsConnected} className="mx-auto mb-2" />
               {system.wsConnected ? "Receiving data..." : "No data feeds — bridge not connected"}
             </div>

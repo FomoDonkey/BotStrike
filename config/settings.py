@@ -13,8 +13,9 @@ load_dotenv()
 
 
 class ExchangeVenue(Enum):
-    """Exchange de ejecución. Binance por defecto (liquidez real)."""
+    """Exchange de ejecución."""
     BINANCE = "binance"
+    HYPERLIQUID = "hyperliquid"
     STRIKE = "strike"
 
 
@@ -164,6 +165,14 @@ class Settings:
         default_factory=lambda: os.getenv("BINANCE_API_SECRET", "")
     )
 
+    # Hyperliquid API (when exchange_venue="hyperliquid")
+    hyperliquid_private_key: str = field(
+        default_factory=lambda: os.getenv("HYPERLIQUID_PRIVATE_KEY", "")
+    )
+    hyperliquid_wallet_address: str = field(
+        default_factory=lambda: os.getenv("HYPERLIQUID_WALLET_ADDRESS", "")
+    )
+
     # Usar testnet por defecto para desarrollo
     use_testnet: bool = True
 
@@ -278,6 +287,10 @@ class Settings:
     @property
     def is_binance(self) -> bool:
         return self.trading.exchange_venue == "binance"
+
+    @property
+    def is_hyperliquid(self) -> bool:
+        return self.trading.exchange_venue == "hyperliquid"
 
     @property
     def is_strike(self) -> bool:

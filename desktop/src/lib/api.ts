@@ -20,7 +20,8 @@ export const api = {
   health: () => request<any>("/api/health"),
   config: () => request<any>("/api/config"),
   botStatus: () => request<any>("/api/bot/status"),
-  botStart: (mode = "paper") => request<any>("/api/bot/start?mode=" + mode, { method: "POST" }),
+  botStart: (mode = "paper", exchange = "binance") =>
+    request<any>(`/api/bot/start?mode=${mode}&exchange=${exchange}`, { method: "POST" }),
   botStop: () => request<any>("/api/bot/stop", { method: "POST" }),
   performance: () => request<any>("/api/performance"),
   strategies: () => request<any>("/api/strategies"),

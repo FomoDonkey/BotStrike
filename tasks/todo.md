@@ -1,6 +1,10 @@
 # BotStrike — Tasks
 
+## En Progreso
+- [ ] Hyperliquid exchange integration — API research complete, implementation pending
+
 ## Completado
+- [x] Research Hyperliquid API — full documentation of REST, WebSocket, auth, fees, rate limits, Python SDK
 - [x] Fetch y documentar API Strike Finance
 - [x] Diseño de arquitectura modular (10 modulos)
 - [x] Config & Settings (config/settings.py)

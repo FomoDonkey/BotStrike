@@ -73,7 +73,16 @@ class BotStrike:
                 symbols=settings.symbol_names,
                 use_testnet=settings.use_testnet and not self.paper,
             )
-            self.use_binance = True  # Force Binance WS for data
+            self.use_binance = True
+        elif self._venue == ExchangeVenue.HYPERLIQUID:
+            from exchange.hyperliquid_client import HyperliquidClient
+            from exchange.hyperliquid_ws import HyperliquidWebSocket
+            self.client = HyperliquidClient(settings)
+            self.websocket = HyperliquidWebSocket(
+                symbols=settings.symbol_names,
+                wallet_address=settings.hyperliquid_wallet_address,
+            )
+            self.use_binance = False
         else:
             self.client = StrikeClient(settings)
             if use_binance:

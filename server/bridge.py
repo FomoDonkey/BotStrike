@@ -108,6 +108,7 @@ class BridgeState:
         self.running = False
         self.start_time = time.time()
         self.mode = "paper"
+        self.exchange = "binance"
 
         # Throttled broadcast: swap-and-drain pattern (thread-safe for asyncio)
         self._market_queue: Dict[str, dict] = {}
@@ -791,16 +792,28 @@ async def get_config():
 
 
 @app.post("/api/bot/start")
-async def bot_start(mode: str = "paper", token: str = ""):
-    # Auth: require token for live mode, allow paper without token for dev convenience
+async def bot_start(mode: str = "paper", exchange: str = "binance", token: str = ""):
+    # Auth: require token for live mode
     if mode == "live" and token != _AUTH_TOKEN:
         return {"error": "Invalid or missing auth token for live mode"}
     if mode not in VALID_MODES:
         return {"error": f"Invalid mode: {mode!r}. Valid: {sorted(VALID_MODES)}"}
+    if exchange not in ("binance", "hyperliquid", "strike"):
+        return {"error": f"Invalid exchange: {exchange!r}"}
     if state.running:
         return {"status": "already_running", "mode": state.mode}
+
+    # Apply exchange-specific fee configuration
+    settings = Settings()
+    settings.trading.exchange_venue = exchange
+    if exchange == "hyperliquid":
+        settings.trading.maker_fee = 0.00015   # 1.5 bps
+        settings.trading.taker_fee = 0.00045   # 4.5 bps
+        settings.trading.slippage_bps = 2.0    # DEX has slightly wider spread
+    state.exchange = exchange
+
     await start_engine(mode)
-    return {"status": "starting", "mode": mode}
+    return {"status": "starting", "mode": mode, "exchange": exchange}
 
 
 @app.post("/api/bot/stop")
@@ -822,7 +835,8 @@ async def bot_status():
         "uptime_sec": time.time() - state.start_time if state.running else 0,
         "equity": state.equity,
         "pnl": state.pnl,
-        "auth_token": _AUTH_TOKEN,  # Safe: only accessible from localhost (CORS restricted)
+        "auth_token": _AUTH_TOKEN,
+        "exchange": state.exchange,
     }
 
 

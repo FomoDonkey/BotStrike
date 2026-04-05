@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { GlassPanel } from "@/components/shared/GlassPanel";
 import { formatUSD, formatPct, cn } from "@/lib/utils";
 import { BRIDGE_URL, STRATEGY_LABELS } from "@/lib/constants";
+import { useExchangeStore } from "@/stores/exchangeStore";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -51,7 +52,7 @@ export function BacktestPage() {
       const res = await fetch(`${BRIDGE_URL}/api/backtest/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol, strategy }),
+        body: JSON.stringify({ symbol, strategy, exchange: useExchangeStore.getState().exchange }),
       });
       const data = await res.json();
       if (data.error) {
@@ -106,7 +107,7 @@ export function BacktestPage() {
                 className="w-full bg-bg-base border border-white/10 rounded-lg px-3 py-2 text-sm text-text-primary font-mono focus:outline-none focus:border-accent/50"
               >
                 {AVAILABLE_STRATEGIES.map((s) => (
-                  <option key={s.value} value={s.value} disabled={!s.active && s.value !== "MEAN_REVERSION"}>
+                  <option key={s.value} value={s.value} disabled={!s.active}>
                     {s.label}
                   </option>
                 ))}
@@ -248,8 +249,8 @@ export function BacktestPage() {
               {/* No trades warning */}
               {result.total_trades === 0 && (
                 <div className="p-3 rounded-lg bg-yellow-500/10 text-yellow-400 text-xs">
-                  No trades generated. The MR strategy requires specific conditions
-                  (1H trend + 5m RSI pullback). Try with more data or a different symbol.
+                  No trades generated. Strategy requires specific market conditions to trigger.
+                  Try with more data, a different symbol, or a different strategy.
                 </div>
               )}
             </div>

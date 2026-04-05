@@ -10,3 +10,5 @@ streamlit>=1.30.0
 plotly>=5.18.0
 fastapi>=0.115.0
 uvicorn>=0.34.0
+hyperliquid-python-sdk>=0.22.0
+eth_account>=0.13.0

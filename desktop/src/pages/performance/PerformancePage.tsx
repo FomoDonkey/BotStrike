@@ -3,12 +3,12 @@ import { motion } from "framer-motion";
 import { GlassPanel } from "@/components/shared/GlassPanel";
 import { MetricCard } from "@/components/shared/MetricCard";
 import { useTradingStore } from "@/stores/tradingStore";
-import { formatUSD, formatPct, formatTime, cn } from "@/lib/utils";
+import { formatUSD, formatPct, cn } from "@/lib/utils";
 import { STRATEGY_COLORS, STRATEGY_LABELS } from "@/lib/constants";
 import { api } from "@/lib/api";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar, Cell, PieChart, Pie,
+  BarChart, Bar, Cell,
 } from "recharts";
 import { TrendingUp, Target, BarChart3, DollarSign, Timer, Percent } from "lucide-react";
 

@@ -7,6 +7,8 @@ import { formatDuration, cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useMarketStore } from "@/stores/marketStore";
 import { Monitor, Cpu, Wifi, WifiOff, Clock, Users, Activity, Play, Square, RefreshCw } from "lucide-react";
+import { ExchangeSelector } from "@/components/shared/ExchangeSelector";
+import { useExchangeStore } from "@/stores/exchangeStore";
 
 export function SystemPage() {
   const system = useSystemStore();
@@ -31,7 +33,9 @@ export function SystemPage() {
     return () => clearTimeout(timer);
   }, [logs.length]);
 
-  const handleStart = () => api.botStart("paper").catch(() => null);
+  const exchange = useExchangeStore((s) => s.exchange);
+  const [startMode, setStartMode] = useState<"paper" | "dry_run" | "live">("paper");
+  const handleStart = () => api.botStart(startMode, exchange).catch(() => null);
   const handleStop = () => api.botStop().catch(() => null);
 
   return (
@@ -90,6 +94,42 @@ export function SystemPage() {
               </>
             )}
           </div>
+          {/* Mode + Exchange Selector (only when engine is stopped) */}
+          {!system.engineRunning && (
+            <div className="space-y-4 mb-4">
+              <div>
+                <label className="text-xs text-text-muted block mb-2">Mode</label>
+                <div className="flex gap-2">
+                  {(["paper", "dry_run", "live"] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setStartMode(m)}
+                      className={cn(
+                        "flex-1 px-3 py-2 rounded-lg text-xs font-semibold uppercase transition-all border",
+                        startMode === m
+                          ? m === "live" ? "border-loss bg-loss/10 text-loss"
+                            : m === "paper" ? "border-warning bg-warning/10 text-warning"
+                            : "border-info bg-info/10 text-info"
+                          : "border-white/5 text-text-muted hover:border-white/10",
+                      )}
+                    >
+                      {m.replace("_", " ")}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-text-muted block mb-2">Exchange</label>
+                <ExchangeSelector />
+              </div>
+            </div>
+          )}
+          {system.engineRunning && (
+            <div className="flex justify-between text-xs mb-4">
+              <span className="text-text-muted">Exchange</span>
+              <span className="font-mono text-text-primary uppercase">{botStatus?.exchange || exchange}</span>
+            </div>
+          )}
           {/* Controls */}
           <div className="flex gap-2">
             <button
@@ -125,7 +165,9 @@ export function SystemPage() {
           <div className="space-y-3">
             {[
               { name: "Bridge Server", connected: system.bridgeConnected, detail: "localhost:9420" },
-              { name: "Market Data (Binance)", connected: system.wsConnected || hasPriceData, detail: "stream.binance.com" },
+              { name: `Market Data (${exchange === "hyperliquid" ? "Hyperliquid" : "Binance"})`,
+                connected: system.wsConnected || hasPriceData,
+                detail: exchange === "hyperliquid" ? "api.hyperliquid.xyz" : "fstream.binance.com" },
             ].map((c) => (
               <div key={c.name} className="flex items-center justify-between p-3 rounded-lg bg-white/[0.02]">
                 <div className="flex items-center gap-3">
@@ -150,7 +192,7 @@ export function SystemPage() {
             <div className="space-y-1 text-xs">
               <div className="flex justify-between">
                 <span className="text-text-muted">Version</span>
-                <span className="font-mono text-text-secondary">2.9.1</span>
+                <span className="font-mono text-text-secondary">2.10.0</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-text-muted">Framework</span>

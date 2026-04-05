@@ -10,6 +10,7 @@ import { formatUSD, formatPct, formatDuration } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { Wifi, WifiOff, Clock } from "lucide-react";
 import { SYMBOLS, SYMBOL_LABELS } from "@/lib/constants";
+import { useExchangeStore } from "@/stores/exchangeStore";
 
 // Isolated clock — only this re-renders every second
 const ClockDisplay = memo(function ClockDisplay() {
@@ -109,8 +110,11 @@ export function TopBar() {
         </div>
       </div>
 
-      {/* Right: Mode + Connection + Clock */}
+      {/* Right: Exchange + Mode + Connection + Clock */}
       <div className="flex items-center gap-3">
+        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-white/5 text-text-muted">
+          {useExchangeStore.getState().exchange === "hyperliquid" ? "HL" : "BIN"}
+        </span>
         <span className={cn(
           "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider",
           mode === "live" && "bg-loss/10 text-loss",
