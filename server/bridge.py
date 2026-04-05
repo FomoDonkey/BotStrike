@@ -183,8 +183,8 @@ async def update_market_data():
 # ── Engine Integration ───────────────────────────────────────────
 async def start_engine(mode: str = "paper"):
     """Start the BotStrike trading engine."""
-    # Update market data first (incremental — only downloads new candles)
-    await update_market_data()
+    # Update market data in background — don't block engine start
+    asyncio.create_task(update_market_data())
 
     from main import BotStrike
 
@@ -715,7 +715,12 @@ async def system_broadcast_loop():
 # ── FastAPI App ──────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup and shutdown lifecycle."""
+    """Startup and shutdown lifecycle.
+
+    CRITICAL: Do NOT start the engine here. The user selects exchange and mode
+    from the desktop UI, then clicks Start which calls POST /api/bot/start.
+    The bridge just opens the port immediately so the desktop can connect.
+    """
     loops = [
         asyncio.create_task(market_broadcast_loop()),
         asyncio.create_task(candle_broadcast_loop()),
@@ -723,7 +728,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(system_broadcast_loop()),
     ]
 
-    await start_engine(state.mode)
+    logger.info("bridge_ready", port=9420)
     yield
 
     await stop_engine()
