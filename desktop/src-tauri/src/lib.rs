@@ -27,16 +27,18 @@ pub fn run() {
                 }
             }
 
-            // Collect possible engine paths
+            // Collect possible engine paths (try all known locations)
             let mut engine_paths: Vec<std::path::PathBuf> = Vec::new();
 
             // Resource dir (bundled with app)
             if let Ok(resource) = app.path().resource_dir() {
                 engine_paths.push(resource.join("binaries").join("engine").join("botstrike-engine.exe"));
             }
-            // Next to main exe
+            // Next to main exe (NSIS install: AppData/Local/BotStrike/)
             if let Ok(exe) = std::env::current_exe() {
                 if let Some(dir) = exe.parent() {
+                    // Most common: binaries/engine/ next to the app exe
+                    engine_paths.push(dir.join("binaries").join("engine").join("botstrike-engine.exe"));
                     engine_paths.push(dir.join("engine").join("botstrike-engine.exe"));
                     engine_paths.push(dir.join("botstrike-engine.exe"));
                 }
@@ -66,6 +68,9 @@ fn launch_engine(paths: &[std::path::PathBuf]) {
         return;
     }
 
+    for (i, path) in paths.iter().enumerate() {
+        log::info!("Engine path [{}]: {} (exists: {})", i, path.display(), path.exists());
+    }
     for path in paths {
         if path.exists() {
             log::info!("Launching engine: {}", path.display());
