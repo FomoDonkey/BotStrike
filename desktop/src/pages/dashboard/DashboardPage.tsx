@@ -29,8 +29,8 @@ const fadeUp = {
 };
 
 const DEFAULT_ALLOCATION = [
-  { name: "Mean Reversion", value: 40, color: "#6C5CE7" },
-  { name: "Order Flow", value: 60, color: "#00CEC9" },
+  { name: "Mean Reversion", value: 50, color: "#6C5CE7" },
+  { name: "Fibonacci", value: 50, color: "#F39C12" },
 ];
 
 export function DashboardPage() {
@@ -42,6 +42,7 @@ export function DashboardPage() {
       const t = cfg.trading;
       const data = [
         { name: "Mean Reversion", value: Math.round((t.allocation_mean_reversion || 0) * 100), color: "#6C5CE7" },
+        { name: "Fibonacci", value: Math.round((t.allocation_fibonacci_retracement || 0) * 100), color: "#F39C12" },
         { name: "Order Flow", value: Math.round((t.allocation_order_flow_momentum || 0) * 100), color: "#00CEC9" },
         { name: "Trend Following", value: Math.round((t.allocation_trend_following || 0) * 100), color: "#00B894" },
         { name: "Market Making", value: Math.round((t.allocation_market_making || 0) * 100), color: "#FDCB6E" },

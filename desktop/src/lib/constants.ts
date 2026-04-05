@@ -29,6 +29,7 @@ export const SYMBOL_COLORS: Record<string, string> = {
 
 export const STRATEGY_COLORS: Record<string, string> = {
   MEAN_REVERSION: "#6C5CE7",
+  FIBONACCI_RETRACEMENT: "#F39C12",
   ORDER_FLOW_MOMENTUM: "#00CEC9",
   TREND_FOLLOWING: "#00B894",
   MARKET_MAKING: "#FDCB6E",
@@ -36,6 +37,7 @@ export const STRATEGY_COLORS: Record<string, string> = {
 
 export const STRATEGY_LABELS: Record<string, string> = {
   MEAN_REVERSION: "Mean Reversion",
+  FIBONACCI_RETRACEMENT: "Fibonacci",
   ORDER_FLOW_MOMENTUM: "Order Flow",
   TREND_FOLLOWING: "Trend Following",
   MARKET_MAKING: "Market Making",

@@ -857,6 +857,7 @@ async def get_strategies():
     strategies = []
     alloc_map = {
         StrategyType.MEAN_REVERSION: state.engine.settings.trading.allocation_mean_reversion,
+        StrategyType.FIBONACCI_RETRACEMENT: state.engine.settings.trading.allocation_fibonacci_retracement,
         StrategyType.TREND_FOLLOWING: state.engine.settings.trading.allocation_trend_following,
         StrategyType.MARKET_MAKING: state.engine.settings.trading.allocation_market_making,
         StrategyType.ORDER_FLOW_MOMENTUM: state.engine.settings.trading.allocation_order_flow_momentum,

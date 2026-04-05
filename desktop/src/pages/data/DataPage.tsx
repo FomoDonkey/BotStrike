@@ -51,7 +51,7 @@ export function DataPage() {
         <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-4 flex items-center gap-2">
           <Wifi className="w-3 h-3" /> Live Data Feeds
         </h3>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-4 gap-4">
           {tickCounts.length > 0 ? tickCounts.map((t) => (
             <div key={t.symbol} className="p-3 rounded-lg bg-white/[0.02] flex items-center justify-between">
               <div className="flex items-center gap-2">

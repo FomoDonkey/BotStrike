@@ -16,17 +16,19 @@ interface StrategyInfo {
 }
 
 const FALLBACK_STRATEGIES: StrategyInfo[] = [
-  { type: "MEAN_REVERSION", active: true, allocation: 1.00, name: "MeanReversionStrategy" },
+  { type: "MEAN_REVERSION", active: true, allocation: 0.50, name: "MeanReversionStrategy" },
+  { type: "FIBONACCI_RETRACEMENT", active: true, allocation: 0.50, name: "FibonacciRetracementStrategy" },
   { type: "ORDER_FLOW_MOMENTUM", active: false, allocation: 0, name: "OrderFlowMomentumStrategy" },
   { type: "TREND_FOLLOWING", active: false, allocation: 0, name: "TrendFollowingStrategy" },
   { type: "MARKET_MAKING", active: false, allocation: 0, name: "MarketMakingStrategy" },
 ];
 
 const STRATEGY_DESCS: Record<string, string> = {
-  MEAN_REVERSION: "Multi-timeframe RSI divergence + OBV + OBI confirmation",
-  ORDER_FLOW_MOMENTUM: "OBI + Hawkes + Microprice scalping (15-1800s hold)",
-  TREND_FOLLOWING: "EMA crossover + ADX confirmation (disabled)",
-  MARKET_MAKING: "Avellaneda-Stoikov dynamic spreads (disabled)",
+  MEAN_REVERSION: "5m pullback in 1H trend direction — RSI + BB + trailing stop (ETH/SOL/ADA)",
+  FIBONACCI_RETRACEMENT: "15m impulse-retracement at 50-61.8% Fib zone — R:R 3.6:1 (BTC)",
+  ORDER_FLOW_MOMENTUM: "OBI + Hawkes + Microprice scalping (archived)",
+  TREND_FOLLOWING: "EMA crossover + ADX confirmation (archived)",
+  MARKET_MAKING: "Avellaneda-Stoikov dynamic spreads (archived)",
 };
 
 export function StrategiesPage() {

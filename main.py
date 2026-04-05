@@ -26,6 +26,7 @@ from exchange.strike_client import StrikeClient
 from exchange.binance_client import BinanceClient
 from exchange.websocket_client import StrikeWebSocket
 from strategies.mean_reversion import MeanReversionStrategy
+from strategies.fibonacci_retracement import FibonacciRetracementStrategy
 from strategies.base import BaseStrategy
 from risk.risk_manager import RiskManager
 from portfolio.portfolio_manager import PortfolioManager
@@ -106,9 +107,10 @@ class BotStrike:
             self.trade_repo, source="paper" if self.paper else "live"
         )
 
-        # Estrategias — solo MR activa (TF/MM/OFM archivadas hasta validación estadística)
+        # Active strategies: MR (conservative) + Fibonacci (aggressive growth)
         self.strategies: List[BaseStrategy] = [
             MeanReversionStrategy(settings.trading),
+            FibonacciRetracementStrategy(settings.trading),
         ]
 
         # Microprice calculator por símbolo
@@ -510,7 +512,7 @@ class BotStrike:
             if not strategy.should_activate(regime):
                 continue
             if not self.portfolio_manager.should_strategy_trade(
-                strategy.strategy_type, regime
+                strategy.strategy_type, regime, symbol=symbol
             ):
                 continue
 

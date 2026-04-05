@@ -16,37 +16,54 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 # Mapeo de régimen → pesos ideales para cada estrategia
+# Fibonacci thrives in trending (impulse→retrace pattern).
+# MR thrives in ranging (pullback→reversion pattern).
 REGIME_WEIGHTS: Dict[MarketRegime, Dict[StrategyType, float]] = {
     MarketRegime.RANGING: {
-        StrategyType.MEAN_REVERSION: 0.50,
+        StrategyType.MEAN_REVERSION: 0.65,
+        StrategyType.FIBONACCI_RETRACEMENT: 0.35,
         StrategyType.TREND_FOLLOWING: 0.00,
         StrategyType.MARKET_MAKING: 0.00,
-        StrategyType.ORDER_FLOW_MOMENTUM: 0.50,
+        StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
     },
     MarketRegime.TRENDING_UP: {
-        StrategyType.MEAN_REVERSION: 0.20,
+        StrategyType.MEAN_REVERSION: 0.30,
+        StrategyType.FIBONACCI_RETRACEMENT: 0.70,  # Fib excels after impulses
         StrategyType.TREND_FOLLOWING: 0.00,
         StrategyType.MARKET_MAKING: 0.00,
-        StrategyType.ORDER_FLOW_MOMENTUM: 0.80,
+        StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
     },
     MarketRegime.TRENDING_DOWN: {
-        StrategyType.MEAN_REVERSION: 0.20,
+        StrategyType.MEAN_REVERSION: 0.30,
+        StrategyType.FIBONACCI_RETRACEMENT: 0.70,
         StrategyType.TREND_FOLLOWING: 0.00,
         StrategyType.MARKET_MAKING: 0.00,
-        StrategyType.ORDER_FLOW_MOMENTUM: 0.80,
+        StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
     },
     MarketRegime.BREAKOUT: {
         StrategyType.MEAN_REVERSION: 0.10,
+        StrategyType.FIBONACCI_RETRACEMENT: 0.90,  # Breakout = strong impulse = Fib territory
         StrategyType.TREND_FOLLOWING: 0.00,
         StrategyType.MARKET_MAKING: 0.00,
-        StrategyType.ORDER_FLOW_MOMENTUM: 0.90,
+        StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
     },
     MarketRegime.UNKNOWN: {
-        StrategyType.MEAN_REVERSION: 0.40,
+        StrategyType.MEAN_REVERSION: 0.50,
+        StrategyType.FIBONACCI_RETRACEMENT: 0.50,
         StrategyType.TREND_FOLLOWING: 0.00,
         StrategyType.MARKET_MAKING: 0.00,
-        StrategyType.ORDER_FLOW_MOMENTUM: 0.60,
+        StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
     },
+}
+
+# Per-symbol strategy eligibility — based on backtest PF results.
+# Only allow profitable or near-breakeven combinations.
+# Key: symbol → set of allowed StrategyTypes
+SYMBOL_STRATEGY_MAP: Dict[str, set] = {
+    "BTC-USD": {StrategyType.FIBONACCI_RETRACEMENT},           # PF=1.11 ✅ (MR PF=0.50 ❌)
+    "ETH-USD": {StrategyType.MEAN_REVERSION},                  # MR PF=0.85 ⚠️ (Fib PF=0.58 ❌)
+    "ADA-USD": {StrategyType.MEAN_REVERSION},                  # MR PF=0.86 ⚠️ (Fib PF=0.14 ❌)
+    "SOL-USD": {StrategyType.MEAN_REVERSION},                   # MR only per user preference
 }
 
 
@@ -78,6 +95,7 @@ class PortfolioManager:
         # Pesos actuales (se ajustan dinámicamente)
         self._current_weights: Dict[StrategyType, float] = {
             StrategyType.MEAN_REVERSION: self.config.allocation_mean_reversion,
+            StrategyType.FIBONACCI_RETRACEMENT: self.config.allocation_fibonacci_retracement,
             StrategyType.TREND_FOLLOWING: self.config.allocation_trend_following,
             StrategyType.MARKET_MAKING: self.config.allocation_market_making,
             StrategyType.ORDER_FLOW_MOMENTUM: self.config.allocation_order_flow_momentum,
@@ -214,16 +232,20 @@ class PortfolioManager:
         self,
         strategy: StrategyType,
         regime: MarketRegime,
+        symbol: str = "",
     ) -> bool:
-        """Determina si una estrategia debería operar dado el régimen y su performance."""
-        regime_weight = REGIME_WEIGHTS.get(regime, REGIME_WEIGHTS[MarketRegime.UNKNOWN])
-        base_weight = regime_weight.get(strategy, 0.33)
+        """Determina si una estrategia debería operar dado el régimen, símbolo y performance."""
+        # Per-symbol eligibility check — only allow proven combinations
+        if symbol and symbol in SYMBOL_STRATEGY_MAP:
+            if strategy not in SYMBOL_STRATEGY_MAP[symbol]:
+                return False
 
-        # Si el peso es muy bajo, no operar
+        regime_weight = REGIME_WEIGHTS.get(regime, REGIME_WEIGHTS[MarketRegime.UNKNOWN])
+        base_weight = regime_weight.get(strategy, 0.0)
+
         if base_weight < 0.08:
             return False
 
-        # Si la estrategia está perdiendo mucho, reducir actividad
         perf = self._performance_factor(strategy)
         if perf < 0.6:
             return False

@@ -28,6 +28,7 @@ from core.indicators import Indicators
 from core.regime_detector import RegimeDetector
 from strategies.base import BaseStrategy
 from strategies.mean_reversion import MeanReversionStrategy
+from strategies.fibonacci_retracement import FibonacciRetracementStrategy
 
 # Archived strategies — lazy import only if explicitly requested in backtest
 def _get_strategy_class(name: str):
@@ -316,6 +317,10 @@ class Backtester:
             _mr = MeanReversionStrategy(trading_config)
             _mr.backtest_mode = True
             active_strategies.append(_mr)
+        if "FIBONACCI_RETRACEMENT" in strat_names:
+            _fib = FibonacciRetracementStrategy(trading_config)
+            _fib.backtest_mode = True
+            active_strategies.append(_fib)
         # Archived strategies (lazy-loaded if explicitly requested)
         for archived_name in ["TREND_FOLLOWING", "MARKET_MAKING", "ORDER_FLOW_MOMENTUM"]:
             if archived_name in strat_names:

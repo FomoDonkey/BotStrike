@@ -28,6 +28,7 @@ interface ConfigData {
     max_total_exposure_pct: number;
     risk_per_trade_pct: number;
     allocation_mean_reversion: number;
+    allocation_fibonacci_retracement: number;
     allocation_order_flow_momentum: number;
     allocation_trend_following: number;
     allocation_market_making: number;
@@ -138,11 +139,12 @@ export function SettingsPage() {
               </GlassPanel>
               <GlassPanel className="col-span-2 p-5">
                 <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-4">Strategy Allocation</h3>
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-5 gap-4">
                   {[
                     { name: "Mean Reversion", val: config.trading.allocation_mean_reversion, color: "#6C5CE7" },
-                    { name: "Order Flow Momentum", val: config.trading.allocation_order_flow_momentum, color: "#00CEC9" },
-                    { name: "Trend Following", val: config.trading.allocation_trend_following, color: "#00B894" },
+                    { name: "Fibonacci", val: config.trading.allocation_fibonacci_retracement, color: "#F39C12" },
+                    { name: "Order Flow", val: config.trading.allocation_order_flow_momentum, color: "#00CEC9" },
+                    { name: "Trend Follow", val: config.trading.allocation_trend_following, color: "#00B894" },
                     { name: "Market Making", val: config.trading.allocation_market_making, color: "#FDCB6E" },
                   ].map((s) => (
                     <div key={s.name} className="text-center">

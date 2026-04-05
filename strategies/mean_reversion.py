@@ -47,17 +47,18 @@ RSI_OVERBOUGHT = 65         # Wilder's RSI overbought
 ADX_MIN_TREND = 20          # Minimum 1H ADX for trend confirmation
 SL_ATR_MULT = 1.5           # 1.5x ATR stop loss — best for ETH/ADA (BTC structurally unprofitable with MR)
 TP_ATR_MULT = 4.0           # 4x ATR take profit → gross R:R 2.67:1
-MAX_HOLD_BARS = 60          # 60 5m-bars = 5 hours max hold
 MIN_BARS_1M = 30            # Minimum 1m bars needed
 MIN_BARS_5M = 50            # Minimum resampled bars needed
 # Trailing stop with progressive tightening:
-# Phase 1: activate at 1.5 ATR, trail 0.5 ATR behind peak → min capture ~1.0 ATR
-# Phase 2: after 20 bars (~1.7h), tighten to 0.3 ATR → lock more profit on slow moves
-TRAIL_ACTIVATE_ATR = 1.5    # Start trailing after 1.5x ATR profit (was 1.0 → too early)
+TRAIL_ACTIVATE_ATR = 1.5    # Start trailing after 1.5x ATR profit
 TRAIL_DISTANCE_ATR = 0.5    # Trail 0.5 ATR behind peak → min capture 1.0 ATR
 TRAIL_TIGHT_AFTER_BARS = 20 # After 20 5m-bars (~1.7h), tighten trail
 TRAIL_TIGHT_DISTANCE = 0.3  # Tighter trail for stale positions
 MIN_CONFIRMATIONS = 2       # Require 2+ independent confirmations
+# Stale position: close if price hasn't moved > STALE_ATR_THRESHOLD in STALE_HOURS
+# Replaces max_hold — trades exit by PRICE (SL/TP/trail), not by clock
+STALE_HOURS = 24            # 24h before checking if position is dead
+STALE_ATR_THRESHOLD = 0.3   # Must have moved > 0.3 ATR from entry to justify holding
 
 # Legacy compatibility for scripts that import TF_CONFIGS
 @dataclass
@@ -375,20 +376,13 @@ class MeanReversionStrategy(BaseStrategy):
                 if pnl_atr <= trail_level:
                     exit_reason = f"trailing_stop_{state.best_pnl_atr:.1f}atr_peak"
 
-        # Max hold — but if in profit, let trailing stop handle it
-        if bars_held >= MAX_HOLD_BARS:
-            if position.entry_price > 0:
-                pnl_check = ((price - position.entry_price) / atr if position.side == Side.BUY
-                             else (position.entry_price - price) / atr)
-                # Only force-exit if not profiting enough to justify holding
-                if pnl_check < 0.5:
-                    exit_reason = "max_hold_exceeded"
-                # If profitable but max hold, tighten trail to 0.2 ATR for fast exit
-                elif not exit_reason and state.trail_active:
-                    if pnl_check <= state.best_pnl_atr - 0.2:
-                        exit_reason = "max_hold_trail_tight"
-            else:
-                exit_reason = "max_hold_exceeded"
+        # Stale position check: if price hasn't moved significantly in 24h, free the capital.
+        # Trades exit by PRICE (SL/TP/trailing), not by arbitrary time limits.
+        stale_bars = int(STALE_HOURS * 60 / RESAMPLE_MINUTES)  # 24h in 5m bars = 288
+        if bars_held >= stale_bars and position.entry_price > 0:
+            abs_move = abs(price - position.entry_price) / atr if atr > 0 else 0
+            if abs_move < STALE_ATR_THRESHOLD:
+                exit_reason = "stale_position_24h"
 
         if not exit_reason:
             return None

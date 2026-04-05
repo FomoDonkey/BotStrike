@@ -204,6 +204,7 @@ def _serialize_trading_config(tc: TradingConfig) -> Dict:
         "max_total_exposure_pct": tc.max_total_exposure_pct,
         "risk_per_trade_pct": tc.risk_per_trade_pct,
         "allocation_mean_reversion": tc.allocation_mean_reversion,
+        "allocation_fibonacci_retracement": tc.allocation_fibonacci_retracement,
         "allocation_trend_following": tc.allocation_trend_following,
         "allocation_market_making": tc.allocation_market_making,
         "allocation_order_flow_momentum": tc.allocation_order_flow_momentum,

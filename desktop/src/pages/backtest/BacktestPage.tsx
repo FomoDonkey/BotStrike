@@ -26,7 +26,8 @@ interface BacktestResult {
 // Only show strategies that are actually active/available
 const AVAILABLE_STRATEGIES = [
   { value: "MEAN_REVERSION", label: "Mean Reversion", active: true },
-  { value: "ORDER_FLOW_MOMENTUM", label: "Order Flow Momentum", active: false },
+  { value: "FIBONACCI_RETRACEMENT", label: "Fibonacci Retracement", active: true },
+  { value: "ORDER_FLOW_MOMENTUM", label: "Order Flow Momentum (archived)", active: false },
   { value: "TREND_FOLLOWING", label: "Trend Following (archived)", active: false },
   { value: "MARKET_MAKING", label: "Market Making (archived)", active: false },
 ];

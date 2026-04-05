@@ -84,8 +84,9 @@ class TradingConfig:
     max_total_exposure_pct: float = 0.6  # 60% max exposure (was 0.8)
     max_open_positions: int = 4          # Max concurrent positions (one per symbol, $300 account)
     risk_per_trade_pct: float = 0.015   # 1.5% = $4.50 risk budget (was 1%)
-    # Asignación por estrategia — solo MR activa (TF/MM/OFM archivadas)
-    allocation_mean_reversion: float = 1.00
+    # Asignación por estrategia — MR (conservative) + Fib (growth)
+    allocation_mean_reversion: float = 0.50
+    allocation_fibonacci_retracement: float = 0.50  # aggressive account growth
     allocation_trend_following: float = 0.00   # archived
     allocation_market_making: float = 0.00     # archived
     allocation_order_flow_momentum: float = 0.00  # archived
