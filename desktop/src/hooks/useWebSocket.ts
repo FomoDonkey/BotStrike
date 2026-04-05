@@ -7,9 +7,19 @@ import { useRiskStore } from "@/stores/riskStore";
 import { useSystemStore } from "@/stores/systemStore";
 import { useAlertStore } from "@/stores/alertStore";
 
+/**
+ * Start WebSocket connections to the bridge.
+ * Called from ConnectionOverlay once the user clicks "Connect",
+ * or immediately if previously dismissed.
+ */
+export function startWebSockets() {
+  connectAll();
+}
+
 export function useWebSocketBridge() {
   useEffect(() => {
-    connectAll();
+    // DON'T auto-connect here — ConnectionOverlay calls startWebSockets()
+    // We only wire up the channel handlers.
 
     // Market channel
     const unsubMarket = getChannel("market").subscribe((msg) => {
@@ -33,7 +43,6 @@ export function useWebSocketBridge() {
           useTradingStore.getState().onPositions(msg.symbol, msg.data ?? []);
         } else if (msg.type === "trade") {
           useTradingStore.getState().onTrade(msg.data);
-          // Alert on trade fill
           const t = msg.data;
           if (t) {
             const isExit = t.trade_type === "EXIT" || (t.pnl ?? 0) !== 0;
@@ -57,12 +66,11 @@ export function useWebSocketBridge() {
       }
     });
 
-    // Micro channel — trigger alerts
+    // Micro channel
     const unsubMicro = getChannel("micro").subscribe((msg) => {
       try {
         if (msg.type === "micro_update") {
           useMicroStore.getState().onUpdate(msg.data);
-          // Check alert rules against microstructure data
           const d = msg.data;
           if (d) {
             useAlertStore.getState().checkAndTrigger({
@@ -76,14 +84,12 @@ export function useWebSocketBridge() {
       }
     });
 
-    // Risk channel — trigger alerts
+    // Risk channel
     const unsubRisk = getChannel("risk").subscribe((msg) => {
       try {
         if (msg.type === "risk_update") {
-          // Strip protocol fields before passing to store
           const { type: _, timestamp: __, ...riskData } = msg;
           useRiskStore.getState().onUpdate(riskData);
-          // Check drawdown alerts
           useAlertStore.getState().checkAndTrigger({
             drawdown_pct: msg.drawdown_pct,
           });
@@ -103,7 +109,6 @@ export function useWebSocketBridge() {
           useSystemStore.getState().onLog(msg);
         } else if (msg.type === "engine_error") {
           useSystemStore.getState().onEngineError(msg);
-          // Also fire a critical alert so the user sees it regardless of current page
           useAlertStore.getState().addAlert({
             level: "critical",
             title: "Engine Error",
