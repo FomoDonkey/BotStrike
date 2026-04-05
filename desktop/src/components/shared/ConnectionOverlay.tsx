@@ -11,14 +11,14 @@ export function ConnectionOverlay() {
   const bridgeConnected = useSystemStore((s) => s.bridgeConnected);
   const [phase, setPhase] = useState<Phase>("setup");
 
-  // Once bridge connects, show "connected" briefly then hide
+  // Once bridge connects, show "connected" briefly then auto-dismiss
   useEffect(() => {
-    if (bridgeConnected && phase === "connecting") {
+    if (bridgeConnected && (phase === "connecting" || phase === "connected")) {
       setPhase("connected");
-      const t = setTimeout(() => setPhase("dismissed"), 800);
+      const t = setTimeout(() => setPhase("dismissed"), 1000);
       return () => clearTimeout(t);
     }
-  }, [bridgeConnected, phase]);
+  }, [bridgeConnected]); // eslint-disable-line -- intentionally exclude phase to avoid cancel loop
 
   if (phase === "dismissed") return null;
 
