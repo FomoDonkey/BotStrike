@@ -52,3 +52,10 @@ desktop.ini
 
 # Tauri signing keys (NEVER commit)
 ~/.tauri/
+
+# Futures klines for evidence backtests (downloaded, 4x216k rows)
+data/binance_futures/
+
+# Runtime artifacts (never commit)
+desktop/data/
+events.jsonl

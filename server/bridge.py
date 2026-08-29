@@ -36,8 +36,13 @@ logger = structlog.get_logger(__name__)
 from config.settings import Settings
 from core.types import MarketRegime, StrategyType, Side
 
-# Auth token for mutating endpoints — generated at startup, required for bot/start and bot/stop
-_AUTH_TOKEN = secrets.token_hex(16)
+# Auth token for mutating endpoints (live start / live stop).
+# Server deployments set BOTSTRIKE_AUTH_TOKEN in .env so the desktop can be configured with it;
+# otherwise a random per-process token is generated (desktop-local mode reads it from /api/bot/status).
+_AUTH_TOKEN = os.getenv("BOTSTRIKE_AUTH_TOKEN", "").strip() or secrets.token_hex(16)
+# Only expose the token over HTTP when bound to loopback (same-machine desktop). On 0.0.0.0 it would
+# hand live-trading control to anyone on the LAN/tailnet. Set in main() from --host.
+_EXPOSE_TOKEN = True
 VALID_MODES = {"paper", "dry_run", "live"}
 from server.serializers import (
     serialize_orderbook, serialize_signal, serialize_position,
@@ -713,6 +718,21 @@ async def system_broadcast_loop():
 
 
 # ── FastAPI App ──────────────────────────────────────────────────
+async def _autostart_engine(mode: str, delay_sec: float = 2.0):
+    """Start the engine shortly after the port is open (systemd autostart)."""
+    await asyncio.sleep(delay_sec)
+    if state.running:
+        return
+    try:
+        await start_engine(mode)
+        logger.info("engine_autostarted", mode=mode, exchange=state.exchange)
+    except Exception as e:
+        logger.error("engine_autostart_failed", mode=mode, error=str(e))
+        await state.channels.broadcast("system", {
+            "type": "engine_error", "error": f"autostart failed: {e}", "timestamp": time.time(),
+        })
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle.
@@ -728,7 +748,20 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(system_broadcast_loop()),
     ]
 
-    logger.info("bridge_ready", port=9420)
+    logger.info("bridge_ready", port=int(os.getenv("BOTSTRIKE_PORT", "9420")))
+
+    # Headless/server deployments (systemd): BOTSTRIKE_AUTOSTART=paper|dry_run starts the
+    # engine without a desktop click. Unset/empty (desktop-local) keeps the old behaviour.
+    # "live" is REFUSED here on purpose: live must be started explicitly with the auth token.
+    autostart = os.getenv("BOTSTRIKE_AUTOSTART", "").strip().lower()
+    if autostart in ("paper", "dry_run"):
+        state.exchange = os.getenv("BOTSTRIKE_AUTOSTART_EXCHANGE", "binance").strip().lower() or "binance"
+        loops.append(asyncio.create_task(_autostart_engine(autostart)))
+    elif autostart == "live":
+        logger.error("autostart_live_refused",
+                     hint="start live from the desktop with the auth token; never via BOTSTRIKE_AUTOSTART")
+    elif autostart:
+        logger.error("autostart_invalid_mode", value=autostart, valid=["paper", "dry_run"])
     yield
 
     await stop_engine()
@@ -840,7 +873,8 @@ async def bot_status():
         "uptime_sec": time.time() - state.start_time if state.running else 0,
         "equity": state.equity,
         "pnl": state.pnl,
-        "auth_token": _AUTH_TOKEN,
+        "auth_token": _AUTH_TOKEN if _EXPOSE_TOKEN else None,
+        "auth_token_exposed": _EXPOSE_TOKEN,
         "exchange": state.exchange,
     }
 
@@ -1063,6 +1097,12 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Dry run mode")
     parser.add_argument("--dev", action="store_true", help="Dev mode with reload")
     args = parser.parse_args()
+
+    global _EXPOSE_TOKEN
+    _EXPOSE_TOKEN = args.host in ("127.0.0.1", "localhost", "::1")
+    if not _EXPOSE_TOKEN and not os.getenv("BOTSTRIKE_AUTH_TOKEN", "").strip():
+        logger.warning("auth_token_random_on_public_bind",
+                       hint="set BOTSTRIKE_AUTH_TOKEN in .env so live start/stop can be authorised remotely")
 
     if args.live:
         state.mode = "live"

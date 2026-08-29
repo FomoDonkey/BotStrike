@@ -1,5 +1,22 @@
 # BotStrike — Tasks
 
+## Sesión 2026-08-29 — Auditoría total + investigación SOTA + despliegue Proxmox
+Estado (actualizado en cada paso; si se corta la sesión, retomar desde aquí):
+- [x] Tests locales: 36/36 pasan con `py -3.12 -m pytest tests/` (el `python` por defecto es un venv ajeno sin pytest)
+- [~] Investigación SOTA 2026 (agente web) → tasks/research_sota_2026.md
+- [~] Auditoría en 5 dominios (agentes en paralelo, cada uno escribe su archivo): tasks/audit/01_core_strategy_risk.md, 02_exchange_execution.md, 03_bridge_deploy_security.md, 04_backtest_quant_evidence.md (incluye descarga klines FUTURES + backtests de evidencia), 05_desktop.md
+- [ ] Consolidar → tasks/audit_2026-08-29.md (resumen ejecutivo + plan de fixes)
+- [ ] Aplicar fixes P0/P1 + tests + commit
+- [x] CT 104 `botstrike` en Proxmox (Debian 13, 192.168.1.204, 4c/4GB/20G, onboot, tun) — creado 2026-08-28
+- [x] CT: uv + Python 3.12.14, venv con deps OK, repo clonado en /opt/botstrike/app (deploy key read-only), .env copiado (600)
+- [ ] BLOQUEO DE RED (2026-08-29): ProtonVPN activo con kill switch en win-01 bloquea LAN (ni router 192.168.1.1 responde) y Tailscale local está "logged out". Para desplegar hace falta: (a) ProtonVPN → Settings → "Allow LAN connections" o desconectar; (b) `tailscale login` en win-01. Sin esto no hay acceso a proxmox-mizu (100.68.139.93) ni al CT.
+- [ ] CT: Tailscale login (requiere URL de auth del usuario), ufw, chrony, logs/
+- [x] Fix P0: `BOTSTRIKE_AUTOSTART` no lo leía nadie → añadido en lifespan de server/bridge.py (paper|dry_run; live rechazado). VERIFICADO en local: engine_running=true a t+20s, WS 16 streams
+- [x] Scripts: deploy/verify.sh (dentro del CT), deploy/host_deploy.sh (en el host), deploy/remote_deploy.sh (desde el PC: 1 comando) — sintaxis OK, LF
+- [ ] Desplegar bot (bridge + engine paper autostart) como servicio systemd + verificación real (health, WS, datos) — `bash deploy/remote_deploy.sh` cuando haya red
+- [ ] Desktop: URL del bridge configurable (Settings → Connection) + release
+- [ ] Actualizar lessons.md + memoria
+
 ## En Progreso
 - [ ] Hyperliquid exchange integration — API research complete, implementation pending
 
