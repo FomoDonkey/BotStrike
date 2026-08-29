@@ -1,0 +1,36 @@
+# BotStrike bridge + trading engine (paper mode autostart) — systemd unit
+# Install: sudo cp deploy/botstrike-bridge.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now botstrike-bridge
+[Unit]
+Description=BotStrike trading bridge (FastAPI :9420) + engine autostart
+After=network-online.target chrony.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=botstrike
+Group=botstrike
+WorkingDirectory=/opt/botstrike/app
+EnvironmentFile=/opt/botstrike/app/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONIOENCODING=utf-8
+Environment=BOTSTRIKE_HOST=0.0.0.0
+Environment=BOTSTRIKE_PORT=9420
+# paper | dry_run | (empty = wait for the desktop to click Start). NEVER "live" here.
+Environment=BOTSTRIKE_AUTOSTART=paper
+Environment=BOTSTRIKE_AUTOSTART_EXCHANGE=binance
+ExecStart=/opt/botstrike/app/.venv/bin/python -m server.bridge --host ${BOTSTRIKE_HOST} --port ${BOTSTRIKE_PORT}
+Restart=always
+RestartSec=10
+# Give the engine time to flush metrics / end DB session on stop
+TimeoutStopSec=30
+KillSignal=SIGTERM
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/opt/botstrike/app/data /opt/botstrike/app/logs
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
