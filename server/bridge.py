@@ -1339,8 +1339,15 @@ async def get_strategies():
     }
     for s in state.engine.strategies:
         alloc_active = alloc_map.get(s.strategy_type, 0) > 0
-        # Check kill switch from research engine
-        research_active, kill_reason = state.engine.research.get_strategy_status(s.strategy_type)
+        # Kill switch from the research engine — ARCHIVED module (archive/analytics/
+        # research_engine.py): current engines have no .research and every strategy
+        # is research-active. The getattr keeps the endpoint working either way
+        # (referencing it directly 500'd this endpoint — found in CT journal 2026-08-31).
+        research = getattr(state.engine, "research", None)
+        if research is not None:
+            research_active, kill_reason = research.get_strategy_status(s.strategy_type)
+        else:
+            research_active, kill_reason = True, ""
         strategies.append({
             "type": s.strategy_type.value,
             "name": s.__class__.__name__,
