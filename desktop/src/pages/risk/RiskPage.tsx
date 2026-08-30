@@ -92,7 +92,9 @@ export function RiskPage() {
 
       {/* Risk Metrics Grid */}
       <div className="grid grid-cols-4 gap-3">
-        <MetricCard label="Equity" value={risk.equity} format={formatUSD} icon={<Gauge className="w-3 h-3" />} />
+        {/* metrics.equity = merged all-time view (same as TopBar/Dashboard);
+            risk.equity is the risk engine's SESSION equity and resets on restart */}
+        <MetricCard label="Equity" value={metrics.equity} format={formatUSD} icon={<Gauge className="w-3 h-3" />} />
         <MetricCard label="Max DD (Hist)" value={metrics.max_drawdown} format={formatPct} icon={<TrendingDown className="w-3 h-3" />} />
         <MetricCard label="Regime" value={0} format={() => risk.regime} icon={<Zap className="w-3 h-3" />} />
         <MetricCard label="Total Trades" value={metrics.total_trades} format={(v) => v.toFixed(0)} icon={<AlertTriangle className="w-3 h-3" />} />
