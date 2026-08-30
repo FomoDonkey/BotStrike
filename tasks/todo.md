@@ -8,9 +8,12 @@ Objetivo Edgar: ver/controlar el bot del CT desde el navegador (paper trades, ch
 - [x] /api/trades: ISO UTC-aware + `entry_ts`/`exit_ts` epoch + `trade_type` (fix horas desplazadas 2h en Madrid)
 - [x] Chart Trading: marcadores de trades históricos desde la DB (persisten al recargar) + fix lado de posición en exits
 - [x] Verificado local: 92/92 tests, bridge 2.13.0 sirve UI en 127.0.0.1:9421, Dashboard/Trading renderizan sin errores de consola
-- [ ] Deploy CT 104 (`bash deploy/remote_deploy.sh`) + verificación real en navegador vía LAN (192.168.1.204:9420)
-  - BLOQUEADO 2026-08-31: Proton VPN kill-switch bloquea LAN + Tailscale (ni router 192.168.1.1 ni 100.68.139.93 responden; `connectex forbidden`). Fix: Proton → Settings → "Allow LAN connections" (o desconectar VPN) y relanzar el deploy.
-- [ ] Token: pegar BOTSTRIKE_AUTH_TOKEN del .env del CT en Settings → Connection para start/stop/backtest desde la web
+- [x] Deploy CT 104 (`bash deploy/remote_deploy.sh` → verify.sh PASS, engine paper, WS 16 streams, 0 errores)
+  - Desbloqueado: Proton VPN kill-switch bloqueaba LAN+Tailscale (`connectex forbidden`); Edgar cerró Proton. Si la reactiva: Settings → "Allow LAN connections" o la UI/deploy dejan de funcionar.
+- [x] VERIFICADO en navegador (Chrome, capturas): http://192.168.1.204:9420 → Dashboard con precios/VPIN/Hawkes en vivo, Live Trading con velas 1m + marcadores de trades históricos desde DB (S $78768 → +$0.64), Performance con 36 trades en hora Madrid correcta. 0 errores de consola.
+- [ ] Edgar: pegar BOTSTRIKE_AUTH_TOKEN (del .env del CT) en Settings → Connection para start/stop/backtest desde la web (ver todo funciona sin token)
+- [ ] Mejora futura: /api/performance con métricas agregadas desde la trade DB (hoy son de la sesión del engine → se resetean a 0 con cada restart del servicio; el Trade History sí es persistente)
+- [ ] Opcional: Tailscale login en el CT para acceder a la UI fuera de casa (hoy solo LAN)
 
 ## Sesión 2026-08-29/30 — Auditoría total + investigación SOTA + despliegue Proxmox — CERRADA
 Entregables: tasks/audit_2026-08-29.md (consolidado), tasks/audit/01..05 (119 hallazgos), tasks/research_sota_2026.md, tasks/audit/fixes_round1*.md.
