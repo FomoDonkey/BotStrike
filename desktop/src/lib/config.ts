@@ -6,6 +6,20 @@ import { useSyncExternalStore } from "react";
 export const DEFAULT_BRIDGE_PORT = 9420;
 export const DEFAULT_BRIDGE_URL = `http://127.0.0.1:${DEFAULT_BRIDGE_PORT}`;
 
+/**
+ * True when this build is being served BY the bridge itself (server/webui mounted by
+ * bridge.py on the CT). In that case the page origin IS the bridge → zero-config connect.
+ * Tauri (tauri://localhost / http://tauri.localhost) and `vite dev` keep the loopback default.
+ */
+export const SERVED_FROM_BRIDGE: boolean =
+  import.meta.env.PROD &&
+  typeof window !== "undefined" &&
+  (window.location.protocol === "http:" || window.location.protocol === "https:") &&
+  window.location.hostname !== "tauri.localhost" &&
+  window.location.port !== "1420"; // vite preview safety
+
+const INITIAL_BRIDGE_URL = SERVED_FROM_BRIDGE ? window.location.origin : DEFAULT_BRIDGE_URL;
+
 const URL_KEY = "botstrike.bridgeUrl";
 const TOKEN_KEY = "botstrike.authToken";
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1", "0.0.0.0"]);
@@ -69,7 +83,7 @@ function safeSet(key: string, v: string) {
   }
 }
 
-let currentUrl: string = normalizeBridgeUrl(safeGet(URL_KEY) ?? "") ?? DEFAULT_BRIDGE_URL;
+let currentUrl: string = normalizeBridgeUrl(safeGet(URL_KEY) ?? "") ?? INITIAL_BRIDGE_URL;
 let currentToken: string = (safeGet(TOKEN_KEY) ?? "").trim();
 let snapshot: BridgeConfig = buildSnapshot();
 

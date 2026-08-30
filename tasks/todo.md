@@ -1,5 +1,16 @@
 # BotStrike — Tasks
 
+## Sesión 2026-08-31 — Web UI servida desde el CT 104 (v2.13.0) — EN CURSO
+Objetivo Edgar: ver/controlar el bot del CT desde el navegador (paper trades, charts, todo) como en la app desktop.
+- [x] Bridge sirve la web UI (server/webui/) como SPA en `/` — mismo origen, sin CORS ni config
+- [x] Frontend: autoconexión al origen de la página cuando la sirve el bridge (config.ts `SERVED_FROM_BRIDGE`)
+- [x] `npm run build:web` → server/webui (committeado, 1.1 MB)
+- [x] /api/trades: ISO UTC-aware + `entry_ts`/`exit_ts` epoch + `trade_type` (fix horas desplazadas 2h en Madrid)
+- [x] Chart Trading: marcadores de trades históricos desde la DB (persisten al recargar) + fix lado de posición en exits
+- [x] Verificado local: 92/92 tests, bridge 2.13.0 sirve UI en 127.0.0.1:9421, Dashboard/Trading renderizan sin errores de consola
+- [ ] Deploy CT 104 (`bash deploy/remote_deploy.sh`) + verificación real en navegador vía LAN (192.168.1.204:9420)
+- [ ] Token: pegar BOTSTRIKE_AUTH_TOKEN del .env del CT en Settings → Connection para start/stop/backtest desde la web
+
 ## Sesión 2026-08-29/30 — Auditoría total + investigación SOTA + despliegue Proxmox — CERRADA
 Entregables: tasks/audit_2026-08-29.md (consolidado), tasks/audit/01..05 (119 hallazgos), tasks/research_sota_2026.md, tasks/audit/fixes_round1*.md.
 - [x] Tests 92/92 local (`py -3.12 -m pytest tests/`) y dentro del CT 104 (pandas 3.0.5; `requirements-dev.txt`)
@@ -12,6 +23,11 @@ Entregables: tasks/audit_2026-08-29.md (consolidado), tasks/audit/01..05 (119 ha
 - [ ] Desktop: compilar release 2.12.0 (`npm run tauri:build`) y probar Settings -> Connection contra 192.168.1.204:9420 en runtime
 - [ ] CT: Tailscale login (opcional; hoy solo LAN), chrony no disponible en LXC (usa reloj del host), backup de trade_database.db
 - [ ] Ronda 2 (ver audit_2026-08-29.md §5): backtester fiel al live (P0), venue legal/Hyperliquid (P0), congelar MR/FIB hasta evidencia (P0), F04-F08, persistencia paper, OCO, re-protección al arrancar, funding real, walk-forward+DSR, desarchivar trend semanal
+
+## Sesión 2026-08-30 — Auditoría RONDA 2 (ultracode/workflow) — EN CURSO
+- [~] Workflow `botstrike-audit-round2` run `wf_d284053e-b20` (12 finders → verify 3 lentes → research ×3 + crítico → síntesis). Salidas: tasks/audit/r2/<area>.md, tasks/research_r2_*.md, tasks/audit_round2_2026-08-30.md.
+  Reanudar si se corta: Workflow({scriptPath: "C:\Users\edgar\.claude\projects\C--Users-edgar-Desktop-proyectos-BotStrike\74c3f0b9-a0ae-4a7d-af7d-4bb536ff2ee5\workflows\scripts\botstrike-audit-round2-wf_d284053e-b20.js", resumeFromRunId: "wf_d284053e-b20"})
+- [ ] Tras la síntesis: aplicar P0 confirmados (workflow de fixes con verificación), tests, commit, redeploy CT 104, actualizar lessons/memoria
 
 ## En Progreso
 - [ ] Hyperliquid exchange integration — API research complete, implementation pending

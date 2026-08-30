@@ -1,11 +1,12 @@
 {
   "name": "desktop",
   "private": true,
-  "version": "2.12.0",
+  "version": "2.13.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:web": "tsc -b && vite build --outDir ../server/webui --emptyOutDir",
     "lint": "eslint .",
     "preview": "vite preview",
     "tauri": "tauri",

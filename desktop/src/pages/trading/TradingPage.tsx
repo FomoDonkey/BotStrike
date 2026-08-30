@@ -1,14 +1,57 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/shallow";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { CandlestickChart, type Timeframe } from "@/components/charts/CandlestickChart";
 import { useMarketStore } from "@/stores/marketStore";
-import { useTradingStore } from "@/stores/tradingStore";
+import { useTradingStore, type TradeData } from "@/stores/tradingStore";
 import { useMicroStore } from "@/stores/microStore";
 import { formatUSD, formatPrice, formatBps, cn } from "@/lib/utils";
 import { STRATEGY_COLORS, STRATEGY_LABELS } from "@/lib/constants";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { SymbolSelector } from "@/components/shared/SymbolSelector";
+import { api } from "@/lib/api";
+
+/**
+ * Historical fills from the trade DB (/api/trades) mapped to chart-marker shape.
+ * The WS feed only carries fills seen since the page loaded — without this, every
+ * browser refresh wiped the markers off the chart.
+ */
+function useHistoricalTrades(): TradeData[] {
+  const [dbTrades, setDbTrades] = useState<TradeData[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await api.trades(300);
+        if (cancelled) return;
+        const mapped: TradeData[] = [];
+        for (const t of res.trades || []) {
+          const entryTs = t.entry_ts || (t.entry_time ? Date.parse(t.entry_time) / 1000 : 0);
+          const exitTs = t.exit_ts || (t.exit_time ? Date.parse(t.exit_time) / 1000 : 0);
+          if (entryTs > 0 && t.entry_price > 0) {
+            mapped.push({
+              symbol: t.symbol, side: t.side, trade_type: "ENTRY", price: t.entry_price,
+              quantity: t.quantity, fee: 0, strategy: t.strategy, timestamp: entryTs, pnl: 0,
+            });
+          }
+          if (exitTs > 0 && t.exit_price > 0) {
+            mapped.push({
+              symbol: t.symbol, side: t.side, trade_type: "EXIT", price: t.exit_price,
+              quantity: t.quantity, fee: t.fee || 0, strategy: t.strategy, timestamp: exitTs, pnl: t.pnl || 0,
+            });
+          }
+        }
+        setDbTrades(mapped);
+      } catch {
+        /* bridge unreachable — fall back to WS-only markers */
+      }
+    }
+    load();
+    const iv = setInterval(load, 30000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, []);
+  return dbTrades;
+}
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h"];
 
@@ -36,7 +79,20 @@ export function TradingPage() {
   const recentSignals = useMemo(() => [...signals].reverse().slice(0, 10), [signals]);
   const micro = useMicroStore((s) => s.snapshots[symbol]);
   const allTrades = useTradingStore(useShallow((s) => s.recentTrades));
-  const symbolTrades = useMemo(() => allTrades.filter(t => t.symbol === symbol), [allTrades, symbol]);
+  const dbTrades = useHistoricalTrades();
+  // DB history + live WS fills, deduped (a live fill also lands in the DB within seconds)
+  const symbolTrades = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: TradeData[] = [];
+    for (const t of [...dbTrades, ...allTrades]) {
+      if (t.symbol !== symbol || !t.timestamp || !t.price) continue;
+      const key = `${t.trade_type}_${Math.round(t.timestamp)}_${t.price.toFixed(4)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(t);
+    }
+    return merged;
+  }, [dbTrades, allTrades, symbol]);
 
   const priceUp = price > prevPrice;
 

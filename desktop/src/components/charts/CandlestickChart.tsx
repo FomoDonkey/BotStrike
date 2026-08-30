@@ -235,7 +235,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
       return;
     }
 
-    const hash = `${trades.length}_${trades[trades.length - 1]?.timestamp}_${timeframe}`;
+    const hash = `${trades.length}_${trades[0]?.timestamp}_${trades[trades.length - 1]?.timestamp}_${timeframe}`;
     if (hash === lastMarkersHash.current) return;
     lastMarkersHash.current = hash;
 
@@ -259,7 +259,8 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
         } else {
           const isWin = t.pnl > 0;
           const pnlStr = t.pnl >= 0 ? `+${t.pnl.toFixed(2)}` : t.pnl.toFixed(2);
-          const wasLong = t.side === "SELL";
+          // serialize_trade sends the POSITION side on exits (BUY = closed long)
+          const wasLong = t.side === "BUY";
           markers.push({
             time,
             position: wasLong ? "aboveBar" : "belowBar",

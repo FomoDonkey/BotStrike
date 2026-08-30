@@ -111,6 +111,7 @@ export interface TradeRecord {
   id: number;
   symbol: string;
   side: string;
+  trade_type?: string;
   strategy: string;
   entry_price: number;
   exit_price: number;
@@ -120,6 +121,9 @@ export interface TradeRecord {
   duration_sec: number;
   entry_time: string;
   exit_time: string;
+  /** Epoch seconds (UTC) — timezone-proof chart markers (bridge ≥ 2.13). */
+  entry_ts?: number;
+  exit_ts?: number;
   regime: string;
 }
 

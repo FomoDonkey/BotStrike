@@ -30,6 +30,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 import secrets
 import structlog
 
@@ -39,7 +41,7 @@ from config.settings import Settings
 from core.types import MarketRegime, StrategyType, Side
 
 # Single source of truth for the bridge version (reported by /api/health and the OpenAPI schema).
-BRIDGE_VERSION = "2.12.1"
+BRIDGE_VERSION = "2.13.0"
 
 # Auth token for mutating endpoints (live start / live stop).
 # Server deployments set BOTSTRIKE_AUTH_TOKEN in .env so the desktop can be configured with it;
@@ -1246,19 +1248,29 @@ async def get_trades(limit: int = 100):
             source="paper", limit=limit,
         )
         trades = []
+        import datetime
+        _utc = datetime.timezone.utc
+
+        def _iso(ts: float) -> str:
+            # TZ-aware ISO (…+00:00) so browsers in any timezone render the correct local time
+            return datetime.datetime.fromtimestamp(ts, _utc).isoformat()
+
         for r in records:
-            # Format timestamps for display
-            import datetime
-            entry_time = datetime.datetime.fromtimestamp(r.timestamp).isoformat() if r.timestamp else None
+            entry_ts = float(r.timestamp) if r.timestamp else 0.0
+            exit_ts = 0.0
+            entry_time = _iso(entry_ts) if entry_ts else None
             exit_time = None
             if r.trade_type == "EXIT" and r.duration_sec and r.duration_sec > 0:
-                exit_time = datetime.datetime.fromtimestamp(r.timestamp).isoformat()
-                entry_time = datetime.datetime.fromtimestamp(r.timestamp - r.duration_sec).isoformat()
+                exit_ts = entry_ts
+                entry_ts = exit_ts - r.duration_sec
+                exit_time = _iso(exit_ts)
+                entry_time = _iso(entry_ts)
 
             trades.append({
                 "id": r.id if hasattr(r, 'id') else 0,
                 "symbol": r.symbol,
                 "side": r.side,
+                "trade_type": r.trade_type or "",
                 "strategy": r.strategy,
                 "entry_price": r.entry_price or r.price,
                 "exit_price": r.exit_price or (r.price if r.trade_type == "EXIT" else 0),
@@ -1268,6 +1280,8 @@ async def get_trades(limit: int = 100):
                 "duration_sec": r.duration_sec or 0,
                 "entry_time": entry_time,
                 "exit_time": exit_time,
+                "entry_ts": entry_ts,   # epoch seconds (UTC) — chart markers
+                "exit_ts": exit_ts,     # 0 when still open / ENTRY record
                 "regime": r.regime or "",
             })
         # Return most recent first
@@ -1416,6 +1430,16 @@ def _run_backtest_sync(body: dict) -> dict:
     except Exception as e:
         logger.exception("backtest_api_error", error=str(e), error_type=type(e).__name__)
         return {"error": str(e)}
+
+
+# ── Web UI (built desktop frontend, served as an SPA) ────────────
+# Built with `npm run build:web` (desktop/ → server/webui/). Registered AFTER every
+# API/WS route so /api/* and /ws/* always win; the app uses a HashRouter, so plain
+# StaticFiles(html=True) is enough (no history-fallback needed). When the directory
+# is absent (dev checkout without a web build) the bridge behaves exactly as before.
+_WEBUI_DIR = Path(__file__).resolve().parent / "webui"
+if _WEBUI_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(_WEBUI_DIR), html=True), name="webui")
 
 
 # ── Main ─────────────────────────────────────────────────────────
