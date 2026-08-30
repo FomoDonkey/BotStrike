@@ -20,38 +20,42 @@ logger = structlog.get_logger(__name__)
 # Mapeo de régimen → pesos ideales para cada estrategia
 # Fibonacci thrives in trending (impulse→retrace pattern).
 # MR thrives in ranging (pullback→reversion pattern).
+# FIBONACCI_RETRACEMENT frozen at 0.00 everywhere (2026-08-31): no published
+# evidence for the family (research_sota_2026 §2.7) and 20% WR / -$2.11 over
+# 5 paper closes. MR weights deliberately NOT renormalized upward — MR is also
+# under evidence freeze (§2.1: negative edge after costs at 1-5 min).
 REGIME_WEIGHTS: Dict[MarketRegime, Dict[StrategyType, float]] = {
     MarketRegime.RANGING: {
         StrategyType.MEAN_REVERSION: 0.65,
-        StrategyType.FIBONACCI_RETRACEMENT: 0.35,
+        StrategyType.FIBONACCI_RETRACEMENT: 0.00,
         StrategyType.TREND_FOLLOWING: 0.00,
         StrategyType.MARKET_MAKING: 0.00,
         StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
     },
     MarketRegime.TRENDING_UP: {
         StrategyType.MEAN_REVERSION: 0.30,
-        StrategyType.FIBONACCI_RETRACEMENT: 0.70,  # Fib excels after impulses
+        StrategyType.FIBONACCI_RETRACEMENT: 0.00,
         StrategyType.TREND_FOLLOWING: 0.00,
         StrategyType.MARKET_MAKING: 0.00,
         StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
     },
     MarketRegime.TRENDING_DOWN: {
         StrategyType.MEAN_REVERSION: 0.30,
-        StrategyType.FIBONACCI_RETRACEMENT: 0.70,
+        StrategyType.FIBONACCI_RETRACEMENT: 0.00,
         StrategyType.TREND_FOLLOWING: 0.00,
         StrategyType.MARKET_MAKING: 0.00,
         StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
     },
     MarketRegime.BREAKOUT: {
         StrategyType.MEAN_REVERSION: 0.10,
-        StrategyType.FIBONACCI_RETRACEMENT: 0.90,  # Breakout = strong impulse = Fib territory
+        StrategyType.FIBONACCI_RETRACEMENT: 0.00,
         StrategyType.TREND_FOLLOWING: 0.00,
         StrategyType.MARKET_MAKING: 0.00,
         StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
     },
     MarketRegime.UNKNOWN: {
         StrategyType.MEAN_REVERSION: 0.50,
-        StrategyType.FIBONACCI_RETRACEMENT: 0.50,
+        StrategyType.FIBONACCI_RETRACEMENT: 0.00,
         StrategyType.TREND_FOLLOWING: 0.00,
         StrategyType.MARKET_MAKING: 0.00,
         StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
@@ -62,7 +66,7 @@ REGIME_WEIGHTS: Dict[MarketRegime, Dict[StrategyType, float]] = {
 # Only allow profitable or near-breakeven combinations.
 # Key: symbol → set of allowed StrategyTypes
 SYMBOL_STRATEGY_MAP: Dict[str, set] = {
-    "BTC-USD": {StrategyType.FIBONACCI_RETRACEMENT},           # PF=1.11 ✅ (MR PF=0.50 ❌)
+    "BTC-USD": set(),                                          # FIB frozen 2026-08-31 (was PF=1.11 on 14d backtest; 20% WR live) — BTC data-only
     "ETH-USD": {StrategyType.MEAN_REVERSION},                  # MR PF=0.85 ⚠️ (Fib PF=0.58 ❌)
     "ADA-USD": {StrategyType.MEAN_REVERSION},                  # MR PF=0.86 ⚠️ (Fib PF=0.14 ❌)
     "SOL-USD": {StrategyType.MEAN_REVERSION},                   # MR only per user preference

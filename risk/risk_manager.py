@@ -348,8 +348,12 @@ class RiskManager:
         kelly_pct = self.get_kelly_risk_pct(signal.strategy)
         max_risk = self._current_equity * kelly_pct
         risk_per_unit = abs(signal.entry_price - signal.stop_loss)
-        if risk_per_unit < 0.001:
-            # entry_price ≈ stop_loss → undefined risk per unit → reject
+        # Guard entry ≈ stop: RELATIVE threshold (audit R2 risk_sizing-01). The old
+        # absolute `< 0.001` was in PRICE units — on ADA at $0.20 it demanded a
+        # 50 bps stop distance, which MR's 2×ATR SL (~39 bps) never cleared, so
+        # the entire symbol was silently inoperable (0 ADA trades in the paper DB).
+        # 1e-5 = 0.1 bps of entry price — only rejects truly degenerate signals.
+        if signal.entry_price <= 0 or risk_per_unit / signal.entry_price < 1e-5:
             logger.warning("risk_bypass_rejected",
                            symbol=signal.symbol,
                            strategy=signal.strategy.value,
@@ -357,9 +361,8 @@ class RiskManager:
                            stop_loss=signal.stop_loss,
                            reason="risk_per_unit_zero_or_negligible")
             return 0.0
-        if signal.entry_price > 0:
-            max_size_by_risk = (max_risk / risk_per_unit) * signal.entry_price
-            size = min(size, max_size_by_risk)
+        max_size_by_risk = (max_risk / risk_per_unit) * signal.entry_price
+        size = min(size, max_size_by_risk)
 
         return size
 

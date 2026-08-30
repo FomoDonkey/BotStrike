@@ -93,7 +93,10 @@ class TradingConfig:
     close_positions_on_shutdown: bool = True
     # Asignación por estrategia — MR (conservative) + Fib (growth)
     allocation_mean_reversion: float = 0.50
-    allocation_fibonacci_retracement: float = 0.50  # aggressive account growth
+    # FROZEN 2026-08-31: no published evidence for Fibonacci retracement
+    # (research_sota_2026 §2.7) and 20% WR / -$2.11 over 5 paper closes.
+    # MR allocation deliberately NOT raised — it is also under evidence freeze.
+    allocation_fibonacci_retracement: float = 0.00
     allocation_trend_following: float = 0.00   # archived
     allocation_market_making: float = 0.00     # archived
     allocation_order_flow_momentum: float = 0.00  # archived
