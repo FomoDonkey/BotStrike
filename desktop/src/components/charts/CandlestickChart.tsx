@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import type { IChartApi, ISeriesApi, SeriesMarker, Time, UTCTimestamp } from "lightweight-charts";
 import { useMarketStore, type Candle } from "@/stores/marketStore";
 import { type TradeData } from "@/stores/tradingStore";
 
@@ -42,9 +43,9 @@ function resampleCandles(candles: Candle[], tfSeconds: number): Candle[] {
 
 export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<any>(null);
-  const seriesRef = useRef<any>(null);
-  const volumeSeriesRef = useRef<any>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const lastCandleHash = useRef("");
   const lastMarkersHash = useRef("");
   const lastCandleCount = useRef(0);
@@ -124,9 +125,9 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
         resizeObs.observe(containerRef.current);
 
         setChartReady(true);
-      } catch (e: any) {
+      } catch (e) {
         console.error("[Chart] init error:", e);
-        setError(e.message || "Chart failed to load");
+        setError(e instanceof Error && e.message ? e.message : "Chart failed to load");
       }
     })();
 
@@ -164,7 +165,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
 
       if (isIncremental && lastCandleCount.current > 0) {
         const lastCandle = {
-          time: last.time as any,
+          time: last.time as UTCTimestamp,
           open: last.open,
           high: last.high,
           low: last.low,
@@ -172,7 +173,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
         };
         seriesRef.current.update(lastCandle);
         volumeSeriesRef.current.update({
-          time: last.time as any,
+          time: last.time as UTCTimestamp,
           value: last.volume,
           color: last.close >= last.open ? "rgba(0,212,170,0.2)" : "rgba(255,71,87,0.2)",
         });
@@ -180,7 +181,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
         // Full redraw: initial load, timeframe change, or large data change
         seriesRef.current.setData(
           candles.map((c: Candle) => ({
-            time: c.time as any,
+            time: c.time as UTCTimestamp,
             open: c.open,
             high: c.high,
             low: c.low,
@@ -189,7 +190,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
         );
         volumeSeriesRef.current.setData(
           candles.map((c: Candle) => ({
-            time: c.time as any,
+            time: c.time as UTCTimestamp,
             value: c.volume,
             color: c.close >= c.open ? "rgba(0,212,170,0.2)" : "rgba(255,71,87,0.2)",
           }))
@@ -228,7 +229,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
   useEffect(() => {
     if (!chartReady || !seriesRef.current || !trades?.length) {
       if (seriesRef.current && lastMarkersHash.current !== "") {
-        try { seriesRef.current.setMarkers([]); } catch {}
+        try { seriesRef.current.setMarkers([]); } catch { /* series already disposed */ }
         lastMarkersHash.current = "";
       }
       return;
@@ -239,12 +240,12 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
     lastMarkersHash.current = hash;
 
     try {
-      const markers: any[] = [];
+      const markers: SeriesMarker<Time>[] = [];
 
       for (const t of trades) {
         if (!t.timestamp || !t.price) continue;
         // Align trade timestamp to timeframe bucket
-        const time = Math.floor(t.timestamp / tfSeconds) * tfSeconds;
+        const time = (Math.floor(t.timestamp / tfSeconds) * tfSeconds) as UTCTimestamp;
 
         if (t.trade_type === "ENTRY") {
           const isBuy = t.side === "BUY";
@@ -269,7 +270,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
         }
       }
 
-      markers.sort((a, b) => a.time - b.time);
+      markers.sort((a, b) => (a.time as number) - (b.time as number));
       seriesRef.current.setMarkers(markers);
     } catch (e) {
       console.error("[Chart] markers error:", e);

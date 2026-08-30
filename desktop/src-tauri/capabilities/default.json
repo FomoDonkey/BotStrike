@@ -1,18 +1,9 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "BotStrike default capabilities",
+  "description": "BotStrike default capabilities (WebView IPC). dialog/updater/process are used from Rust only, and the engine is spawned by the `ensure_local_engine` command — no plugin permissions are needed in the WebView.",
   "windows": ["main"],
   "permissions": [
-    "core:default",
-    "updater:default",
-    "dialog:default",
-    "process:default",
-    "shell:default",
-    {
-      "identifier": "shell:allow-spawn",
-      "allow": [{ "name": "binaries/botstrike-engine", "sidecar": true, "args": true }]
-    },
-    "shell:allow-kill"
+    "core:default"
   ]
 }

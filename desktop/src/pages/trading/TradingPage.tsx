@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import { useShallow } from "zustand/shallow";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { CandlestickChart, type Timeframe } from "@/components/charts/CandlestickChart";
-import { AnimatedNumber } from "@/components/shared/AnimatedNumber";
 import { useMarketStore } from "@/stores/marketStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useMicroStore } from "@/stores/microStore";
@@ -10,7 +9,6 @@ import { formatUSD, formatPrice, formatBps, cn } from "@/lib/utils";
 import { STRATEGY_COLORS, STRATEGY_LABELS } from "@/lib/constants";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { SymbolSelector } from "@/components/shared/SymbolSelector";
-import { SYMBOL_LABELS } from "@/lib/constants";
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h"];
 

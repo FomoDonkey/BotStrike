@@ -2,27 +2,14 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { GlassPanel } from "@/components/shared/GlassPanel";
 import { formatUSD, formatPct, cn } from "@/lib/utils";
-import { BRIDGE_URL, STRATEGY_LABELS } from "@/lib/constants";
+import { STRATEGY_LABELS } from "@/lib/constants";
+import { api, ApiError, type BacktestResult } from "@/lib/api";
+import { getBridgeUrl } from "@/lib/config";
 import { useExchangeStore } from "@/stores/exchangeStore";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { FlaskConical, Play, Loader2, TrendingUp, TrendingDown, BarChart3, Clock } from "lucide-react";
-
-interface BacktestResult {
-  equity_curve: number[];
-  total_trades: number;
-  win_rate: number;
-  pnl: number;
-  sharpe_ratio: number;
-  max_drawdown: number;
-  profit_factor: number;
-  avg_trade_pnl: number;
-  total_fees: number;
-  return_pct: number;
-  by_strategy: Record<string, { trades: number; pnl: number; win_rate: number }>;
-  bars_tested: number;
-}
 
 // Only show strategies that are actually active/available
 const AVAILABLE_STRATEGIES = [
@@ -49,19 +36,10 @@ export function BacktestPage() {
     const t0 = Date.now();
     const timer = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
     try {
-      const res = await fetch(`${BRIDGE_URL}/api/backtest/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol, strategy, exchange: useExchangeStore.getState().exchange }),
-      });
-      const data = await res.json();
-      if (data.error) {
-        setError(data.error);
-      } else {
-        setResult(data);
-      }
-    } catch {
-      setError("Bridge server not running. Start with: python -m server.bridge");
+      const data = await api.backtestRun({ symbol, strategy, exchange: useExchangeStore.getState().exchange });
+      setResult(data);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : `Bridge unreachable at ${getBridgeUrl()}`);
     }
     clearInterval(timer);
     setElapsed(Math.floor((Date.now() - t0) / 1000));
@@ -232,7 +210,7 @@ export function BacktestPage() {
                     />
                     <Tooltip
                       contentStyle={{ background: "#0B1120", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 }}
-                      formatter={(v: any) => [`$${Number(v).toFixed(2)}`, "Equity"]}
+                      formatter={(v: unknown) => [`$${Number(v).toFixed(2)}`, "Equity"]}
                     />
                     <Area
                       type="monotone"

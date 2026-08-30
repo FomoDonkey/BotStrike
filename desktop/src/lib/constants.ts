@@ -1,5 +1,17 @@
-export const BRIDGE_URL = "http://127.0.0.1:9420";
-export const BRIDGE_WS_URL = "ws://127.0.0.1:9420";
+// Bridge endpoint lives in ./config (configurable via Settings → Connection).
+// Network/timing constants — keep ping < stale < watchdog consistent.
+export const API_TIMEOUT_MS = 30_000;             // generic REST call
+export const HEALTH_TIMEOUT_MS = 4_000;           // /api/health probe (Settings → Test)
+export const BACKTEST_TIMEOUT_MS = 10 * 60_000;   // /api/backtest/run
+export const WS_PING_MS = 10_000;                 // client → bridge {"type":"ping"}
+export const WS_STALE_MS = 25_000;                // no message/pong for this long → half-open socket → reconnect
+export const WS_RECONNECT_BASE_MS = 3_000;
+export const WS_RECONNECT_MAX_MS = 30_000;
+export const WS_STAGGER_MS = 500;                 // delay between the 5 channel connects
+export const HEALTH_WATCHDOG_TICK_MS = 5_000;
+export const HEALTH_STALE_MS = 10_000;            // bridge health arrives every 3 s; >10 s → not connected
+export const OVERLAY_CONNECTED_MS = 1_000;        // "Connected" splash before auto-dismiss
+export const OVERLAY_CONNECT_TIMEOUT_MS = 15_000; // "connecting" → "unreachable"
 
 export const WS_CHANNELS = {
   MARKET: "market",
@@ -8,6 +20,7 @@ export const WS_CHANNELS = {
   RISK: "risk",
   SYSTEM: "system",
 } as const;
+export const WS_CHANNEL_LIST: readonly string[] = Object.values(WS_CHANNELS);
 
 // All tradeable symbols — single source of truth for UI
 export const SYMBOLS = ["BTC-USD", "ETH-USD", "SOL-USD", "ADA-USD"] as const;

@@ -4,26 +4,31 @@ import { GlassPanel } from "@/components/shared/GlassPanel";
 import { PulsingDot } from "@/components/shared/PulsingDot";
 import { useSystemStore } from "@/stores/systemStore";
 import { formatDuration, cn } from "@/lib/utils";
-import { api } from "@/lib/api";
+import { api, ApiError, type BotStatusResponse } from "@/lib/api";
+import { useBridgeConfig } from "@/lib/config";
 import { useMarketStore } from "@/stores/marketStore";
-import { Monitor, Cpu, Wifi, WifiOff, Clock, Users, Activity, Play, Square, RefreshCw } from "lucide-react";
+import { useAlertStore } from "@/stores/alertStore";
+import { Monitor, Cpu, Clock, Users, Activity, Play, Square, RefreshCw } from "lucide-react";
 import { ExchangeSelector } from "@/components/shared/ExchangeSelector";
 import { useExchangeStore } from "@/stores/exchangeStore";
+
+const BOT_STATUS_POLL_MS = 5_000;
 
 export function SystemPage() {
   const system = useSystemStore();
   const logs = useSystemStore((s) => s.logs);
   const hasPriceData = useMarketStore((s) => Object.keys(s.prices).length > 0);
-  const [botStatus, setBotStatus] = useState<any>(null);
+  const { url: bridgeUrl, mode: bridgeMode } = useBridgeConfig();
+  const [botStatus, setBotStatus] = useState<BotStatusResponse | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
-  // Fetch bot status periodically
+  // Fetch bot status periodically (re-armed when the bridge URL changes)
   useEffect(() => {
-    const fetch = () => api.botStatus().then(setBotStatus).catch(() => null);
-    fetch();
-    const i = setInterval(fetch, 5000);
+    const fetchStatus = () => api.botStatus().then(setBotStatus).catch(() => null);
+    fetchStatus();
+    const i = setInterval(fetchStatus, BOT_STATUS_POLL_MS);
     return () => clearInterval(i);
-  }, []);
+  }, [bridgeUrl]);
 
   // Auto-scroll when new logs arrive
   useEffect(() => {
@@ -35,8 +40,14 @@ export function SystemPage() {
 
   const exchange = useExchangeStore((s) => s.exchange);
   const [startMode, setStartMode] = useState<"paper" | "dry_run" | "live">("paper");
-  const handleStart = () => api.botStart(startMode, exchange).catch(() => null);
-  const handleStop = () => api.botStop().catch(() => null);
+
+  // Errors from the bridge (auth token missing, unreachable, 401…) are surfaced, never swallowed.
+  const report = (title: string) => (e: unknown) => {
+    const message = e instanceof ApiError ? e.message : String(e);
+    useAlertStore.getState().addAlert({ level: "critical", title, message, sound: "alert" });
+  };
+  const handleStart = () => api.botStart(startMode, exchange).catch(report("Start failed"));
+  const handleStop = () => api.botStop().catch(report("Stop failed"));
 
   return (
     <motion.div
@@ -117,6 +128,11 @@ export function SystemPage() {
                     </button>
                   ))}
                 </div>
+                {startMode === "live" && (
+                  <p className="text-[10px] text-text-muted mt-2">
+                    LIVE requires the bridge auth token (Settings → Connection).
+                  </p>
+                )}
               </div>
               <div>
                 <label className="text-xs text-text-muted block mb-2">Exchange</label>
@@ -164,7 +180,11 @@ export function SystemPage() {
           <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-4">Connections</h3>
           <div className="space-y-3">
             {[
-              { name: "Bridge Server", connected: system.bridgeConnected, detail: "localhost:9420" },
+              {
+                name: `Bridge Server (${bridgeMode.toUpperCase()})`,
+                connected: system.bridgeConnected,
+                detail: `${bridgeUrl.replace(/^https?:\/\//, "")} · ${system.openChannels.length}/5 channels`,
+              },
               { name: `Market Data (${exchange === "hyperliquid" ? "Hyperliquid" : "Binance"})`,
                 connected: system.wsConnected || hasPriceData,
                 detail: exchange === "hyperliquid" ? "api.hyperliquid.xyz" : "fstream.binance.com" },
@@ -192,7 +212,7 @@ export function SystemPage() {
             <div className="space-y-1 text-xs">
               <div className="flex justify-between">
                 <span className="text-text-muted">Version</span>
-                <span className="font-mono text-text-secondary">2.11.1</span>
+                <span className="font-mono text-text-secondary">{__APP_VERSION__}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-text-muted">Framework</span>

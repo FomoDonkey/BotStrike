@@ -1,48 +1,27 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import { GlassPanel } from "@/components/shared/GlassPanel";
-import { api } from "@/lib/api";
-import { Settings, DollarSign, Shield, Zap, Bell, Server, Palette, Volume2, VolumeX } from "lucide-react";
+import { api, probeBridge, ApiError, type ConfigResponse, type HealthResponse } from "@/lib/api";
+import { Settings, DollarSign, Shield, Zap, Bell, Server, Palette, Volume2, VolumeX, Plug, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useThemeStore, type ThemeVariant } from "@/stores/themeStore";
 import { useAlertStore } from "@/stores/alertStore";
-
-interface ConfigData {
-  use_testnet: boolean;
-  has_api_key: boolean;
-  has_telegram: boolean;
-  symbols: Array<{
-    symbol: string;
-    leverage: number;
-    max_position_usd: number;
-    vpin_bucket_size: number;
-    vpin_toxic_threshold: number;
-    hawkes_spike_mult: number;
-    mm_gamma: number;
-    obi_levels: number;
-  }>;
-  trading: {
-    initial_capital: number;
-    max_drawdown_pct: number;
-    max_leverage: number;
-    max_total_exposure_pct: number;
-    risk_per_trade_pct: number;
-    allocation_mean_reversion: number;
-    allocation_fibonacci_retracement: number;
-    allocation_order_flow_momentum: number;
-    allocation_trend_following: number;
-    allocation_market_making: number;
-    maker_fee: number;
-    taker_fee: number;
-    slippage_bps: number;
-    vol_target_annual: number;
-    kelly_min_trades: number;
-    kelly_floor_pct: number;
-    kelly_ceiling_pct: number;
-  };
-}
+import { useSystemStore } from "@/stores/systemStore";
+import {
+  useBridgeConfig,
+  setBridgeUrl,
+  setBridgeToken,
+  normalizeBridgeUrl,
+  validateBridgeUrl,
+  getBridgeMode,
+  DEFAULT_BRIDGE_URL,
+} from "@/lib/config";
+import { restartWebSockets } from "@/hooks/useWebSocket";
+import { WS_CHANNEL_LIST } from "@/lib/constants";
 
 const TABS = [
+  { id: "connection", label: "Connection", icon: Plug },
   { id: "capital", label: "Capital & Risk", icon: DollarSign },
   { id: "symbols", label: "Symbols", icon: Zap },
   { id: "execution", label: "Execution", icon: Server },
@@ -61,21 +40,209 @@ function Field({ label, value, unit }: { label: string; value: string | number; 
   );
 }
 
+// ── Connection tab ───────────────────────────────────────────────
+
+type TestState =
+  | { state: "idle" }
+  | { state: "testing" }
+  | { state: "ok"; health: HealthResponse; ms: number; url: string }
+  | { state: "fail"; detail: string };
+
+const INPUT_CLS =
+  "w-full bg-bg-base border border-white/10 rounded-lg px-3 py-2 text-sm text-text-primary font-mono focus:outline-none focus:border-accent/50";
+
+function ConnectionSettings() {
+  const { url: currentUrl, token: currentToken } = useBridgeConfig();
+  const [draftUrl, setDraftUrl] = useState(currentUrl);
+  const [draftToken, setDraftToken] = useState(currentToken);
+  const [showToken, setShowToken] = useState(false);
+  const [test, setTest] = useState<TestState>({ state: "idle" });
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const openChannels = useSystemStore((s) => s.openChannels.length);
+  const bridgeConnected = useSystemStore((s) => s.bridgeConnected);
+  const engineRunning = useSystemStore((s) => s.engineRunning);
+
+  const urlError = validateBridgeUrl(draftUrl);
+  const normalized = urlError ? null : normalizeBridgeUrl(draftUrl);
+  const dirty = normalized !== currentUrl || draftToken.trim() !== currentToken;
+  const draftMode = getBridgeMode(normalized ?? currentUrl);
+
+  const runTest = async () => {
+    if (!normalized) {
+      setTest({ state: "fail", detail: urlError ?? "Invalid URL" });
+      return;
+    }
+    setTest({ state: "testing" });
+    const t0 = Date.now();
+    try {
+      const health = await probeBridge(normalized);
+      setTest({ state: "ok", health, ms: Date.now() - t0, url: normalized });
+    } catch (e) {
+      setTest({ state: "fail", detail: e instanceof ApiError ? e.message : String(e) });
+    }
+  };
+
+  const save = () => {
+    const n = setBridgeUrl(draftUrl);
+    if (!n) {
+      setTest({ state: "fail", detail: urlError ?? "Invalid URL" });
+      return;
+    }
+    setBridgeToken(draftToken);
+    setDraftUrl(n);
+    setDraftToken(draftToken.trim());
+    restartWebSockets();
+    setTest({ state: "idle" });
+    setSavedAt(Date.now());
+  };
+
+  return (
+    <div className="grid grid-cols-2 gap-4">
+      <GlassPanel className="p-5 col-span-2">
+        <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-4 flex items-center gap-2">
+          <Plug className="w-3 h-3" /> Bridge Server
+          <span
+            className={cn(
+              "ml-auto px-2 py-0.5 rounded text-[10px] font-bold uppercase",
+              draftMode === "remote" ? "bg-info/10 text-info" : "bg-white/5 text-text-muted",
+            )}
+          >
+            {draftMode}
+          </span>
+        </h3>
+
+        <label className="text-xs text-text-muted block mb-1">Bridge URL (host[:port], http:// or https://)</label>
+        <input
+          value={draftUrl}
+          onChange={(e) => { setDraftUrl(e.target.value); setTest({ state: "idle" }); }}
+          onKeyDown={(e) => { if (e.key === "Enter") void runTest(); }}
+          spellCheck={false}
+          autoComplete="off"
+          placeholder="http://192.168.1.204:9420"
+          className={cn(INPUT_CLS, urlError && draftUrl.trim() && "border-loss/50")}
+        />
+        <p className="text-[10px] text-text-muted mt-1">
+          {urlError && draftUrl.trim() ? (
+            <span className="text-loss">{urlError}</span>
+          ) : (
+            <>
+              Local: <code>{DEFAULT_BRIDGE_URL.replace(/^https?:\/\//, "")}</code> (bundled engine is started automatically)
+              {" · "}LAN: <code>192.168.1.204:9420</code>{" · "}Tailscale: <code>100.x.y.z:9420</code>
+              {normalized && normalized !== draftUrl.trim() && (
+                <> · will be saved as <code className="text-text-secondary">{normalized}</code></>
+              )}
+            </>
+          )}
+        </p>
+
+        <label className="text-xs text-text-muted block mt-4 mb-1">
+          Auth token (required for a remote bridge and to start/stop LIVE — from the server&apos;s <code>.env</code>)
+        </label>
+        <div className="relative">
+          <input
+            value={draftToken}
+            onChange={(e) => setDraftToken(e.target.value)}
+            type={showToken ? "text" : "password"}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="BOTSTRIKE_AUTH_TOKEN"
+            className={cn(INPUT_CLS, "pr-9")}
+          />
+          <button
+            type="button"
+            onClick={() => setShowToken((v) => !v)}
+            title={showToken ? "Hide token" : "Show token"}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-secondary"
+          >
+            {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+        </div>
+
+        <div className="flex items-center gap-3 mt-4 flex-wrap">
+          <button
+            onClick={runTest}
+            disabled={test.state === "testing" || !normalized}
+            className="px-4 py-2 rounded-lg border border-white/10 text-sm text-text-secondary hover:border-white/20 disabled:opacity-50 transition-all"
+          >
+            {test.state === "testing" ? "Testing…" : "Test connection"}
+          </button>
+          <button
+            onClick={save}
+            disabled={!dirty || !normalized}
+            className="px-4 py-2 rounded-lg bg-accent text-bg-base text-sm font-semibold disabled:opacity-40 hover:bg-accent/90 transition-all"
+          >
+            Save &amp; reconnect
+          </button>
+          {test.state === "ok" && (
+            <span className="text-xs font-mono text-profit">
+              {test.health.status} · engine {test.health.engine_running ? "running" : "stopped"} · {test.health.mode}
+              {test.health.version ? ` · v${test.health.version}` : ""} · {test.ms} ms
+            </span>
+          )}
+          {test.state === "fail" && <span className="text-xs font-mono text-loss">{test.detail}</span>}
+          {test.state === "idle" && savedAt && !dirty && (
+            <span className="text-xs font-mono text-text-muted">Saved · reconnecting…</span>
+          )}
+        </div>
+
+        <div className="mt-4 pt-4 border-t border-white/5 grid grid-cols-4 text-xs gap-2">
+          <div>
+            <span className="text-text-muted">Active URL</span>
+            <p className="font-mono text-text-secondary break-all">{currentUrl}</p>
+          </div>
+          <div>
+            <span className="text-text-muted">Bridge</span>
+            <p className={cn("font-mono", bridgeConnected ? "text-profit" : "text-loss")}>
+              {bridgeConnected ? "ONLINE" : "OFFLINE"}
+            </p>
+          </div>
+          <div>
+            <span className="text-text-muted">Engine</span>
+            <p className={cn("font-mono", engineRunning ? "text-profit" : "text-text-muted")}>
+              {engineRunning ? "RUNNING" : "STOPPED"}
+            </p>
+          </div>
+          <div>
+            <span className="text-text-muted">WS channels</span>
+            <p className="font-mono text-text-secondary">{openChannels}/{WS_CHANNEL_LIST.length}</p>
+          </div>
+        </div>
+      </GlassPanel>
+    </div>
+  );
+}
+
+// ── Page ─────────────────────────────────────────────────────────
+
 export function SettingsPage() {
-  const [config, setConfig] = useState<ConfigData | null>(null);
+  const location = useLocation();
+  const initialTab = (location.state as { tab?: string } | null)?.tab ?? "capital";
+  const [config, setConfig] = useState<ConfigResponse | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState("capital");
+  const [tab, setTab] = useState(initialTab);
+  const { url: bridgeUrl } = useBridgeConfig();
   const themeVariant = useThemeStore((s) => s.variant);
   const setTheme = useThemeStore((s) => s.setVariant);
   const soundEnabled = useAlertStore((s) => s.soundEnabled);
   const toggleSound = useAlertStore((s) => s.toggleSound);
 
   useEffect(() => {
-    api.config().then((data) => {
-      if (data && !data.error) setConfig(data);
-      setLoading(false);
-    }).catch(() => setLoading(false));
-  }, []);
+    let cancelled = false;
+    api.config()
+      .then((data) => {
+        if (cancelled) return;
+        setConfig(data);
+        setConfigError(null);
+        setLoading(false);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setConfigError(e instanceof ApiError ? e.message : String(e));
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [bridgeUrl]);
 
   return (
     <motion.div
@@ -106,13 +273,19 @@ export function SettingsPage() {
         ))}
       </div>
 
-      {loading ? (
+      {tab === "connection" ? (
+        <ConnectionSettings />
+      ) : loading ? (
         <GlassPanel className="p-8 text-center">
           <p className="text-text-muted">Loading configuration...</p>
         </GlassPanel>
       ) : !config ? (
         <GlassPanel className="p-8 text-center">
-          <p className="text-text-muted">Start the bridge server to view configuration</p>
+          <p className="text-text-muted">Configuration unavailable from {bridgeUrl.replace(/^https?:\/\//, "")}</p>
+          {configError && <p className="text-xs font-mono text-loss mt-2">{configError}</p>}
+          <p className="text-xs text-text-muted mt-2">
+            Start the engine (System → Start) or check Settings → Connection.
+          </p>
         </GlassPanel>
       ) : (
         <>

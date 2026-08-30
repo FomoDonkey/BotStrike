@@ -9,6 +9,9 @@ interface AnimatedNumberProps {
   flash?: boolean;
 }
 
+const ANIM_MS = 200;
+const FLASH_MS = 300;
+
 export const AnimatedNumber = memo(function AnimatedNumber({
   value,
   format,
@@ -18,44 +21,49 @@ export const AnimatedNumber = memo(function AnimatedNumber({
 }: AnimatedNumberProps) {
   const [display, setDisplay] = useState(value);
   const [flashDir, setFlashDir] = useState<"up" | "down" | null>(null);
+  const [seen, setSeen] = useState(value);
   const prev = useRef(value);
   const animRef = useRef<number | undefined>(undefined);
 
+  // Flash mode: snap to the new value during render (state adjustment, no effect needed).
+  if (value !== seen) {
+    setSeen(value);
+    if (flash) {
+      setDisplay(value);
+      setFlashDir(value > seen ? "up" : "down");
+    }
+  }
+
+  // Clear the flash highlight after a short delay.
   useEffect(() => {
+    if (!flash || !flashDir) return;
+    const t = setTimeout(() => setFlashDir(null), FLASH_MS);
+    return () => clearTimeout(t);
+  }, [flash, flashDir, value]);
+
+  // Animate towards the new value (ease-out cubic). All setState calls happen inside rAF callbacks.
+  useEffect(() => {
+    if (flash) return;
     const from = prev.current;
     const to = value;
     const diff = to - from;
     prev.current = to;
 
-    if (Math.abs(diff) < 1e-10) {
-      setDisplay(to);
-      return;
-    }
-
-    if (flash) {
-      setDisplay(to);
-      setFlashDir(diff > 0 ? "up" : "down");
-      const t = setTimeout(() => setFlashDir(null), 300);
-      return () => clearTimeout(t);
-    }
-
-    // Animate over 200ms with ease-out cubic
     if (animRef.current) cancelAnimationFrame(animRef.current);
-    const start = performance.now();
-    const duration = 200;
 
+    if (Math.abs(diff) < 1e-10) {
+      // Nothing to animate; make sure a previously cancelled animation didn't leave us mid-way.
+      animRef.current = requestAnimationFrame(() => { animRef.current = undefined; setDisplay(to); });
+      return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
+    }
+
+    const start = performance.now();
     const tick = (now: number) => {
-      const elapsed = now - start;
-      const t = Math.min(elapsed / duration, 1);
+      const t = Math.min((now - start) / ANIM_MS, 1);
       const eased = 1 - Math.pow(1 - t, 3);
       setDisplay(from + diff * eased);
-      if (t < 1) {
-        animRef.current = requestAnimationFrame(tick);
-      } else {
-        animRef.current = undefined;
-      }
+      animRef.current = t < 1 ? requestAnimationFrame(tick) : undefined;
     };
-
     animRef.current = requestAnimationFrame(tick);
 
     return () => {

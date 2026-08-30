@@ -88,7 +88,9 @@ function loadCachedMetrics(): MetricsData {
       const parsed = JSON.parse(raw);
       return { ...fallback, ...parsed };
     }
-  } catch {}
+  } catch {
+    /* corrupt or unavailable localStorage — use defaults */
+  }
   return fallback;
 }
 
@@ -108,7 +110,7 @@ export const useTradingStore = create<TradingState>((set) => ({
     set((s) => ({ recentSignals: [...s.recentSignals.slice(-49), signal] })),
 
   onMetrics: (metrics) => {
-    try { localStorage.setItem("bs_last_metrics", JSON.stringify(metrics)); } catch {}
+    try { localStorage.setItem("bs_last_metrics", JSON.stringify(metrics)); } catch { /* storage unavailable */ }
     set({ metrics });
   },
 }));

@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, useRef } from "react";
+import { memo, useEffect, useState } from "react";
 import { useShallow } from "zustand/shallow";
 import { useMarketStore } from "@/stores/marketStore";
 import { useTradingStore } from "@/stores/tradingStore";
@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { Wifi, WifiOff, Clock } from "lucide-react";
 import { SYMBOLS, SYMBOL_LABELS } from "@/lib/constants";
 import { useExchangeStore } from "@/stores/exchangeStore";
+import { useBridgeConfig } from "@/lib/config";
 
 // Isolated clock — only this re-renders every second
 const ClockDisplay = memo(function ClockDisplay() {
@@ -30,15 +31,19 @@ const ClockDisplay = memo(function ClockDisplay() {
 const PriceTicker = memo(function PriceTicker({ symbol, label }: { symbol: string; label: string }) {
   const price = useMarketStore((s) => s.prices[symbol] || 0);
   const [flash, setFlash] = useState<"up" | "down" | null>(null);
-  const lastPrice = useRef(0);
+  const [lastPrice, setLastPrice] = useState(price);
+
+  // Derive the flash direction during render (no setState inside the effect body).
+  if (price !== lastPrice) {
+    setLastPrice(price);
+    if (price !== 0) setFlash(price > lastPrice ? "up" : "down");
+  }
 
   useEffect(() => {
-    if (price === 0 || price === lastPrice.current) return;
-    setFlash(price > lastPrice.current ? "up" : "down");
-    lastPrice.current = price;
+    if (!flash) return;
     const t = setTimeout(() => setFlash(null), 400);
     return () => clearTimeout(t);
-  }, [price]);
+  }, [flash, price]);
 
   return (
     <div className="flex items-center gap-1.5">
@@ -68,8 +73,16 @@ export function TopBar() {
     uptimeSec: s.uptimeSec,
   })));
   const hasPrices = useMarketStore((s) => Object.keys(s.prices).length > 0);
-  const isConnected = bridgeConnected && (wsConnected || hasPrices);
+  const hasFeed = bridgeConnected && (wsConnected || hasPrices);
   const regime = useRiskStore((s) => s.regime);
+  const exchange = useExchangeStore((s) => s.exchange);
+  const { url: bridgeUrl, mode: bridgeMode } = useBridgeConfig();
+
+  const connTitle = !bridgeConnected
+    ? `Bridge unreachable: ${bridgeUrl}`
+    : hasFeed
+      ? `Bridge online (${bridgeUrl}) · market feed live`
+      : `Bridge online (${bridgeUrl}) · engine stopped / no market feed`;
 
   return (
     <header className="flex items-center justify-between h-11 px-4 bg-bg-surface/30 backdrop-blur-xl border-b border-white/5 text-xs select-none">
@@ -110,10 +123,19 @@ export function TopBar() {
         </div>
       </div>
 
-      {/* Right: Exchange + Mode + Connection + Clock */}
+      {/* Right: Exchange + Bridge mode + Mode + Connection + Clock */}
       <div className="flex items-center gap-3">
         <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-white/5 text-text-muted">
-          {useExchangeStore.getState().exchange === "hyperliquid" ? "HL" : "BIN"}
+          {exchange === "hyperliquid" ? "HL" : "BIN"}
+        </span>
+        <span
+          title={bridgeUrl}
+          className={cn(
+            "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider",
+            bridgeMode === "remote" ? "bg-info/10 text-info" : "bg-white/5 text-text-muted",
+          )}
+        >
+          {bridgeMode}
         </span>
         <span className={cn(
           "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider",
@@ -123,9 +145,12 @@ export function TopBar() {
         )}>
           {mode}
         </span>
-        <div className="flex items-center gap-1.5">
-          <PulsingDot active={isConnected} />
-          {isConnected ? <Wifi className="w-3 h-3 text-accent" /> : <WifiOff className="w-3 h-3 text-loss" />}
+        {/* dot = bridge reachable; icon colour = market feed (green) / bridge only (amber) / offline (red) */}
+        <div className="flex items-center gap-1.5" title={connTitle}>
+          <PulsingDot active={bridgeConnected} />
+          {!bridgeConnected
+            ? <WifiOff className="w-3 h-3 text-loss" />
+            : <Wifi className={cn("w-3 h-3", hasFeed ? "text-accent" : "text-warning")} />}
         </div>
         <div className="flex items-center gap-1 text-text-muted">
           <Clock className="w-3 h-3" />

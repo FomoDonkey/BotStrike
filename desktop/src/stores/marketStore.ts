@@ -43,6 +43,18 @@ export interface MarketInfo {
   index_price: number;
 }
 
+export interface SnapshotData {
+  symbol?: string;
+  price?: number;
+  orderbook?: OrderBookData;
+  regime?: string;
+  funding_rate?: number;
+  volume_24h?: number;
+  open_interest?: number;
+  mark_price?: number;
+  index_price?: number;
+}
+
 interface MarketState {
   prices: Record<string, number>;
   prevPrices: Record<string, number>;
@@ -53,7 +65,7 @@ interface MarketState {
 
   onTick: (tick: Tick) => void;
   onCandles: (symbol: string, candles: Candle[]) => void;
-  onSnapshot: (data: any) => void;
+  onSnapshot: (data: SnapshotData) => void;
 }
 
 // Throttle price updates to max 4/sec to prevent re-render storm
@@ -130,7 +142,7 @@ export const useMarketStore = create<MarketState>((set, get) => ({
     const sym = data.symbol;
     if (!sym) return;
     const s = get();
-    const updates: any = {};
+    const updates: Partial<MarketState> = {};
 
     if (data.price) {
       _pendingPrices[sym] = { price: data.price, prev: s.prices[sym] ?? data.price };

@@ -8,7 +8,6 @@ import { STRATEGY_COLORS, STRATEGY_LABELS } from "@/lib/constants";
 import { api } from "@/lib/api";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar, Cell,
 } from "recharts";
 import { TrendingUp, Target, BarChart3, DollarSign, Timer, Percent } from "lucide-react";
 
@@ -57,7 +56,7 @@ export function PerformancePage() {
           api.trades(200).catch(() => ({ trades: [] })),
         ]);
         if (cancelled) return;
-        if (perf && !perf.error) setPerfData(perf);
+        if (perf) setPerfData(perf);
         setTrades(tradeRes.trades || []);
       } catch {
         // bridge not running
@@ -69,10 +68,11 @@ export function PerformancePage() {
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
+  const equityCurve = perfData?.equity_curve;
   const equityCurveData = useMemo(() => {
-    if (!perfData?.equity_curve?.length) return [];
-    return perfData.equity_curve.map((v, i) => ({ idx: i, equity: typeof v === "number" ? v : 1000 }));
-  }, [perfData?.equity_curve]);
+    if (!equityCurve?.length) return [];
+    return equityCurve.map((v, i) => ({ idx: i, equity: typeof v === "number" ? v : 1000 }));
+  }, [equityCurve]);
 
   const p = perfData || metrics;
 
@@ -138,7 +138,7 @@ export function PerformancePage() {
               <Tooltip
                 contentStyle={{ background: "#0B1120", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12, fontFamily: "JetBrains Mono" }}
                 labelStyle={{ color: "#8898AA" }}
-                formatter={(v: any) => [`$${Number(v).toFixed(2)}`, "Equity"]}
+                formatter={(v: unknown) => [`$${Number(v).toFixed(2)}`, "Equity"]}
               />
               <Area type="monotone" dataKey="equity" stroke="#00D4AA" fill="url(#eqGrad)" strokeWidth={2} dot={false} />
             </AreaChart>

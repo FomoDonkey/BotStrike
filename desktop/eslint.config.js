@@ -6,7 +6,8 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // src-tauri/target contains Tauri codegen assets (binary blobs named *.js) — never lint them.
+  globalIgnores(['dist', 'src-tauri/**', 'node_modules']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
@@ -18,6 +19,12 @@ export default defineConfig([
     languageOptions: {
       ecmaVersion: 2020,
       globals: globals.browser,
+    },
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', destructuredArrayIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+      ],
     },
   },
 ])

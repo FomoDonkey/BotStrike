@@ -37,7 +37,7 @@ export function StrategiesPage() {
   useEffect(() => {
     api.strategies()
       .then((data) => {
-        if (data?.strategies?.length > 0) {
+        if (data?.strategies && data.strategies.length > 0) {
           setStrategies(data.strategies);
         }
       })

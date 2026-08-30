@@ -13,7 +13,7 @@ import { formatUSD, formatPct, formatPrice, cn } from "@/lib/utils";
 import { STRATEGY_COLORS, STRATEGY_LABELS } from "@/lib/constants";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import {
-  DollarSign, TrendingUp, Target, BarChart3, ShieldAlert, Activity,
+  DollarSign, Target, BarChart3, ShieldAlert, Activity,
   Zap, CircleDot, ArrowUpRight, ArrowDownRight,
 } from "lucide-react";
 import { SYMBOLS, SYMBOL_LABELS, SYMBOL_COLORS } from "@/lib/constants";
