@@ -721,3 +721,37 @@
 ### Fire-and-forget protective orders = naked positions
 - If SL and TP placement both fail (network blip, rate limit), the position is open with ZERO protection. The error was logged but no action taken. On 5x leverage, a 10% move = 50% of account gone.
 - **LESSON: Every position MUST have protection. If protective orders fail, the immediate response is emergency close, not logging. Defense must be active, not observational.**
+
+## Sesión 2026-08-29/30 — Auditoría total + despliegue Proxmox (CT 104)
+
+### Una variable de entorno que nadie lee es un despliegue que nunca arranca
+- La unit systemd exportaba `BOTSTRIKE_AUTOSTART=paper` pero ningún `os.getenv` la leía. El bridge estuvo 5,3 h "active (running)" con `engine_running: false`. `systemctl status` verde no significa que el producto funcione.
+- **LESSON: Para cada variable de entorno de una unit/Dockerfile, `grep` en el código que alguien la consuma. Y el health endpoint debe reflejar el estado del NEGOCIO (engine + feed), no solo que el proceso HTTP responde — ahora devuelve 503 si el engine esperado está muerto.**
+
+### Un "auth token" que se publica en un endpoint sin auth no es auth
+- `/api/bot/status` devolvía `auth_token` en claro. Válido cuando el bridge era loopback+desktop en el mismo PC; al pasar a `0.0.0.0` regalaba el control de live a toda la LAN/tailnet.
+- **LESSON: Al cambiar el bind de 127.0.0.1 a 0.0.0.0 hay que re-auditar TODO el modelo de confianza. Lo que era "misma máquina" pasa a ser "misma red".**
+
+### Verificar en el target, no en la aproximación (otra vez)
+- Los tests pasaban en Windows (pandas 2.3.3) pero en el CT (pandas 3.0.5) la suite ni arrancaba: faltaba `httpx` para `starlette.testclient`. Se añadió `requirements-dev.txt` y la suite corre ahora dentro del CT (92/92).
+- **LESSON: Ejecutar la suite en el entorno de producción real (mismo Python, mismas versiones) como parte del despliegue. `requirements.lock` congelado desde el venv Linux del CT, no desde Windows.**
+
+### VPN con kill switch = red local invisible
+- ProtonVPN con kill switch bloqueaba TODO (ni el router respondía) y Tailscale se quedó "logged out". Se perdió tiempo buscando el host Proxmox por LAN. Síntoma clave: `route print` con default route por un túnel (10.96.x) + ruta host a un endpoint VPN.
+- **LESSON: Ante "todo inalcanzable", mirar primero la tabla de rutas y procesos VPN antes de escanear la red. Y en Tailscale, `tailscale status` dice "Logged out" — leerlo, no asumir que el servicio Running = conectado.**
+
+### Agentes en paralelo con contextos grandes agotan el límite de sesión
+- 6 agentes simultáneos (auditorías línea a línea + búsquedas web) con 150–290k tokens de contexto cada uno agotaron el límite en minutos; 3 murieron por rate limit y 2 por errores de conexión de la API, y uno perdió todo su informe porque lo escribía al final.
+- **LESSON: (1) Máximo 2–3 agentes a la vez. (2) Obligar a escribir INCREMENTALMENTE a disco (crear archivo al empezar, anexar cada hallazgo). (3) Reanudar con SendMessage conserva el contexto: es más barato que relanzar. (4) Verificar en disco (grep de secciones de cierre) que nada quedó a medias.**
+
+### Cancelar órdenes ≠ cerrar posiciones
+- `cancel_all()` en shutdown y en el halt por drawdown cancelaba SL/TP del exchange y dejaba la posición abierta sin protección a 5x — justo en los dos momentos en que más importa. Pasó 26 auditorías porque el nombre "cancel_all" suena a "parar todo".
+- **LESSON: El orden de apagado es SIEMPRE: cerrar posiciones (reduceOnly MARKET) → luego cancelar órdenes. Y en el halt por riesgo, ejecutar UNA vez (flag), no en cada ciclo del monitor.**
+
+### Reintentar un POST de orden tras timeout es duplicar la posición
+- `_retry_request` reenviaba `POST /fapi/v1/order` hasta 4 veces tras timeout/5xx. Binance documenta que en 503 "la ejecución puede haber ocurrido".
+- **LESSON: Las peticiones con side-effects no se reintentan a ciegas: se consulta el estado por `origClientOrderId` (siempre único) y solo se reenvía si NO existe.**
+
+### Regulación como riesgo de primer orden
+- Binance cesó servicios de trading para residentes en España el 1-jul-2026 (MiCA). El venue principal del bot dejó de existir para el dueño sin que ningún test lo detectara.
+- **LESSON: Un bot debe ser multi-venue por diseño y el "estado del arte" incluye leer regulación, no solo papers.**
