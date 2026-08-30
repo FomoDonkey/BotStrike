@@ -61,10 +61,13 @@ export function PerformancePage() {
 
   const p = perfData || metrics;
 
-  // Strategy breakdown
+  // Strategy breakdown — closes only: counting ENTRY rows (pnl always 0)
+  // inflated the trade count and deflated the win rate
   const strategyBreakdown = useMemo(() => {
     const map: Record<string, { pnl: number; trades: number; wins: number }> = {};
     for (const t of trades) {
+      const isClose = t.trade_type ? t.trade_type !== "ENTRY" : (t.pnl || 0) !== 0;
+      if (!isClose) continue;
       const key = t.strategy || "UNKNOWN";
       if (!map[key]) map[key] = { pnl: 0, trades: 0, wins: 0 };
       map[key].pnl += t.pnl || 0;
