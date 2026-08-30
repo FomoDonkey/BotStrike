@@ -49,6 +49,16 @@ export function PerformancePage() {
     return equityCurve.map((v, i) => ({ idx: i, equity: typeof v === "number" ? v : 1000 }));
   }, [equityCurve, equityCurveTs]);
 
+  // Evenly spaced time ticks — recharts derives ticks from data points, which
+  // overlap when trades cluster in time.
+  const xTicks = useMemo(() => {
+    if (!hasTimeAxis || equityCurveData.length < 2) return undefined;
+    const t0 = equityCurveData[0].idx;
+    const t1 = equityCurveData[equityCurveData.length - 1].idx;
+    const n = 5;
+    return Array.from({ length: n + 1 }, (_, i) => t0 + ((t1 - t0) * i) / n);
+  }, [hasTimeAxis, equityCurveData]);
+
   const p = perfData || metrics;
 
   // Strategy breakdown
@@ -117,6 +127,7 @@ export function PerformancePage() {
                 type="number"
                 domain={["dataMin", "dataMax"]}
                 scale="time"
+                ticks={xTicks}
                 minTickGap={80}
                 tick={{ fill: "#8898AA", fontSize: 10, fontFamily: "JetBrains Mono" }}
                 axisLine={false}
