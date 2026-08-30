@@ -117,10 +117,11 @@ export function PerformancePage() {
                 type="number"
                 domain={["dataMin", "dataMax"]}
                 scale="time"
+                minTickGap={80}
                 tick={{ fill: "#8898AA", fontSize: 10, fontFamily: "JetBrains Mono" }}
                 axisLine={false}
                 tickLine={false}
-                tickFormatter={(v) => new Date(v).toLocaleDateString([], { month: "short", day: "numeric" })}
+                tickFormatter={(v) => new Date(v).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
               />
               <YAxis
                 domain={["dataMin - 5", "dataMax + 5"]}
@@ -128,7 +129,7 @@ export function PerformancePage() {
                 axisLine={false}
                 tickLine={false}
                 width={60}
-                tickFormatter={(v) => `$${v}`}
+                tickFormatter={(v) => `$${Number(v).toFixed(2)}`}
               />
               <Tooltip
                 contentStyle={{ background: "#0B1120", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12, fontFamily: "JetBrains Mono" }}
