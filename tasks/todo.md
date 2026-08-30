@@ -11,9 +11,21 @@ Objetivo Edgar: ver/controlar el bot del CT desde el navegador (paper trades, ch
 - [x] Deploy CT 104 (`bash deploy/remote_deploy.sh` → verify.sh PASS, engine paper, WS 16 streams, 0 errores)
   - Desbloqueado: Proton VPN kill-switch bloqueaba LAN+Tailscale (`connectex forbidden`); Edgar cerró Proton. Si la reactiva: Settings → "Allow LAN connections" o la UI/deploy dejan de funcionar.
 - [x] VERIFICADO en navegador (Chrome, capturas): http://192.168.1.204:9420 → Dashboard con precios/VPIN/Hawkes en vivo, Live Trading con velas 1m + marcadores de trades históricos desde DB (S $78768 → +$0.64), Performance con 36 trades en hora Madrid correcta. 0 errores de consola.
-- [ ] Edgar: pegar BOTSTRIKE_AUTH_TOKEN (del .env del CT) en Settings → Connection para start/stop/backtest desde la web (ver todo funciona sin token)
-- [ ] Mejora futura: /api/performance con métricas agregadas desde la trade DB (hoy son de la sesión del engine → se resetean a 0 con cada restart del servicio; el Trade History sí es persistente)
+- [x] Edgar puso el token en Settings → Connection (start/stop/backtest desde la web operativos)
+- [x] v2.13.1: métricas persistentes — trade DB como fuente de verdad del realizado (/api/performance + WS metrics
+  = DB all-time + unrealized vivo, cache 5s). UI ya NO se resetea a 0 tras restart (verificado: equity 994.09,
+  PnL -5.91, 18 trades, WR 38.89% consistentes en TopBar/Dashboard/Performance/Risk/System tras hard reload)
+- [x] Fix quant: ANNUALIZATION_FACTOR 252→365 en analytics/performance.py (logger/backtester ya iban a 365 — v2.5.0 lo dejó atrás)
+- [x] Fix: /api/strategies 500 — engine.research es código archivado (AttributeError en cada carga de StrategiesPage); getattr fallback
+- [x] Fix sync: RiskPage equity usaba equity de SESIÓN del risk channel → ahora merged (igual que el resto)
+- [x] UI: curva de equity continua multi-sesión (pnl encadenado, sin diente de sierra) con eje temporal real,
+  ticks equiespaciados, tooltip fecha+equity; chips Capital/Realized/Unrealized/Session en Performance
+- [x] UI: auto-conexión al cargar (probe /api/health) — sin diálogo de setup en cada recarga; exchange sincronizado desde el bridge
+- [x] Limpieza: interfaces duplicadas TradeRecord/PerfData eliminadas (usa lib/api); chunk duplicado themeStore eliminado
+- [x] Tests 96/96 (4 nuevos: factor 365, encadenado pnl, curva legacy, DD encadenado); ESLint limpio; journal CT 0 errores
 - [ ] Opcional: Tailscale login en el CT para acceder a la UI fuera de casa (hoy solo LAN)
+- [ ] Quant round 2 (SIGUE PENDIENTE, ver audit_2026-08-29.md §5): backtester fiel al live (P0), venue legal (P0),
+  MR/FIB sin edge tras fees — congelados hasta evidencia (P0), F04-F08, persistencia posiciones paper, OCO, re-protección al arrancar
 
 ## Sesión 2026-08-29/30 — Auditoría total + investigación SOTA + despliegue Proxmox — CERRADA
 Entregables: tasks/audit_2026-08-29.md (consolidado), tasks/audit/01..05 (119 hallazgos), tasks/research_sota_2026.md, tasks/audit/fixes_round1*.md.

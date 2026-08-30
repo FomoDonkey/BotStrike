@@ -1,5 +1,29 @@
 # BotStrike — Lessons Learned
 
+## Web UI + métricas persistentes (2026-08-31, v2.13.x)
+- **La UI mostraba 0 tras cada restart** porque MetricsCollector es de sesión. Regla: el rendimiento REALIZADO
+  siempre desde la trade DB (persistente); el engine solo aporta lo vivo/unrealized. Un solo builder
+  (`_merged_performance`) alimenta REST y WS → imposible que dos superficies muestren números distintos.
+- **equity_after de la DB NO es encadenable entre sesiones**: cada sesión paper reinicia en initial_capital.
+  Verificado con sqlite en el CT: `equity_after - equity_before == pnl` (pnl NETO de fees). Curva multi-sesión
+  = initial + cumsum(pnl), jamás concatenar equity_after (diente de sierra).
+- **Verificar convenciones de datos contra la DB REAL antes de programar** (sqlite3 en el CT): trade_type solo
+  ENTRY/EXIT en la práctica, pnl neto de fees, sesiones huérfanas con final_equity=0. Los números no mienten.
+- **Deuda de constantes duplicadas**: ANNUALIZATION_FACTOR quedó en 252 en analytics/ cuando v2.5.0 migró
+  logger y backtester a 365. Si una constante vive en 3 sitios, un audit la actualizará en 2.
+- **Código archivado con referencias vivas**: /api/strategies llamaba a engine.research (ResearchEngine movido
+  a archive/) → 500 permanente en la página Strategies. Al archivar un módulo, grep de TODOS sus consumidores.
+  El chequeo sistemático `grep state.engine.X` vs atributos reales del engine encontró solo ese muerto.
+- **Timestamps ISO sin timezone** (`datetime.fromtimestamp().isoformat()` en CT-UTC) se muestran desplazados
+  2h en Madrid. API siempre tz-aware (`fromtimestamp(ts, timezone.utc)`) + campos epoch para charts.
+- **Proton VPN kill-switch bloquea LAN + Tailscale** en el PC de Edgar (`connectex forbidden` incluso al router).
+  Si el deploy o la UI "no llegan": comprobar VPN antes de tocar nada. Fix: "Allow LAN connections" o VPN off.
+- **recharts XAxis type=number+scale=time** genera un tick por punto de datos (se amontonan cuando los trades
+  se agrupan): pasar `ticks` explícitos equiespaciados. Y formatear SIEMPRE los ticks Y (floats de 12 decimales
+  recortados por width parecen números corruptos).
+- Overlay de conexión en cada recarga = fricción en web: probe a /api/health al montar y auto-dismiss si el
+  bridge ya está sano (y sincronizar el exchange real desde health, no del localStorage).
+
 ## Backtester Bug: Zero Signals (2026-04-04)
 - CRITICAL BUG FOUND: `new_bar_arrived` detection in MeanReversionStrategy used `len(df)` to detect new bars. The backtester's sliding window (`df.iloc[max(0,i-500):i+1]`) stabilizes at len=501 after bar 500, so `new_bar_arrived` was permanently False after ~8 hours of simulated data. Result: ZERO trades generated on any symbol.
 - FIX: Changed detection to use `(last_close, last_ts)` tuple instead of `len(df)`.
