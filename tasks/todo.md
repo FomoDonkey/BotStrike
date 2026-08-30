@@ -23,9 +23,20 @@ Objetivo Edgar: ver/controlar el bot del CT desde el navegador (paper trades, ch
 - [x] UI: auto-conexión al cargar (probe /api/health) — sin diálogo de setup en cada recarga; exchange sincronizado desde el bridge
 - [x] Limpieza: interfaces duplicadas TradeRecord/PerfData eliminadas (usa lib/api); chunk duplicado themeStore eliminado
 - [x] Tests 96/96 (4 nuevos: factor 365, encadenado pnl, curva legacy, DD encadenado); ESLint limpio; journal CT 0 errores
+- [x] FASE 0 QUANT (2026-08-31, commit fb073a1, desplegado CT, verify PASS): Fibonacci CONGELADO en las 3 puertas
+  (settings 0.00 + REGIME_WEIGHTS 0.00 + SYMBOL_STRATEGY_MAP BTC=∅) — sin evidencia (research §2.7) y 20% WR en paper;
+  MR NO renormalizado al alza (también congelado por evidencia). Verificado /api/strategies: FIB active=false.
+- [x] Fix P1 risk_sizing-01: guard entry≈stop ABSOLUTO (0.001 en unidades de precio = 50 bps en ADA a $0.20) bloqueaba
+  el 100% de trades de ADA (0 en la DB) → ahora relativo 1e-5 del entry. Tests 100/100 (4 nuevos).
+- [~] Auditoría RONDA 2 RELANZADA: run `wf_013db630-2e7` (la anterior wf_d284053e-b20 quedó en stubs; parciales
+  respaldados en tasks/audit/r2_prev_partial/). Reanudar si se corta:
+  Workflow({scriptPath: "C:\Users\edgar\.claude\projects\C--Users-edgar-Desktop-proyectos-BotStrike\74c3f0b9-a0ae-4a7d-af7d-4bb536ff2ee5\workflows\scripts\botstrike-audit-round2-wf_d284053e-b20.js", resumeFromRunId: "wf_013db630-2e7"})
+- [ ] FASE 1 QUANT (tras síntesis R2): estrategia trend/momentum 1D-1W (única familia con edge neto replicado,
+  research §2.2/§2.8; "desarchivar trend semanal"), entradas maker, riesgo 1-2%/trade, funding como filtro;
+  candidato secundario MR post-shock 4h-3d. Validar con umbrales research §4.4 ANTES de asignar capital.
+- [ ] Prerequisito Fase 2: backtester fiel al live (P0) — sin paridad, los backtests son decorativos
+- [ ] Fase 3: venue legal ES (ejecutar recomendación research_r2_venues §8) + live escalonado 25% × 4 semanas
 - [ ] Opcional: Tailscale login en el CT para acceder a la UI fuera de casa (hoy solo LAN)
-- [ ] Quant round 2 (SIGUE PENDIENTE, ver audit_2026-08-29.md §5): backtester fiel al live (P0), venue legal (P0),
-  MR/FIB sin edge tras fees — congelados hasta evidencia (P0), F04-F08, persistencia posiciones paper, OCO, re-protección al arrancar
 
 ## Sesión 2026-08-29/30 — Auditoría total + investigación SOTA + despliegue Proxmox — CERRADA
 Entregables: tasks/audit_2026-08-29.md (consolidado), tasks/audit/01..05 (119 hallazgos), tasks/research_sota_2026.md, tasks/audit/fixes_round1*.md.
