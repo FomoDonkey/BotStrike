@@ -5,18 +5,39 @@ import { useSystemStore } from "@/stores/systemStore";
 import { useExchangeStore } from "@/stores/exchangeStore";
 import { ExchangeSelector } from "./ExchangeSelector";
 import { startWebSockets, restartWebSockets } from "@/hooks/useWebSocket";
-import { useBridgeConfig } from "@/lib/config";
+import { useBridgeConfig, getBridgeUrl } from "@/lib/config";
+import { probeBridge } from "@/lib/api";
 import { OVERLAY_CONNECTED_MS, OVERLAY_CONNECT_TIMEOUT_MS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
-type Phase = "setup" | "connecting" | "unreachable" | "dismissed";
+type Phase = "probing" | "setup" | "connecting" | "unreachable" | "dismissed";
 
 export function ConnectionOverlay() {
   const bridgeConnected = useSystemStore((s) => s.bridgeConnected);
   const exchange = useExchangeStore((s) => s.exchange);
   const { url: bridgeUrl, mode } = useBridgeConfig();
   const navigate = useNavigate();
-  const [phase, setPhase] = useState<Phase>("setup");
+  const [phase, setPhase] = useState<Phase>("probing");
+
+  // On mount: if the bridge already answers healthy (server deployment with
+  // autostart, or an engine left running), connect silently — no setup dialog
+  // on every page load. Probe failure falls back to the classic setup flow.
+  useEffect(() => {
+    let cancelled = false;
+    probeBridge(getBridgeUrl())
+      .then((h) => {
+        if (cancelled) return;
+        if (h.exchange === "binance" || h.exchange === "hyperliquid") {
+          useExchangeStore.getState().setExchange(h.exchange);
+        }
+        startWebSockets();
+        setPhase("dismissed");
+      })
+      .catch(() => {
+        if (!cancelled) setPhase("setup");
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   // "Connected" is derived, not stored: bridge reachable while we were waiting for it.
   // (v2.11.0 stored it as a phase and the effect below cancelled its own timer — see audit 05.)
@@ -39,7 +60,7 @@ export function ConnectionOverlay() {
     return () => clearTimeout(t);
   }, [phase]);
 
-  if (phase === "dismissed") return null;
+  if (phase === "dismissed" || phase === "probing") return null;
 
   const hostLabel = bridgeUrl.replace(/^https?:\/\//, "");
   const modeBadge = (

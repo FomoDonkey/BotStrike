@@ -22,6 +22,7 @@ export interface HealthResponse {
   uptime_sec: number;
   clients: number;
   version?: string;
+  exchange?: string;
 }
 
 export interface BotStatusResponse {
@@ -92,6 +93,16 @@ export interface PerformanceResponse {
   avg_loss: number;
   profit_factor: number;
   equity_curve: number[];
+  /** Bridge ≥ 2.13.1 — merged all-time (trade DB) + live view */
+  initial_capital?: number;
+  realized_pnl?: number;
+  unrealized_pnl?: number;
+  session_pnl?: number;
+  session_trades?: number;
+  sortino_ratio?: number;
+  expectancy?: number;
+  /** [epoch_seconds, equity] pairs for a real time axis */
+  equity_curve_ts?: [number, number][];
 }
 
 export interface StrategyInfo {

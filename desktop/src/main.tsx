@@ -12,11 +12,12 @@ import { BacktestPage } from "@/pages/backtest/BacktestPage";
 import { DataPage } from "@/pages/data/DataPage";
 import { SettingsPage } from "@/pages/settings/SettingsPage";
 import { SystemPage } from "@/pages/system/SystemPage";
+import { initTheme } from "@/stores/themeStore";
 import "./index.css";
 
-// Safe theme init — wrapped in try-catch for WebView compat
+// Safe theme init — wrapped in try-catch for WebView compat.
+// (Static import: the old dynamic import emitted a duplicate themeStore chunk.)
 try {
-  const { initTheme } = await import("@/stores/themeStore");
   initTheme();
 } catch {
   // Default CSS theme applies

@@ -5,46 +5,16 @@ import { MetricCard } from "@/components/shared/MetricCard";
 import { useTradingStore } from "@/stores/tradingStore";
 import { formatUSD, formatPct, cn } from "@/lib/utils";
 import { STRATEGY_COLORS, STRATEGY_LABELS } from "@/lib/constants";
-import { api } from "@/lib/api";
+import { api, type PerformanceResponse, type TradeRecord } from "@/lib/api";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { TrendingUp, Target, BarChart3, DollarSign, Timer, Percent } from "lucide-react";
 
-interface TradeRecord {
-  id: number;
-  symbol: string;
-  side: string;
-  strategy: string;
-  entry_price: number;
-  exit_price: number;
-  quantity: number;
-  pnl: number;
-  fee: number;
-  duration_sec: number;
-  entry_time: string;
-  exit_time: string;
-  regime: string;
-}
-
-interface PerfData {
-  equity: number;
-  pnl: number;
-  total_trades: number;
-  win_rate: number;
-  sharpe_ratio: number;
-  max_drawdown: number;
-  total_fees: number;
-  avg_win: number;
-  avg_loss: number;
-  profit_factor: number;
-  equity_curve: number[];
-}
-
 export function PerformancePage() {
   const metrics = useTradingStore((s) => s.metrics);
   const [trades, setTrades] = useState<TradeRecord[]>([]);
-  const [perfData, setPerfData] = useState<PerfData | null>(null);
+  const [perfData, setPerfData] = useState<PerformanceResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -69,10 +39,15 @@ export function PerformancePage() {
   }, []);
 
   const equityCurve = perfData?.equity_curve;
+  const equityCurveTs = perfData?.equity_curve_ts;
+  const hasTimeAxis = !!equityCurveTs?.length;
   const equityCurveData = useMemo(() => {
+    if (equityCurveTs?.length) {
+      return equityCurveTs.map(([t, v]) => ({ idx: t * 1000, equity: v }));
+    }
     if (!equityCurve?.length) return [];
     return equityCurve.map((v, i) => ({ idx: i, equity: typeof v === "number" ? v : 1000 }));
-  }, [equityCurve]);
+  }, [equityCurve, equityCurveTs]);
 
   const p = perfData || metrics;
 
@@ -101,7 +76,17 @@ export function PerformancePage() {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
     >
-      <h1 className="text-lg font-semibold text-text-primary">Performance Analytics</h1>
+      <div className="flex items-baseline justify-between">
+        <h1 className="text-lg font-semibold text-text-primary">Performance Analytics</h1>
+        {perfData?.realized_pnl !== undefined && (
+          <div className="flex gap-4 text-[11px] font-mono text-text-muted">
+            <span>Capital <span className="text-text-secondary">{formatUSD(perfData.initial_capital ?? 0)}</span></span>
+            <span>Realized <span className={cn(perfData.realized_pnl >= 0 ? "text-profit" : "text-loss")}>{formatUSD(perfData.realized_pnl)}</span></span>
+            <span>Unrealized <span className={cn((perfData.unrealized_pnl ?? 0) >= 0 ? "text-profit" : "text-loss")}>{formatUSD(perfData.unrealized_pnl ?? 0)}</span></span>
+            <span>Session <span className={cn((perfData.session_pnl ?? 0) >= 0 ? "text-profit" : "text-loss")}>{formatUSD(perfData.session_pnl ?? 0)}</span></span>
+          </div>
+        )}
+      </div>
 
       {/* Metrics */}
       <div className="grid grid-cols-6 gap-3">
@@ -126,7 +111,17 @@ export function PerformancePage() {
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" />
-              <XAxis dataKey="idx" hide />
+              <XAxis
+                dataKey="idx"
+                hide={!hasTimeAxis}
+                type="number"
+                domain={["dataMin", "dataMax"]}
+                scale="time"
+                tick={{ fill: "#8898AA", fontSize: 10, fontFamily: "JetBrains Mono" }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={(v) => new Date(v).toLocaleDateString([], { month: "short", day: "numeric" })}
+              />
               <YAxis
                 domain={["dataMin - 5", "dataMax + 5"]}
                 tick={{ fill: "#8898AA", fontSize: 10, fontFamily: "JetBrains Mono" }}
@@ -138,6 +133,9 @@ export function PerformancePage() {
               <Tooltip
                 contentStyle={{ background: "#0B1120", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12, fontFamily: "JetBrains Mono" }}
                 labelStyle={{ color: "#8898AA" }}
+                labelFormatter={(v) => hasTimeAxis
+                  ? new Date(Number(v)).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+                  : String(v)}
                 formatter={(v: unknown) => [`$${Number(v).toFixed(2)}`, "Equity"]}
               />
               <Area type="monotone" dataKey="equity" stroke="#00D4AA" fill="url(#eqGrad)" strokeWidth={2} dot={false} />

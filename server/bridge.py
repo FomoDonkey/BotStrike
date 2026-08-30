@@ -41,7 +41,7 @@ from config.settings import Settings
 from core.types import MarketRegime, StrategyType, Side
 
 # Single source of truth for the bridge version (reported by /api/health and the OpenAPI schema).
-BRIDGE_VERSION = "2.13.0"
+BRIDGE_VERSION = "2.13.1"
 
 # Auth token for mutating endpoints (live start / live stop).
 # Server deployments set BOTSTRIKE_AUTH_TOKEN in .env so the desktop can be configured with it;
@@ -780,28 +780,151 @@ async def candle_broadcast_loop():
         await asyncio.sleep(1)  # 1s broadcast — real-time feel
 
 
+# ── Cumulative performance (trade DB = source of truth) ──────────
+# The engine's MetricsCollector resets on every service restart; the trade DB
+# persists. Realized performance therefore ALWAYS comes from the DB and the
+# running engine only contributes live/unrealized state. Verified against the
+# CT DB (2026-08-31): pnl is NET of fees (equity_after - equity_before == pnl)
+# and every session restarts equity_after at initial_capital, so the curve is
+# rebuilt by chaining pnl (use_equity_after=False), never from equity_after.
+_perf_cache: Dict[str, object] = {"ts": 0.0, "data": None}
+_PERF_CACHE_TTL_SEC = 5.0
+
+
+def _paper_unrealized_pnl() -> float:
+    """Mark-to-market PnL of open paper positions (0.0 when none/unavailable)."""
+    try:
+        if state.engine and state.engine.paper_sim:
+            return float(sum(
+                getattr(p, "unrealized_pnl", 0.0) or 0.0
+                for p in state.engine.paper_sim.get_all_positions().values()
+            ))
+    except Exception as e:
+        logger.debug("paper_unrealized_error", error=str(e))
+    return 0.0
+
+
+def _cumulative_performance() -> Optional[Dict]:
+    """All-time paper performance from the trade DB (survives restarts). Cached 5 s."""
+    now = time.time()
+    if _perf_cache["data"] is not None and now - _perf_cache["ts"] < _PERF_CACHE_TTL_SEC:
+        return _perf_cache["data"]  # type: ignore[return-value]
+    engine = state.engine
+    if not engine:
+        return None
+    try:
+        initial = float(engine.settings.trading.initial_capital)
+        trades = engine.trade_repo.get_trades(source="paper")
+        closes = [t for t in trades if t.trade_type and t.trade_type != "ENTRY"]
+        if not closes:
+            data = {
+                "initial_capital": initial, "total_trades": 0, "pnl": 0.0,
+                "win_rate": 0.0, "sharpe_ratio": 0.0, "sortino_ratio": 0.0,
+                "max_drawdown": 0.0, "total_fees": 0.0, "avg_win": 0.0,
+                "avg_loss": 0.0, "profit_factor": 0.0, "expectancy": 0.0,
+                "equity_curve_ts": [],
+            }
+        else:
+            from analytics.performance import PerformanceAnalyzer
+            rep = PerformanceAnalyzer().analyze(
+                closes, initial_equity=initial, use_equity_after=False)
+            # (timestamp, equity) pairs; first point = capital before first close
+            pts = [[float(closes[0].timestamp), initial]] + [
+                [float(t.timestamp), float(v)]
+                for t, v in zip(closes, rep.equity_curve[1:])
+            ]
+            if len(pts) > 500:  # downsample for the chart, always keep the last point
+                step = len(pts) // 500 + 1
+                pts = pts[::step] + [pts[-1]]
+            data = {
+                "initial_capital": initial,
+                "total_trades": rep.total_trades,
+                "pnl": round(rep.total_pnl, 4),
+                "win_rate": round(rep.win_rate, 4),
+                "sharpe_ratio": round(rep.sharpe_ratio, 2),
+                "sortino_ratio": round(rep.sortino_ratio, 2),
+                "max_drawdown": round(rep.max_drawdown, 4),
+                "total_fees": round(rep.total_fees, 4),
+                "avg_win": round(rep.avg_win, 4),
+                "avg_loss": round(rep.avg_loss, 4),
+                "profit_factor": round(rep.profit_factor, 2),
+                "expectancy": round(rep.expectancy, 4),
+                "equity_curve_ts": pts,
+            }
+        _perf_cache["ts"] = now
+        _perf_cache["data"] = data
+        return data
+    except Exception as e:
+        logger.debug("cumulative_perf_error", error=str(e), error_type=type(e).__name__)
+        return None
+
+
+def _merged_performance() -> Optional[Dict]:
+    """Combined UI view: all-time realized (DB) + live unrealized + session extras."""
+    engine = state.engine
+    if not engine:
+        return None
+    m = engine.metrics.get_metrics()
+    session_pnl = float(m.get("total_pnl", 0))
+    session_trades = int(m.get("total_trades", 0))
+    cum = _cumulative_performance()
+    if cum is None:
+        # DB unavailable → legacy session-only numbers (never blank the UI)
+        return {
+            "initial_capital": float(engine.settings.trading.initial_capital),
+            "equity": float(engine.risk_manager.current_equity),
+            "pnl": session_pnl, "realized_pnl": session_pnl, "unrealized_pnl": 0.0,
+            "session_pnl": session_pnl, "session_trades": session_trades,
+            "total_trades": session_trades,
+            "win_rate": float(m.get("win_rate", 0)),
+            "sharpe_ratio": float(m.get("sharpe_ratio", 0)),
+            "sortino_ratio": 0.0,
+            "max_drawdown": float(m.get("max_drawdown", 0)),
+            "total_fees": float(m.get("total_fees", 0)),
+            "avg_win": float(m.get("avg_win", 0)),
+            "avg_loss": float(m.get("avg_loss", 0)),
+            "profit_factor": float(m.get("profit_factor", 0)),
+            "equity_curve_ts": [],
+        }
+    unrealized = _paper_unrealized_pnl()
+    out = dict(cum)
+    out.update({
+        "equity": round(cum["initial_capital"] + cum["pnl"] + unrealized, 4),
+        "pnl": round(cum["pnl"] + unrealized, 4),
+        "realized_pnl": cum["pnl"],
+        "unrealized_pnl": round(unrealized, 4),
+        "session_pnl": session_pnl,
+        "session_trades": session_trades,
+    })
+    return out
+
+
 async def metrics_broadcast_loop():
-    """Broadcast performance metrics every 2 seconds."""
+    """Broadcast performance metrics every 2 seconds.
+
+    Sends the MERGED view (trade DB all-time + live unrealized) so the UI never
+    resets to 0 after a service restart. state.equity/pnl feed /api/bot/status."""
     while True:
         try:
             if state.engine and state.running:
-                # MetricsCollector.get_metrics() returns a dict, not attributes
-                m = state.engine.metrics.get_metrics()
-                equity = float(state.engine.risk_manager.current_equity)
-                pnl = float(m.get("total_pnl", 0))
-                await state.channels.broadcast("trading", {
-                    "type": "metrics",
-                    "timestamp": time.time(),
-                    "equity": equity,
-                    "pnl": pnl,
-                    "total_trades": int(m.get("total_trades", 0)),
-                    "win_rate": float(m.get("win_rate", 0)),
-                    "sharpe_ratio": float(m.get("sharpe_ratio", 0)),
-                    "max_drawdown": float(m.get("max_drawdown", 0)),
-                    "total_fees": float(m.get("total_fees", 0)),
-                })
-                state.equity = equity
-                state.pnl = pnl
+                p = _merged_performance()
+                if p:
+                    await state.channels.broadcast("trading", {
+                        "type": "metrics",
+                        "timestamp": time.time(),
+                        "equity": p["equity"],
+                        "pnl": p["pnl"],
+                        "total_trades": p["total_trades"],
+                        "win_rate": p["win_rate"],
+                        "sharpe_ratio": p["sharpe_ratio"],
+                        "max_drawdown": p["max_drawdown"],
+                        "total_fees": p["total_fees"],
+                        "unrealized_pnl": p["unrealized_pnl"],
+                        "session_pnl": p["session_pnl"],
+                        "session_trades": p["session_trades"],
+                    })
+                    state.equity = p["equity"]
+                    state.pnl = p["pnl"]
         except Exception as e:
             logger.debug("metrics_broadcast_error", error=str(e))
         await asyncio.sleep(2)
@@ -1190,25 +1313,15 @@ async def bot_status():
 
 @app.get("/api/performance")
 async def get_performance():
-    if not state.engine:
+    """Merged all-time performance (trade DB) + live unrealized. Same source as
+    the WS metrics broadcast, so every UI surface shows the same numbers."""
+    p = _merged_performance()
+    if p is None:
         return {"error": "Engine not started"}
-
-    m = state.engine.metrics.get_metrics()
-    equity_curve = list(state.engine.metrics._equity_curve)[-500:]
-
-    return {
-        "equity": float(state.engine.risk_manager.current_equity),
-        "pnl": float(m.get("total_pnl", 0)),
-        "total_trades": int(m.get("total_trades", 0)),
-        "win_rate": float(m.get("win_rate", 0)),
-        "sharpe_ratio": float(m.get("sharpe_ratio", 0)),
-        "max_drawdown": float(m.get("max_drawdown", 0)),
-        "total_fees": float(m.get("total_fees", 0)),
-        "avg_win": float(m.get("avg_win", 0)),
-        "avg_loss": float(m.get("avg_loss", 0)),
-        "profit_factor": float(m.get("profit_factor", 0)),
-        "equity_curve": equity_curve,
-    }
+    pts = p.get("equity_curve_ts") or []
+    # Legacy flat list kept for older clients; new clients use equity_curve_ts
+    p["equity_curve"] = [v for _, v in pts] if pts else [p["initial_capital"]]
+    return p
 
 
 @app.get("/api/strategies")

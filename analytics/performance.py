@@ -141,7 +141,7 @@ class PerformanceAnalyzer:
         report = analyzer.from_backtest_result(result)
     """
 
-    ANNUALIZATION_FACTOR = 252  # trading days per year
+    ANNUALIZATION_FACTOR = 365  # crypto trades 24/7 (aligned with logger.py & backtester, audit v2.5.0)
 
     def analyze(
         self,
@@ -149,6 +149,7 @@ class PerformanceAnalyzer:
         initial_equity: float = 100_000.0,
         label: str = "total",
         dimension: str = "total",
+        use_equity_after: bool = True,
     ) -> PerformanceReport:
         """Analiza una lista de trades y genera reporte completo.
 
@@ -157,6 +158,10 @@ class PerformanceAnalyzer:
             initial_equity: Equity inicial para cálculos de retorno
             label: Etiqueta del segmento
             dimension: Tipo de segmento (strategy, symbol, regime, total)
+            use_equity_after: si False, la equity curve se construye encadenando
+                pnl (equity += pnl) e ignora equity_after. Necesario para análisis
+                MULTI-SESIÓN: cada sesión paper/live reinicia equity_after en
+                initial_capital, por lo que usarla produce dientes de sierra.
 
         Returns:
             PerformanceReport con todas las métricas
@@ -209,7 +214,7 @@ class PerformanceAnalyzer:
 
         # ── Equity curve y drawdown ──────────────────────────────────
         report.initial_equity = initial_equity
-        equity_curve = self._build_equity_curve(trades, initial_equity)
+        equity_curve = self._build_equity_curve(trades, initial_equity, use_equity_after)
         report.equity_curve = equity_curve
         report.final_equity = equity_curve[-1] if equity_curve else initial_equity
 
@@ -574,12 +579,17 @@ class PerformanceAnalyzer:
     def _build_equity_curve(
         trades: List[TradeRecord],
         initial_equity: float,
+        use_equity_after: bool = True,
     ) -> List[float]:
-        """Reconstruye equity curve desde trades."""
+        """Reconstruye equity curve desde trades.
+
+        use_equity_after=False encadena pnl (multi-sesión: equity_after se
+        reinicia en initial_capital al arrancar cada sesión).
+        """
         curve = [initial_equity]
         equity = initial_equity
         for t in trades:
-            if t.equity_after > 0:
+            if use_equity_after and t.equity_after > 0:
                 equity = t.equity_after
             else:
                 equity += t.pnl
