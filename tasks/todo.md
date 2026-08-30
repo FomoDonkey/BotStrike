@@ -9,6 +9,7 @@ Objetivo Edgar: ver/controlar el bot del CT desde el navegador (paper trades, ch
 - [x] Chart Trading: marcadores de trades históricos desde la DB (persisten al recargar) + fix lado de posición en exits
 - [x] Verificado local: 92/92 tests, bridge 2.13.0 sirve UI en 127.0.0.1:9421, Dashboard/Trading renderizan sin errores de consola
 - [ ] Deploy CT 104 (`bash deploy/remote_deploy.sh`) + verificación real en navegador vía LAN (192.168.1.204:9420)
+  - BLOQUEADO 2026-08-31: Proton VPN kill-switch bloquea LAN + Tailscale (ni router 192.168.1.1 ni 100.68.139.93 responden; `connectex forbidden`). Fix: Proton → Settings → "Allow LAN connections" (o desconectar VPN) y relanzar el deploy.
 - [ ] Token: pegar BOTSTRIKE_AUTH_TOKEN del .env del CT en Settings → Connection para start/stop/backtest desde la web
 
 ## Sesión 2026-08-29/30 — Auditoría total + investigación SOTA + despliegue Proxmox — CERRADA
