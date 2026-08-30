@@ -8,7 +8,7 @@ REPO_SSH=git@github.com:FomoDonkey/BotStrike.git
 echo "[1/6] system packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl ca-certificates git chrony ufw sqlite3 >/dev/null
+apt-get install -y -qq curl ca-certificates git chrony ufw sqlite3 logrotate >/dev/null
 systemctl enable --now chrony >/dev/null 2>&1 || true
 
 echo "[2/6] service user"
@@ -35,7 +35,8 @@ if [ ! -f $APP_DIR/.env ]; then
 fi
 chown botstrike:botstrike $APP_DIR/.env && chmod 600 $APP_DIR/.env
 
-echo "[6/6] systemd + firewall"
+echo "[6/6] systemd + firewall + logrotate"
+cp $APP_DIR/deploy/logrotate-botstrike /etc/logrotate.d/botstrike && chmod 644 /etc/logrotate.d/botstrike
 cp $APP_DIR/deploy/botstrike-bridge.service /etc/systemd/system/botstrike-bridge.service
 systemctl daemon-reload
 systemctl enable --now botstrike-bridge
