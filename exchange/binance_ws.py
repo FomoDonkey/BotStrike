@@ -142,11 +142,15 @@ class BinanceWebSocket:
             # Orderbook depth: convertir formato
             binance_sym = stream.split("@")[0].upper()
             symbol = SYMBOL_MAP_REVERSE.get(binance_sym, binance_sym)
+            # USDT-M futures @depth streams use short keys "b"/"a" (verified
+            # against the live stream, audit P1-04). Keep "bids"/"asks" as a
+            # fallback for REST-shaped payloads / other venues.
             depth_data = {
                 "s": symbol,
-                "b": data.get("bids", []),
-                "a": data.get("asks", []),
-                "E": int(time.time() * 1000),
+                "b": data.get("b", data.get("bids", [])),
+                "a": data.get("a", data.get("asks", [])),
+                "E": int(data.get("E", int(time.time() * 1000))),
+                "T": int(data.get("T", data.get("E", int(time.time() * 1000)))),
             }
             await self._emit("depth", depth_data)
             await self._emit("depthUpdate", depth_data)

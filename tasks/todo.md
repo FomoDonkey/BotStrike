@@ -3,17 +3,17 @@
 ## Sesión 2026-08-29 — Auditoría total + investigación SOTA + despliegue Proxmox
 Estado (actualizado en cada paso; si se corta la sesión, retomar desde aquí):
 - [x] Tests locales: 36/36 pasan con `py -3.12 -m pytest tests/` (el `python` por defecto es un venv ajeno sin pytest)
-- [~] Investigación SOTA 2026 (agente web) → tasks/research_sota_2026.md
-- [~] Auditoría en 5 dominios (agentes en paralelo, cada uno escribe su archivo): tasks/audit/01_core_strategy_risk.md, 02_exchange_execution.md, 03_bridge_deploy_security.md, 04_backtest_quant_evidence.md (incluye descarga klines FUTURES + backtests de evidencia), 05_desktop.md
+- [x] Investigación SOTA 2026 → tasks/research_sota_2026.md (366 líneas; CRÍTICO: Binance cesó servicios en España 1-jul-2026, verificado)
+- [~] Auditoría en 5 dominios — LISTAS: 01 core (28: 3 P0/7 P1), 02 exchange/exec (23: 3 P0/10 P1), 03 bridge/deploy (27: 2 P0 ya corregidos/7 P1); PENDIENTES: 04 backtests (reanudado, descargando klines), 05 desktop (reanudado, faltan diffs). Archivos: tasks/audit/01_core_strategy_risk.md, 02_exchange_execution.md, 03_bridge_deploy_security.md, 04_backtest_quant_evidence.md (incluye descarga klines FUTURES + backtests de evidencia), 05_desktop.md
 - [ ] Consolidar → tasks/audit_2026-08-29.md (resumen ejecutivo + plan de fixes)
-- [ ] Aplicar fixes P0/P1 + tests + commit
+- [x] Ronda 1 Python VERIFICADA por mí (92/92 tests; bridge real: health 503→200, ws_connected, 401 sin token, docs 404): 7 fixes core/exchange (close_all_positions antes de cancel_all, is_exit_signal, performance factor no permanente + exits con entradas bloqueadas, exchangeInfo step/tick/minNotional, retries no idempotentes, depth b/a, SL/TP tras FILLED) + 8 fixes bridge (health real, watchdog crash-only, backtest en hilo, auth remota, crash logueado, settings en start, pyarrow, unit). Detalle: (a) core/exchange → tasks/audit/fixes_round1.md + tests/test_p0_round2.py; (b) bridge/deploy → tasks/audit/fixes_round1_bridge.md + tests/test_bridge_round2.py
 - [x] CT 104 `botstrike` en Proxmox (Debian 13, 192.168.1.204, 4c/4GB/20G, onboot, tun) — creado 2026-08-28
 - [x] CT: uv + Python 3.12.14, venv con deps OK, repo clonado en /opt/botstrike/app (deploy key read-only), .env copiado (600)
-- [ ] BLOQUEO DE RED (2026-08-29): ProtonVPN activo con kill switch en win-01 bloquea LAN (ni router 192.168.1.1 responde) y Tailscale local está "logged out". Para desplegar hace falta: (a) ProtonVPN → Settings → "Allow LAN connections" o desconectar; (b) `tailscale login` en win-01. Sin esto no hay acceso a proxmox-mizu (100.68.139.93) ni al CT.
+- [x] (resuelto: usuario desactivó ProtonVPN y logueó Tailscale) BLOQUEO DE RED (2026-08-29): ProtonVPN activo con kill switch en win-01 bloquea LAN (ni router 192.168.1.1 responde) y Tailscale local está "logged out". Para desplegar hace falta: (a) ProtonVPN → Settings → "Allow LAN connections" o desconectar; (b) `tailscale login` en win-01. Sin esto no hay acceso a proxmox-mizu (100.68.139.93) ni al CT.
 - [ ] CT: Tailscale login (requiere URL de auth del usuario), ufw, chrony, logs/
 - [x] Fix P0: `BOTSTRIKE_AUTOSTART` no lo leía nadie → añadido en lifespan de server/bridge.py (paper|dry_run; live rechazado). VERIFICADO en local: engine_running=true a t+20s, WS 16 streams
 - [x] Scripts: deploy/verify.sh (dentro del CT), deploy/host_deploy.sh (en el host), deploy/remote_deploy.sh (desde el PC: 1 comando) — sintaxis OK, LF
-- [ ] Desplegar bot (bridge + engine paper autostart) como servicio systemd + verificación real (health, WS, datos) — `bash deploy/remote_deploy.sh` cuando haya red
+- [x] DESPLEGADO v2.12.0 (c18bb32) en CT 104 el 2026-08-29 21:41 UTC: verify.sh PASS (engine paper running, WS 16 streams, ufw activo, BOTSTRIKE_AUTH_TOKEN generado en .env del CT). Redeploy tras fixes: `bash deploy/remote_deploy.sh`
 - [ ] Desktop: URL del bridge configurable (Settings → Connection) + release
 - [ ] Actualizar lessons.md + memoria
 

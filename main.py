@@ -143,6 +143,10 @@ class BotStrike:
         self._last_regime: Dict[str, MarketRegime] = {}
         # Posiciones internas por símbolo+estrategia
         self._positions: Dict[str, Position] = {}
+        # Flatten guards (audit F01 / P0-03): drawdown halt flattens ONCE,
+        # shutdown flattens ONCE even if shutdown() is invoked twice.
+        self._dd_flattened: bool = False
+        self._shutdown_flatten_done: bool = False
 
     async def start(self) -> None:
         """Inicia el sistema de trading."""
@@ -518,21 +522,29 @@ class BotStrike:
         all_signals: List[Signal] = []
 
         for strategy in self.strategies:
-            if not strategy.should_activate(regime):
-                continue
-            if not self.portfolio_manager.should_strategy_trade(
-                strategy.strategy_type, regime, symbol=symbol
-            ):
-                continue
-
-            allocated = self.portfolio_manager.get_allocation(
-                symbol, regime, strategy.strategy_type
-            )
-
             if self.paper_sim:
                 current_pos = self.paper_sim.get_position(symbol, strategy.strategy_type)
             else:
                 current_pos = self._positions.get(symbol)
+
+            # Regime / performance gates apply to ENTRIES only (audit F03 + F09).
+            # An open position must ALWAYS be managed (trailing stop, software
+            # SL, stale exit): generate_signals still runs for it and only exit
+            # signals are kept when entries are blocked.
+            entries_allowed = (
+                strategy.should_activate(regime)
+                and self.portfolio_manager.should_strategy_trade(
+                    strategy.strategy_type, regime, symbol=symbol
+                )
+            )
+            if current_pos is None and not entries_allowed:
+                continue
+
+            allocated = 0.0
+            if entries_allowed:
+                allocated = self.portfolio_manager.get_allocation(
+                    symbol, regime, strategy.strategy_type
+                )
 
             kelly_pct = self.risk_manager.get_kelly_risk_pct(strategy.strategy_type)
 
@@ -542,6 +554,8 @@ class BotStrike:
                 obi=obi_result,
                 kelly_risk_pct=kelly_pct,
             )
+            if not entries_allowed:
+                signals = [s for s in signals if OrderExecutionEngine.is_exit_signal(s)]
 
             for sig in signals:
                 self.trading_logger.log_signal(sig)
@@ -752,14 +766,18 @@ class BotStrike:
                             "threshold": f"{self.settings.trading.max_drawdown_pct:.2%}",
                         })
                     self.risk_manager._drawdown_halted = True
-                    if not self.dry_run and not self.paper:
-                        await self.execution_engine.cancel_all()
+                    # Flatten ONCE (audit F01 / P0-03): close positions to
+                    # market BEFORE cancelling orders, never every 2 s.
+                    if not self._dd_flattened:
+                        self._dd_flattened = True
+                        await self._flatten_all(reason="max_drawdown")
                 else:
                     # Reset halt when drawdown recovers below threshold
                     if self.risk_manager._drawdown_halted:
                         logger.info("drawdown_recovered_below_threshold",
                                     drawdown=f"{self.risk_manager.current_drawdown_pct:.2%}")
                     self.risk_manager._drawdown_halted = False
+                    self._dd_flattened = False
 
                 await asyncio.sleep(self.settings.trading.risk_check_interval_sec)
 
@@ -818,12 +836,65 @@ class BotStrike:
                 logger.error("metrics_error", error=str(e))
                 await asyncio.sleep(30)
 
+    async def _flatten_all(self, reason: str) -> None:
+        """Close EVERY open position, THEN cancel all orders (audit F01 / P0-03).
+
+        Order matters: cancel_all() removes the exchange SL/TP, so it must
+        never run while positions are still open. Paper mode closes the
+        simulator positions and feeds the fills through the normal pipeline.
+        """
+        if self.paper and self.paper_sim:
+            try:
+                fills = self.paper_sim.close_all_positions(reason=reason)
+                for trade in fills:
+                    await self._process_paper_fill(trade)
+                    self._notify_strategies_flat(trade.symbol, trade.strategy)
+            except Exception as e:
+                logger.error("paper_flatten_failed", reason=reason, error=str(e))
+            return
+        if self.dry_run:
+            return
+        result: Dict = {}
+        try:
+            result = await self.execution_engine.close_all_positions()
+        except Exception as e:
+            logger.error("flatten_close_positions_failed", reason=reason, error=str(e))
+        remaining = result.get("remaining") if isinstance(result, dict) else None
+        if remaining:
+            logger.critical("flatten_incomplete_positions_remain", reason=reason,
+                            symbols=[p.get("symbol") for p in remaining])
+            asyncio.ensure_future(self.notifier.notify_error(
+                "flatten_incomplete", f"{reason}: {[p.get('symbol') for p in remaining]}"))
+        for item in (result.get("closed") or []) if isinstance(result, dict) else []:
+            self._positions.pop(item.get("symbol"), None)
+            self._notify_strategies_flat(item.get("symbol"), None)
+        await self.execution_engine.cancel_all()
+
+    def _notify_strategies_flat(self, symbol: Optional[str], strategy_type) -> None:
+        """Reset strategy state/cooldown after an externally forced exit."""
+        if not symbol:
+            return
+        for strategy in self.strategies:
+            if strategy_type is not None and strategy.strategy_type != strategy_type:
+                continue
+            if hasattr(strategy, "notify_external_exit"):
+                try:
+                    strategy.notify_external_exit(symbol, time.time())
+                except Exception:
+                    pass
+
     async def shutdown(self) -> None:
         """Apaga el sistema de forma limpia."""
         logger.info("botstrike_shutting_down")
         self._running = False
-        if not self.dry_run and not self.paper:
-            await self.execution_engine.cancel_all()
+        # Audit F01 / P0-03: never cancel SL/TP while positions are open.
+        if not self._shutdown_flatten_done:
+            self._shutdown_flatten_done = True
+            if self.settings.trading.close_positions_on_shutdown:
+                await self._flatten_all(reason="shutdown")
+            elif not self.dry_run and not self.paper:
+                logger.warning("shutdown_positions_kept_protectives_left_alive",
+                               open_positions=list(self._positions.keys()))
         await self.websocket.stop()
         await self.client.close()
 

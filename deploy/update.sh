@@ -8,7 +8,13 @@ export PATH=\$HOME/.local/bin:\$PATH
 cd $APP_DIR
 git fetch -q origin main
 git reset -q --hard origin/main
-uv pip install -q --python .venv/bin/python -r requirements.txt
+# Reproducible install: prefer the pinned lock (generated in the CT with
+#   uv pip compile requirements.txt -o requirements.lock); fall back to the floating file.
+if [ -f requirements.lock ]; then
+  uv pip sync -q --python .venv/bin/python requirements.lock
+else
+  uv pip install -q --python .venv/bin/python -r requirements.txt
+fi
 git log --oneline -1
 "
 cp $APP_DIR/deploy/botstrike-bridge.service /etc/systemd/system/botstrike-bridge.service

@@ -5,7 +5,9 @@ covarianza (Risk Parity), volatility targeting, y correlation regime.
 """
 from __future__ import annotations
 import math
-from typing import Dict, Optional
+import time
+from collections import deque
+from typing import Deque, Dict, Optional
 
 from config.settings import Settings, TradingConfig
 from core.types import MarketRegime, StrategyType
@@ -66,6 +68,15 @@ SYMBOL_STRATEGY_MAP: Dict[str, set] = {
     "SOL-USD": {StrategyType.MEAN_REVERSION},                   # MR only per user preference
 }
 
+# Performance factor (audit F03) — evaluated on CLOSED trades only, normalized
+# in R-multiples (avg PnL / risk budget per trade), never permanent.
+PERF_MIN_TRADES = 20            # closed trades required before the factor can move
+PERF_WINDOW = 50                # rolling window of closed-trade PnLs
+PERF_FLOOR = 0.5
+PERF_CEIL = 1.5
+PERF_BLOCK_THRESHOLD = 0.6      # below this should_strategy_trade() blocks entries
+PERF_BLOCK_COOLDOWN_SEC = 3600  # after this the window is reset (probation) — no deadlock
+
 
 class PortfolioManager:
     """Gestiona la asignación de capital entre estrategias y activos.
@@ -91,6 +102,14 @@ class PortfolioManager:
         self._strategy_trades: Dict[StrategyType, int] = {
             st: 0 for st in StrategyType
         }
+        # Rolling window of CLOSED-trade PnLs per strategy (audit F03: entries
+        # with pnl=0 must not dilute the average; performance is never permanent).
+        self._strategy_closed_pnl: Dict[StrategyType, Deque[float]] = {
+            st: deque(maxlen=PERF_WINDOW) for st in StrategyType
+        }
+        self._perf_blocked_since: Dict[StrategyType, float] = {}
+        self._perf_last_logged: Dict[StrategyType, float] = {}
+        self._now = time.time  # injectable clock (tests)
 
         # Pesos actuales (se ajustan dinámicamente)
         self._current_weights: Dict[StrategyType, float] = {
@@ -193,27 +212,62 @@ class PortfolioManager:
 
         return max(allocation, 0.0)
 
+    def _risk_budget_per_trade(self) -> float:
+        """USD risked per trade at current equity (normalizer for the factor)."""
+        equity = self.risk_manager.current_equity
+        if equity <= 0:
+            equity = self.config.initial_capital
+        return max(equity * self.config.risk_per_trade_pct, 1e-6)
+
     def _performance_factor(self, strategy: StrategyType) -> float:
         """Factor de ajuste basado en rendimiento de la estrategia.
-        Rango: 0.5 (peor) a 1.5 (mejor).
-        """
-        pnl = self._strategy_pnl.get(strategy, 0)
-        trades = self._strategy_trades.get(strategy, 0)
+        Rango: PERF_FLOOR (0.5, peor) a PERF_CEIL (1.5, mejor).
 
-        if trades < 5:
+        Audit F03: the old formula used absolute USD (x100) so 5 fills with an
+        average of -$0.03 disabled a strategy forever. Now:
+        - only CLOSED trades count (rolling window of PERF_WINDOW);
+        - neutral (1.0) until PERF_MIN_TRADES closed trades exist;
+        - avg PnL is expressed in R-multiples of the per-trade risk budget
+          (avg_r = -1 => lost a full risk budget per trade => ~0.55);
+        - a WARNING is logged whenever the factor reduces allocation.
+        """
+        closed = self._strategy_closed_pnl.get(strategy)
+        n = len(closed) if closed else 0
+        if n < PERF_MIN_TRADES:
             return 1.0  # no hay suficiente historial
 
-        avg_pnl = pnl / trades
-        # Normalizar: si avg_pnl es positivo, aumentar; si negativo, reducir
-        # Usamos una función sigmoide suave
-        exp_val = max(-500, min(500, -avg_pnl * 100))
-        factor = 1.0 + 0.5 * (2.0 / (1.0 + math.e ** exp_val) - 1.0)
-        return max(0.5, min(1.5, factor))
+        avg_r = (sum(closed) / n) / self._risk_budget_per_trade()
+        factor = 1.0 + 0.5 * math.tanh(1.5 * avg_r)
+        factor = max(PERF_FLOOR, min(PERF_CEIL, factor))
 
-    def update_strategy_pnl(self, strategy: StrategyType, pnl: float) -> None:
-        """Registra PnL de un trade para ajuste de asignación."""
+        if factor < 1.0:
+            last = self._perf_last_logged.get(strategy)
+            if last is None or abs(last - factor) >= 0.05:
+                logger.warning("strategy_allocation_reduced_by_performance",
+                               strategy=strategy.value, factor=round(factor, 3),
+                               avg_r=round(avg_r, 3), closed_trades=n)
+                self._perf_last_logged[strategy] = factor
+        else:
+            self._perf_last_logged.pop(strategy, None)
+        return factor
+
+    def update_strategy_pnl(
+        self, strategy: StrategyType, pnl: float, is_exit: Optional[bool] = None,
+    ) -> None:
+        """Registra PnL de un fill para ajuste de asignación.
+
+        `is_exit` marks a closing fill; when None it is inferred from pnl != 0
+        (entries are recorded with pnl=0 by both paper and live pipelines).
+        Only closing fills feed the performance window.
+        """
         self._strategy_pnl[strategy] = self._strategy_pnl.get(strategy, 0) + pnl
         self._strategy_trades[strategy] = self._strategy_trades.get(strategy, 0) + 1
+        if is_exit is None:
+            is_exit = pnl != 0
+        if is_exit:
+            self._strategy_closed_pnl.setdefault(
+                strategy, deque(maxlen=PERF_WINDOW)
+            ).append(pnl)
 
     def get_portfolio_summary(self) -> Dict:
         """Resumen del estado del portfolio."""
@@ -246,8 +300,31 @@ class PortfolioManager:
         if base_weight < 0.08:
             return False
 
+        # Performance gate — NEVER permanent (audit F03). A blocked strategy is
+        # re-enabled on probation after PERF_BLOCK_COOLDOWN_SEC with a fresh
+        # window, and every transition is logged.
         perf = self._performance_factor(strategy)
-        if perf < 0.6:
+        now = self._now()
+        if perf < PERF_BLOCK_THRESHOLD:
+            since = self._perf_blocked_since.get(strategy)
+            if since is None:
+                self._perf_blocked_since[strategy] = now
+                logger.warning("strategy_disabled_by_performance",
+                               strategy=strategy.value, factor=round(perf, 3),
+                               closed_trades=len(self._strategy_closed_pnl.get(strategy, ())),
+                               cooldown_sec=PERF_BLOCK_COOLDOWN_SEC)
+                return False
+            if now - since >= PERF_BLOCK_COOLDOWN_SEC:
+                self._strategy_closed_pnl[strategy].clear()
+                self._perf_blocked_since.pop(strategy, None)
+                self._perf_last_logged.pop(strategy, None)
+                logger.warning("strategy_reenabled_after_cooldown",
+                               strategy=strategy.value, blocked_sec=round(now - since))
+                return True
             return False
 
+        if strategy in self._perf_blocked_since:
+            self._perf_blocked_since.pop(strategy, None)
+            logger.info("strategy_performance_recovered",
+                        strategy=strategy.value, factor=round(perf, 3))
         return True

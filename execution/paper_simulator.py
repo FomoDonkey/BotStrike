@@ -341,6 +341,46 @@ class PaperTradingSimulator:
         """Exposicion total en USD."""
         return sum(pos.entry_price * pos.size for pos in self._positions.values())
 
+    def close_all_positions(self, reason: str = "shutdown") -> List[Trade]:
+        """Cierra TODAS las posiciones paper a mercado (paridad con
+        OrderExecutionEngine.close_all_positions, audit F01 / P0-03).
+
+        Fill al ultimo precio conocido con slippage adverso (taker). Retorna
+        los Trade de salida para que main._process_paper_fill los registre.
+        """
+        trades: List[Trade] = []
+        for key, pos in list(self._positions.items()):
+            price = self._last_prices.get(pos.symbol, pos.entry_price)
+            if price <= 0:
+                price = pos.entry_price
+            slip = self.config.slippage_bps * price / 10_000
+            exit_price = price - slip if pos.side == Side.BUY else price + slip
+            pnl, fee = pos.close(exit_price, self.config.taker_fee)
+            close_side = Side.SELL if pos.side == Side.BUY else Side.BUY
+            hold_time = time.time() - pos.open_time if pos.open_time > 0 else 0
+            trade = Trade(
+                symbol=pos.symbol,
+                side=close_side,
+                price=exit_price,
+                quantity=pos.size,
+                fee=fee,
+                order_id=f"paper_close_{uuid.uuid4().hex[:8]}",
+                strategy=pos.strategy,
+                pnl=pnl,
+                expected_price=pos.entry_price,
+                signal_features=_build_exit_features(pos, exit_price, hold_time,
+                                                     f"exit_{reason}", reason.upper()),
+            )
+            trades.append(trade)
+            del self._positions[key]
+            self._trade_count += 1
+            logger.warning(
+                "paper_position_flattened", symbol=pos.symbol, reason=reason,
+                strategy=pos.strategy.value, side=close_side.value,
+                price=round(exit_price, 4), pnl=round(pnl, 2),
+            )
+        return trades
+
     @property
     def position_count(self) -> int:
         return len(self._positions)

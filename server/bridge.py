@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
 import json
 import os
 import sys
@@ -26,8 +27,9 @@ from typing import Dict, Optional, Set
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import secrets
 import structlog
 
@@ -36,14 +38,35 @@ logger = structlog.get_logger(__name__)
 from config.settings import Settings
 from core.types import MarketRegime, StrategyType, Side
 
+# Single source of truth for the bridge version (reported by /api/health and the OpenAPI schema).
+BRIDGE_VERSION = "2.12.1"
+
 # Auth token for mutating endpoints (live start / live stop).
 # Server deployments set BOTSTRIKE_AUTH_TOKEN in .env so the desktop can be configured with it;
 # otherwise a random per-process token is generated (desktop-local mode reads it from /api/bot/status).
 _AUTH_TOKEN = os.getenv("BOTSTRIKE_AUTH_TOKEN", "").strip() or secrets.token_hex(16)
 # Only expose the token over HTTP when bound to loopback (same-machine desktop). On 0.0.0.0 it would
 # hand live-trading control to anyone on the LAN/tailnet. Set in main() from --host.
+# When False (non-loopback bind) start/stop/backtest REQUIRE the token in every mode.
 _EXPOSE_TOKEN = True
 VALID_MODES = {"paper", "dry_run", "live"}
+VALID_EXCHANGES = ("binance", "hyperliquid", "strike")
+
+# ── Health / watchdog thresholds ─────────────────────────────────
+# /api/health answers 503 when the engine is expected but dead, or running with no ticks for this long.
+HEALTH_STALE_TICK_SEC = 120.0
+# Internal watchdog (only active with BOTSTRIKE_AUTOSTART): checked every 30 s; ticks older than
+# 300 s on 3 consecutive checks (or engine not running) → restart engine in-process with backoff;
+# after 5 attempts inside a 10-min window → os._exit(3) so systemd (Restart=always) restarts us.
+_WATCHDOG_INTERVAL_SEC = 30.0
+_WATCHDOG_STALE_SEC = 300.0
+_WATCHDOG_STALE_STRIKES = 3
+_WATCHDOG_BACKOFF_SEC = (10.0, 30.0, 60.0, 60.0, 60.0)
+_WATCHDOG_MAX_ATTEMPTS = 5
+_WATCHDOG_WINDOW_SEC = 600.0
+_WATCHDOG_EXIT_CODE = 3
+# Engine tasks (index order from BotStrike.start) whose death must never be silently ignored.
+_CRITICAL_ENGINE_TASKS = ("ws_market", "strategy", "risk_monitor")
 from server.serializers import (
     serialize_orderbook, serialize_signal, serialize_position,
     serialize_trade, serialize_market_snapshot, serialize_micro_snapshot,
@@ -114,6 +137,18 @@ class BridgeState:
         self.start_time = time.time()
         self.mode = "paper"
         self.exchange = "binance"
+
+        # Supervision (health + watchdog)
+        self.autostart_mode = ""            # "paper"|"dry_run" when BOTSTRIKE_AUTOSTART is set
+        self.engine_expected = False        # True: autostart configured or started via API, not stopped by operator
+        self.engine_started_at = 0.0
+        self.last_tick_ts = 0.0             # last raw Binance trade tick seen by the bridge hook
+        self.shutting_down = False
+        self.restart_in_progress = False
+        self.restart_attempts: deque = deque()   # timestamps of watchdog restart attempts
+        self.watchdog_stale_strikes = 0
+        self.bg_tasks: Set[asyncio.Task] = set()
+        self.backtest_running = False
 
         # Throttled broadcast: swap-and-drain pattern (thread-safe for asyncio)
         self._market_queue: Dict[str, dict] = {}
@@ -186,14 +221,37 @@ async def update_market_data():
 
 
 # ── Engine Integration ───────────────────────────────────────────
-async def start_engine(mode: str = "paper"):
-    """Start the BotStrike trading engine."""
+def _spawn(coro) -> asyncio.Task:
+    """create_task + keep a strong reference (asyncio may GC unreferenced tasks mid-flight)."""
+    task = asyncio.create_task(coro)
+    state.bg_tasks.add(task)
+    task.add_done_callback(state.bg_tasks.discard)
+    return task
+
+
+def _build_settings(exchange: str = "binance") -> Settings:
+    """Settings for a given venue (fees/slippage). Binance keeps the plain defaults."""
+    settings = Settings()
+    settings.trading.exchange_venue = exchange
+    if exchange == "hyperliquid":
+        settings.trading.maker_fee = 0.00015   # 1.5 bps
+        settings.trading.taker_fee = 0.00045   # 4.5 bps
+        settings.trading.slippage_bps = 2.0    # DEX has slightly wider spread
+    return settings
+
+
+async def start_engine(mode: str = "paper", settings: Optional[Settings] = None):
+    """Start the BotStrike trading engine.
+
+    `settings` lets the caller pass venue-specific config (fees/slippage); when omitted
+    a default Settings() is used. Binance stays the data/execution backend (use_binance=True).
+    """
     # Update market data in background — don't block engine start
-    asyncio.create_task(update_market_data())
+    _spawn(update_market_data())
 
     from main import BotStrike
 
-    settings = Settings()
+    settings = settings if settings is not None else Settings()
     # Paper/dry-run: always use mainnet for real price data (testnet prices differ).
     # Live mode: respect settings.use_testnet from .env (user may want testnet for testing).
     is_paper = mode == "paper"
@@ -209,6 +267,9 @@ async def start_engine(mode: str = "paper"):
     )
     state.mode = mode
     state.running = True
+    state.engine_expected = True
+    state.engine_started_at = time.time()
+    state.last_tick_ts = 0.0
 
     # Set leverage on exchange (match CLI behavior — main.py:162-169)
     if not is_dry_run and not is_paper:
@@ -224,23 +285,50 @@ async def start_engine(mode: str = "paper"):
 
 
 async def _run_engine():
-    """Run the engine with error handling."""
+    """Run the engine. A crash is logged with full traceback (journald) and, under autostart,
+    handed to the watchdog restart path. A normal return while the engine is still expected
+    (e.g. _supervise_tasks gave up) is treated the same way — never silently."""
+    failure: Optional[str] = None
     try:
         await state.engine.start()
     except asyncio.CancelledError:
         pass
     except Exception as e:
-        await state.channels.broadcast("system", {
-            "type": "engine_error",
-            "error": str(e),
-            "timestamp": time.time(),
-        })
+        failure = f"{type(e).__name__}: {e}"
+        logger.exception("engine_crashed", error=str(e), error_type=type(e).__name__,
+                         mode=state.mode, exchange=state.exchange)
+        try:
+            await state.channels.broadcast("system", {
+                "type": "engine_error",
+                "error": str(e),
+                "timestamp": time.time(),
+            })
+        except Exception:
+            pass
+    else:
+        if state.engine_expected and not state.shutting_down:
+            failure = "engine.start() returned while still expected"
+            logger.error("engine_exited_unexpectedly", mode=state.mode, exchange=state.exchange,
+                         hint="a critical task died or _supervise_tasks gave up; see previous log lines")
     finally:
         state.running = False
 
+    if failure and state.autostart_mode and state.engine_expected and not state.shutting_down:
+        _spawn(_restart_engine_after_failure(failure))
 
-async def stop_engine():
-    """Gracefully stop the engine — mirrors CLI shutdown sequence (main.py:1080-1104)."""
+
+async def stop_engine(manual: bool = False):
+    """Gracefully stop the engine — mirrors CLI shutdown sequence (main.py:1080-1104).
+
+    manual=True (operator via /api/bot/stop): the engine is no longer *expected*, so health
+    stays 200 with engine_running=false and the watchdog does not resurrect it until the next
+    start (or process restart, where BOTSTRIKE_AUTOSTART applies again).
+    """
+    if manual:
+        state.engine_expected = False
+        if state.autostart_mode:
+            logger.warning("engine_stopped_by_operator", autostart=state.autostart_mode,
+                           hint="watchdog disabled until next start or service restart")
     engine = state.engine
     if engine:
         engine._running = False
@@ -307,6 +395,7 @@ def _install_hooks(engine):
                 return
             is_buy = not data.get("m", False)
             ts = float(data.get("T", time.time() * 1000)) / 1000.0
+            state.last_tick_ts = time.time()  # health/watchdog: raw feed liveness
 
             # Normalize Binance symbol format to match config (BTCUSDT → BTC-USD)
             normalized = symbol
@@ -329,6 +418,18 @@ def _install_hooks(engine):
         engine.websocket.on("trade", on_trade_hook)
 
     engine._setup_ws_callbacks = patched_setup
+
+    # Critical-task watch: main._supervise_tasks only restarts metrics/data_refresh and only
+    # stops the engine after the 4th crash of a critical task; a single death (or a plain
+    # return) of ws_market/strategy/risk_monitor would otherwise leave a "running" engine that
+    # does nothing. Attach done-callbacks that stop the engine so _run_engine/watchdog react.
+    original_supervise = engine._supervise_tasks
+
+    async def patched_supervise(tasks):
+        _watch_critical_tasks(engine, tasks)
+        await original_supervise(tasks)
+
+    engine._supervise_tasks = patched_supervise
 
     # Intercept _process_symbol for signal + state broadcast
     original_process = engine._process_symbol
@@ -446,6 +547,31 @@ def _install_hooks(engine):
             return trade
 
         engine.execution_engine.on_order_update = patched_on_order_update
+
+
+def _watch_critical_tasks(engine, tasks) -> None:
+    for idx, name in enumerate(_CRITICAL_ENGINE_TASKS):
+        if idx >= len(tasks):
+            break
+        tasks[idx].add_done_callback(functools.partial(_on_critical_task_done, engine, name))
+
+
+def _on_critical_task_done(engine, name: str, task: asyncio.Task) -> None:
+    """A critical engine task finished. If the engine was still running this is a failure:
+    log it loudly and flip engine._running so BotStrike.start() unwinds; _run_engine then
+    reports engine_exited_unexpectedly and (under autostart) the watchdog restarts it."""
+    if task.cancelled():
+        return
+    if not getattr(engine, "_running", False) or state.engine is not engine or state.shutting_down:
+        return  # orderly shutdown in progress
+    exc = task.exception()
+    if exc is not None:
+        logger.critical("critical_task_died", task=name, error=str(exc), error_type=type(exc).__name__,
+                        exc_info=exc, action="stopping engine so the watchdog can restart it")
+    else:
+        logger.critical("critical_task_exited", task=name,
+                        action="stopping engine so the watchdog can restart it")
+    engine._running = False
 
 
 async def _broadcast_symbol_state(engine, symbol: str):
@@ -717,6 +843,162 @@ async def system_broadcast_loop():
         await asyncio.sleep(3)
 
 
+# ── Health snapshot + Watchdog ───────────────────────────────────
+def _last_tick_age() -> Optional[float]:
+    """Seconds since the most recent market tick (bridge raw hook or engine's accepted ticks).
+    None when no tick has been seen since the engine started."""
+    latest = float(state.last_tick_ts or 0.0)
+    md = getattr(state.engine, "market_data", None) if state.engine else None
+    times = getattr(md, "_last_data_time", None)
+    if isinstance(times, dict) and times:
+        try:
+            latest = max(latest, max(float(v) for v in times.values()))
+        except (TypeError, ValueError):
+            pass
+    if latest <= 0:
+        return None
+    return max(0.0, time.time() - latest)
+
+
+def _ws_connected() -> bool:
+    eng = state.engine
+    if not eng:
+        return False
+    return bool(getattr(getattr(eng, "websocket", None), "_connected", False))
+
+
+def _health_snapshot() -> dict:
+    """Real health: 'degraded' when the engine is expected but dead, or running without ticks."""
+    now = time.time()
+    tick_age = _last_tick_age()
+    engine_running = bool(state.running)
+    task_alive = bool(state.engine_task and not state.engine_task.done())
+    engine_age = (now - state.engine_started_at) if state.engine_started_at else 0.0
+    reasons = []
+    if state.engine_expected and not engine_running:
+        reasons.append("engine_not_running")
+    if engine_running:
+        if tick_age is not None and tick_age > HEALTH_STALE_TICK_SEC:
+            reasons.append("stale_ticks")
+        elif tick_age is None and engine_age > HEALTH_STALE_TICK_SEC:
+            reasons.append("no_ticks")
+    degraded = bool(reasons)
+    return {
+        "status": "degraded" if degraded else "ok",
+        "degraded": degraded,
+        "reasons": reasons,
+        "version": BRIDGE_VERSION,
+        "engine_running": engine_running,
+        "engine_expected": bool(state.engine_expected),
+        "engine_task_alive": task_alive,
+        "ws_connected": _ws_connected(),
+        "last_tick_age_sec": round(tick_age, 3) if tick_age is not None else None,
+        "autostart": state.autostart_mode or None,
+        "mode": state.mode,
+        "exchange": state.exchange,
+        "uptime_sec": now - state.start_time,
+        "clients": state.channels.client_count,
+    }
+
+
+def _hard_exit(code: int) -> None:
+    """Leave the process so systemd (Restart=always) brings a fresh one up."""
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        pass
+    os._exit(code)
+
+
+def _register_restart_attempt() -> Optional[int]:
+    """Count an attempt inside the sliding window. Returns the attempt number, or None when
+    the budget (_WATCHDOG_MAX_ATTEMPTS per _WATCHDOG_WINDOW_SEC) is exhausted."""
+    now = time.time()
+    while state.restart_attempts and now - state.restart_attempts[0] > _WATCHDOG_WINDOW_SEC:
+        state.restart_attempts.popleft()
+    if len(state.restart_attempts) >= _WATCHDOG_MAX_ATTEMPTS:
+        return None
+    state.restart_attempts.append(now)
+    return len(state.restart_attempts)
+
+
+async def _restart_engine_after_failure(reason: str) -> None:
+    """Crash-only recovery (autostart hosts): retry start_engine with backoff; when the budget
+    is exhausted exit the process with _WATCHDOG_EXIT_CODE for systemd to restart it."""
+    if state.restart_in_progress or state.shutting_down or not state.autostart_mode:
+        return
+    state.restart_in_progress = True
+    try:
+        while True:
+            attempt = _register_restart_attempt()
+            if attempt is None:
+                logger.critical("engine_restart_budget_exhausted", reason=reason,
+                                attempts=_WATCHDOG_MAX_ATTEMPTS, window_sec=_WATCHDOG_WINDOW_SEC,
+                                exit_code=_WATCHDOG_EXIT_CODE,
+                                action="exiting so systemd restarts the service")
+                _hard_exit(_WATCHDOG_EXIT_CODE)
+                return
+            delay = _WATCHDOG_BACKOFF_SEC[min(attempt - 1, len(_WATCHDOG_BACKOFF_SEC) - 1)]
+            logger.warning("engine_restart_scheduled", reason=reason, attempt=attempt,
+                           max_attempts=_WATCHDOG_MAX_ATTEMPTS, delay_sec=delay)
+            await asyncio.sleep(delay)
+            if state.shutting_down or not state.engine_expected:
+                logger.info("engine_restart_aborted", reason="shutdown or operator stop")
+                return
+            try:
+                await stop_engine()  # tear down the dead instance (idempotent)
+                await start_engine(state.autostart_mode, settings=_build_settings(state.exchange))
+                state.watchdog_stale_strikes = 0
+                logger.info("engine_restarted", attempt=attempt, mode=state.autostart_mode,
+                            exchange=state.exchange)
+                return
+            except Exception as e:
+                logger.exception("engine_restart_failed", attempt=attempt, error=str(e),
+                                 error_type=type(e).__name__)
+                reason = f"restart failed: {type(e).__name__}: {e}"
+    finally:
+        state.restart_in_progress = False
+
+
+def _watchdog_tick() -> Optional[str]:
+    """One watchdog check. Returns a failure reason when a restart must be triggered."""
+    if not state.autostart_mode or not state.engine_expected or state.restart_in_progress \
+            or state.shutting_down:
+        state.watchdog_stale_strikes = 0
+        return None
+    if not state.running:
+        state.watchdog_stale_strikes = 0
+        return "watchdog: engine not running"
+    tick_age = _last_tick_age()
+    engine_age = time.time() - state.engine_started_at if state.engine_started_at else 0.0
+    stale = (tick_age is not None and tick_age > _WATCHDOG_STALE_SEC) or \
+            (tick_age is None and engine_age > _WATCHDOG_STALE_SEC)
+    if not stale:
+        state.watchdog_stale_strikes = 0
+        return None
+    state.watchdog_stale_strikes += 1
+    logger.warning("watchdog_stale_ticks", tick_age_sec=tick_age, strikes=state.watchdog_stale_strikes,
+                   strikes_needed=_WATCHDOG_STALE_STRIKES, ws_connected=_ws_connected())
+    if state.watchdog_stale_strikes >= _WATCHDOG_STALE_STRIKES:
+        state.watchdog_stale_strikes = 0
+        return f"watchdog: no ticks for >{int(_WATCHDOG_STALE_SEC)}s on {_WATCHDOG_STALE_STRIKES} checks"
+    return None
+
+
+async def _engine_watchdog_loop():
+    """Every _WATCHDOG_INTERVAL_SEC: engine dead or feed stale → restart path (autostart only)."""
+    while True:
+        await asyncio.sleep(_WATCHDOG_INTERVAL_SEC)
+        try:
+            reason = _watchdog_tick()
+            if reason:
+                logger.error("watchdog_triggered", reason=reason)
+                _spawn(_restart_engine_after_failure(reason))
+        except Exception as e:
+            logger.exception("watchdog_error", error=str(e))
+
+
 # ── FastAPI App ──────────────────────────────────────────────────
 async def _autostart_engine(mode: str, delay_sec: float = 2.0):
     """Start the engine shortly after the port is open (systemd autostart)."""
@@ -724,37 +1006,44 @@ async def _autostart_engine(mode: str, delay_sec: float = 2.0):
     if state.running:
         return
     try:
-        await start_engine(mode)
+        await start_engine(mode, settings=_build_settings(state.exchange))
         logger.info("engine_autostarted", mode=mode, exchange=state.exchange)
     except Exception as e:
-        logger.error("engine_autostart_failed", mode=mode, error=str(e))
+        logger.exception("engine_autostart_failed", mode=mode, error=str(e), error_type=type(e).__name__)
         await state.channels.broadcast("system", {
             "type": "engine_error", "error": f"autostart failed: {e}", "timestamp": time.time(),
         })
+        _spawn(_restart_engine_after_failure(f"autostart failed: {type(e).__name__}: {e}"))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle.
 
-    CRITICAL: Do NOT start the engine here. The user selects exchange and mode
-    from the desktop UI, then clicks Start which calls POST /api/bot/start.
-    The bridge just opens the port immediately so the desktop can connect.
+    Desktop-local: do NOT start the engine here — the user selects exchange and mode from the
+    desktop UI, then clicks Start which calls POST /api/bot/start. The bridge opens the port
+    immediately so the desktop can connect.
+    Server (systemd): BOTSTRIKE_AUTOSTART=paper|dry_run starts the engine and arms the watchdog.
     """
+    state.shutting_down = False
     loops = [
         asyncio.create_task(market_broadcast_loop()),
         asyncio.create_task(candle_broadcast_loop()),
         asyncio.create_task(metrics_broadcast_loop()),
         asyncio.create_task(system_broadcast_loop()),
+        asyncio.create_task(_engine_watchdog_loop()),
     ]
 
-    logger.info("bridge_ready", port=int(os.getenv("BOTSTRIKE_PORT", "9420")))
+    logger.info("bridge_ready", version=BRIDGE_VERSION, port=int(os.getenv("BOTSTRIKE_PORT", "9420")),
+                token_exposed=_EXPOSE_TOKEN)
 
     # Headless/server deployments (systemd): BOTSTRIKE_AUTOSTART=paper|dry_run starts the
     # engine without a desktop click. Unset/empty (desktop-local) keeps the old behaviour.
     # "live" is REFUSED here on purpose: live must be started explicitly with the auth token.
     autostart = os.getenv("BOTSTRIKE_AUTOSTART", "").strip().lower()
     if autostart in ("paper", "dry_run"):
+        state.autostart_mode = autostart
+        state.engine_expected = True
         state.exchange = os.getenv("BOTSTRIKE_AUTOSTART_EXCHANGE", "binance").strip().lower() or "binance"
         loops.append(asyncio.create_task(_autostart_engine(autostart)))
     elif autostart == "live":
@@ -764,16 +1053,17 @@ async def lifespan(app: FastAPI):
         logger.error("autostart_invalid_mode", value=autostart, valid=["paper", "dry_run"])
     yield
 
+    state.shutting_down = True
     await stop_engine()
-    for t in loops:
+    for t in list(loops) + list(state.bg_tasks):
         t.cancel()
         try:
             await t
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, Exception):
             pass
 
 
-app = FastAPI(title="BotStrike Bridge", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="BotStrike Bridge", version=BRIDGE_VERSION, lifespan=lifespan)
 
 # CORS: allow all localhost origins (Tauri uses varying origin formats)
 app.add_middleware(
@@ -783,6 +1073,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_DOCS_PATHS = {"/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
+
+
+@app.middleware("http")
+async def _hide_docs_when_remote(request, call_next):
+    """API docs are only served on a loopback bind (desktop-local)."""
+    if not _EXPOSE_TOKEN and request.url.path in _DOCS_PATHS:
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    return await call_next(request)
+
+
+def _token_ok(supplied: str) -> bool:
+    return bool(supplied) and secrets.compare_digest(supplied, _AUTH_TOKEN)
+
+
+async def require_token_when_remote(token: str = "", x_botstrike_token: str = Header(default="")):
+    """Loopback bind (desktop-local): unchanged — paper/dry_run need no token.
+    Non-loopback bind (server on 0.0.0.0): every mutation needs BOTSTRIKE_AUTH_TOKEN
+    (query `token=` or header `X-BotStrike-Token`)."""
+    if _EXPOSE_TOKEN:
+        return
+    if not _token_ok(token or x_botstrike_token):
+        raise HTTPException(status_code=401, detail="auth token required (BOTSTRIKE_AUTH_TOKEN)")
 
 
 # ── WebSocket Endpoints ──────────────────────────────────────────
@@ -812,14 +1126,12 @@ async def websocket_endpoint(ws: WebSocket, channel: str):
 
 # ── REST Endpoints ───────────────────────────────────────────────
 @app.get("/api/health")
-async def health():
-    return {
-        "status": "ok",
-        "engine_running": state.running,
-        "mode": state.mode,
-        "uptime_sec": time.time() - state.start_time,
-        "clients": state.channels.client_count,
-    }
+async def health(response: Response):
+    """200 when healthy; 503 (same JSON, status=degraded) when the engine is expected but not
+    running, or running without market ticks for > HEALTH_STALE_TICK_SEC."""
+    snap = _health_snapshot()
+    response.status_code = 503 if snap["degraded"] else 200
+    return snap
 
 
 @app.get("/api/config")
@@ -829,39 +1141,34 @@ async def get_config():
     return {"error": "Engine not started"}
 
 
-@app.post("/api/bot/start")
+@app.post("/api/bot/start", dependencies=[Depends(require_token_when_remote)])
 async def bot_start(mode: str = "paper", exchange: str = "binance", token: str = ""):
-    # Auth: require token for live mode
-    if mode == "live" and token != _AUTH_TOKEN:
-        return {"error": "Invalid or missing auth token for live mode"}
+    # Auth: live always needs the token (any bind); other modes only on non-loopback (dependency)
+    if mode == "live" and not _token_ok(token):
+        raise HTTPException(status_code=401, detail="Invalid or missing auth token for live mode")
     if mode not in VALID_MODES:
-        return {"error": f"Invalid mode: {mode!r}. Valid: {sorted(VALID_MODES)}"}
-    if exchange not in ("binance", "hyperliquid", "strike"):
-        return {"error": f"Invalid exchange: {exchange!r}"}
+        raise HTTPException(status_code=400, detail=f"Invalid mode: {mode!r}. Valid: {sorted(VALID_MODES)}")
+    if exchange not in VALID_EXCHANGES:
+        raise HTTPException(status_code=400, detail=f"Invalid exchange: {exchange!r}")
     if state.running:
         return {"status": "already_running", "mode": state.mode}
 
-    # Apply exchange-specific fee configuration
-    settings = Settings()
-    settings.trading.exchange_venue = exchange
-    if exchange == "hyperliquid":
-        settings.trading.maker_fee = 0.00015   # 1.5 bps
-        settings.trading.taker_fee = 0.00045   # 4.5 bps
-        settings.trading.slippage_bps = 2.0    # DEX has slightly wider spread
+    # Apply exchange-specific fee configuration and hand it to the engine
+    settings = _build_settings(exchange)
     state.exchange = exchange
 
-    await start_engine(mode)
+    await start_engine(mode, settings=settings)
     return {"status": "starting", "mode": mode, "exchange": exchange}
 
 
-@app.post("/api/bot/stop")
+@app.post("/api/bot/stop", dependencies=[Depends(require_token_when_remote)])
 async def bot_stop(token: str = ""):
     if not state.running:
         return {"status": "not_running"}
-    # Require token to stop live trading (paper can stop without token)
-    if state.mode == "live" and token != _AUTH_TOKEN:
-        return {"error": "Invalid or missing auth token to stop live trading"}
-    await stop_engine()
+    # Live always needs the token to stop (any bind); paper on loopback stops without it
+    if state.mode == "live" and not _token_ok(token):
+        raise HTTPException(status_code=401, detail="Invalid or missing auth token to stop live trading")
+    await stop_engine(manual=True)
     return {"status": "stopped"}
 
 
@@ -1008,16 +1315,35 @@ async def get_data_catalog():
 
 
 # ── Backtest ─────────────────────────────────────────────────────
-@app.post("/api/backtest/run")
+_to_thread = asyncio.to_thread  # indirection so tests can assert the off-loop execution
+
+
+@app.post("/api/backtest/run", dependencies=[Depends(require_token_when_remote)])
 async def run_backtest(body: dict = {}):
     """Run a backtest with the specified parameters.
 
     Accepts: { symbol, strategy, start_date?, end_date?, bars? }
     Returns flat structure matching desktop BacktestResult interface.
+
+    The CPU-bound backtest runs in a worker thread so the trading loops, risk monitor and
+    Binance WS keep-alives on the event loop are never blocked. One backtest at a time (409).
     """
+    symbol = body.get("symbol", "BTC-USD")
+    if not isinstance(symbol, str) or symbol not in Settings().symbol_names:
+        raise HTTPException(status_code=400, detail=f"Unknown symbol {symbol!r}")
+    if state.backtest_running:
+        raise HTTPException(status_code=409, detail="A backtest is already running")
+    state.backtest_running = True
+    try:
+        return await _to_thread(_run_backtest_sync, body)
+    finally:
+        state.backtest_running = False
+
+
+def _run_backtest_sync(body: dict) -> dict:
+    """Blocking part of /api/backtest/run (parquet load + Backtester.run). Runs off the loop."""
     try:
         from backtesting.backtester import Backtester
-        from config.settings import Settings
 
         symbol = body.get("symbol", "BTC-USD")
         start_date = body.get("start_date", "")
@@ -1028,6 +1354,10 @@ async def run_backtest(body: dict = {}):
         if strategy_param and not strategies_list:
             strategies_list = [strategy_param]
         max_bars = body.get("bars", 0)  # 0 = use all available data
+        try:
+            max_bars = int(max_bars or 0)
+        except (TypeError, ValueError):
+            return {"error": f"Invalid bars: {max_bars!r}"}
 
         settings = Settings()
         bt = Backtester(settings)
@@ -1084,7 +1414,7 @@ async def run_backtest(body: dict = {}):
             "bars_tested": len(df),
         }
     except Exception as e:
-        logger.error("backtest_api_error", error=str(e))
+        logger.exception("backtest_api_error", error=str(e), error_type=type(e).__name__)
         return {"error": str(e)}
 
 
@@ -1102,7 +1432,8 @@ def main():
     _EXPOSE_TOKEN = args.host in ("127.0.0.1", "localhost", "::1")
     if not _EXPOSE_TOKEN and not os.getenv("BOTSTRIKE_AUTH_TOKEN", "").strip():
         logger.warning("auth_token_random_on_public_bind",
-                       hint="set BOTSTRIKE_AUTH_TOKEN in .env so live start/stop can be authorised remotely")
+                       hint="set BOTSTRIKE_AUTH_TOKEN in .env: on a non-loopback bind start/stop/backtest "
+                            "require it in every mode and it is never exposed over HTTP")
 
     if args.live:
         state.mode = "live"

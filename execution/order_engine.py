@@ -75,6 +75,19 @@ class OrderExecutionEngine:
 
     # ── Ejecución de señales ───────────────────────────────────────
 
+    @staticmethod
+    def is_exit_signal(signal: Signal) -> bool:
+        """Single source of truth for "is this signal an exit?" (audit F02).
+
+        Mirrors paper_simulator._execute_one and risk_manager.validate_signal.
+        """
+        action = str(signal.metadata.get("action", "") or "")
+        return (
+            action.startswith("exit")
+            or action in ("trailing_stop_hit", "mm_unwind")
+            or signal.metadata.get("exit_reason") is not None
+        )
+
     async def execute_signal(self, signal: Signal, sym_config: SymbolConfig) -> Optional[Order]:
         """Ejecuta una señal de trading como orden en el exchange.
 
@@ -85,13 +98,14 @@ class OrderExecutionEngine:
         if size_units <= 0:
             return None
 
-        # Generar client_order_id único
-        client_id = f"bs_{signal.strategy.value[:2]}_{uuid.uuid4().hex[:8]}"
+        # Generar client_order_id único (prefijo + ms + uuid; <=36 chars)
+        client_id = f"bs_{signal.strategy.value[:2]}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"[:36]
 
         # ── Smart Routing Decision ───────────────────────────────────
-        is_exit = signal.metadata.get("action") in (
-            "exit_mean_reversion", "trailing_stop_hit", "mm_unwind"
-        )
+        # Same exit criterion as paper_simulator and risk_manager (audit F02):
+        # any action starting with "exit" (exit_mean_reversion, exit_fibonacci,
+        # exit_ofm, ...) or an explicit exit_reason is an EXIT -> MARKET reduceOnly.
+        is_exit = self.is_exit_signal(signal)
         is_mm = signal.strategy == StrategyType.MARKET_MAKING
 
         # Extraer features del mercado desde metadata
@@ -189,21 +203,25 @@ class OrderExecutionEngine:
             logger.info(
                 "order_placed", symbol=order.symbol, side=order.side.value,
                 type=order.order_type.value, qty=round(order.quantity, 6),
-                price=order.price, order_id=order.order_id,
+                price=order.price, order_id=order.order_id, status=order.status,
             )
 
-            # Place protective orders (SL/TP) for non-MM strategies.
-            # CRITICAL FIX: Don't gate on status — the order may fill on the
-            # exchange before the REST response arrives (race condition).
-            # For MARKET orders the fill is near-instant; for LIMIT IOC the
-            # fill-or-cancel also resolves before we'd poll.  Always place
-            # protectives so the position is never unprotected.  If the
-            # parent order ends up unfilled/cancelled, the reduce_only
-            # protectives will be no-ops on the exchange.
-            if (signal.stop_loss != signal.entry_price
+            # Place protective orders (SL/TP) for non-MM, non-exit orders ONLY
+            # after the entry is confirmed FILLED (audit P1-05). The entry MARKET
+            # is sent with newOrderRespType=RESULT so the ACK already carries the
+            # final status; if it does not (NEW/PARTIALLY_FILLED), the order is
+            # polled by clientOrderId. Protectives are sized on executedQty.
+            if (not is_exit
+                    and signal.stop_loss != signal.entry_price
                     and signal.take_profit != signal.entry_price
                     and signal.strategy != StrategyType.MARKET_MAKING):
-                await self._place_protective_orders(signal, size_units, sym_config)
+                filled_qty = await self._await_fill(order, result)
+                if filled_qty > 0:
+                    await self._place_protective_orders(signal, filled_qty, sym_config)
+                else:
+                    logger.warning("entry_not_filled_no_protectives",
+                                   symbol=signal.symbol, status=order.status,
+                                   order_id=order.order_id)
 
             return order
 
@@ -211,16 +229,103 @@ class OrderExecutionEngine:
             logger.error("order_failed", symbol=signal.symbol, error=str(e))
             return None
 
+    _FILL_POLL_ATTEMPTS = 5
+    _FILL_POLL_DELAY_SEC = 0.2
+
+    async def _await_fill(self, order: Order, result: Dict) -> float:
+        """Return the executed quantity of an entry order once it is final.
+
+        - status FILLED in the ACK (RESULT) -> executedQty (fallback: order qty).
+        - terminal without fill (CANCELED/REJECTED/EXPIRED and executedQty==0) -> 0.
+        - otherwise poll client.get_order(...) by clientOrderId a few times.
+        - If the client cannot be queried, fall back to the order quantity so
+          the position is never left unprotected (reduceOnly protectives are
+          harmless if no position exists; -2022 is retried in _place_protective_orders).
+        """
+        def _qty(res: Dict) -> float:
+            try:
+                return float(res.get("executedQty", 0) or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        status = str(result.get("status", "NEW") or "NEW").upper()
+        executed = _qty(result)
+        terminal_unfilled = ("CANCELED", "CANCELLED", "REJECTED", "EXPIRED")
+
+        if status == "FILLED":
+            order.status = "FILLED"
+            order.filled_qty = executed or order.quantity
+            return executed if executed > 0 else order.quantity
+        if status in terminal_unfilled:
+            order.status = status
+            self._active_orders.pop(order.order_id, None)
+            return executed  # partial fill on IOC EXPIRED is still a position
+
+        get_order = getattr(self.client, "get_order", None)
+        if get_order is None or not order.client_order_id:
+            logger.warning("fill_status_unknown_assuming_filled",
+                           symbol=order.symbol, status=status)
+            return order.quantity
+
+        for _ in range(self._FILL_POLL_ATTEMPTS):
+            await asyncio.sleep(self._FILL_POLL_DELAY_SEC)
+            try:
+                res = await get_order(order.symbol, client_order_id=order.client_order_id)
+            except Exception as e:
+                logger.warning("fill_poll_failed", symbol=order.symbol, error=str(e))
+                continue
+            if not res:
+                continue
+            status = str(res.get("status", "") or "").upper()
+            executed = _qty(res)
+            if status == "FILLED":
+                order.status = "FILLED"
+                order.filled_qty = executed or order.quantity
+                return executed if executed > 0 else order.quantity
+            if status in terminal_unfilled:
+                order.status = status
+                self._active_orders.pop(order.order_id, None)
+                return executed
+
+        logger.warning("fill_poll_timeout_assuming_filled", symbol=order.symbol,
+                       status=status, executed=executed)
+        return executed if executed > 0 else order.quantity
+
+    _PROTECTIVE_RETRIES = 3
+    _PROTECTIVE_BACKOFF_SEC = (0.1, 0.3, 0.9)
+
+    async def _place_with_retry(self, order: Order, label: str) -> bool:
+        """Place a reduceOnly protective order, retrying -2022 (ReduceOnly
+        rejected: position not visible yet) up to _PROTECTIVE_RETRIES times."""
+        for attempt in range(self._PROTECTIVE_RETRIES):
+            try:
+                result = await self.client.place_order(order)
+                order.order_id = result.get("orderId", result.get("order_id", ""))
+                if order.order_id:
+                    self._active_orders[order.order_id] = order
+                    return True
+                return False
+            except Exception as e:
+                msg = str(e)
+                retryable = "-2022" in msg or "ReduceOnly" in msg or "reduceOnly" in msg
+                logger.error(f"{label}_order_failed", symbol=order.symbol,
+                             attempt=attempt + 1, error=msg)
+                if not retryable or attempt == self._PROTECTIVE_RETRIES - 1:
+                    return False
+                await asyncio.sleep(self._PROTECTIVE_BACKOFF_SEC[min(attempt, 2)])
+        return False
+
     async def _place_protective_orders(
         self, signal: Signal, size: float, sym_config: SymbolConfig
     ) -> None:
         """Coloca órdenes de stop loss y take profit.
 
+        `size` must be the EXECUTED quantity of the entry (audit P1-05).
+        Each protective is retried on -2022 with short backoff before the
+        emergency close is considered.
         CRITICAL: If both SL and TP fail, emergency-close the position
         via market order to prevent unprotected exposure.
         """
-        sl_ok = False
-        tp_ok = False
         sl_side = Side.SELL if signal.side == Side.BUY else Side.BUY
 
         # Stop Loss
@@ -231,17 +336,10 @@ class OrderExecutionEngine:
             quantity=size,
             stop_price=signal.stop_loss,
             reduce_only=True,
-            client_order_id=f"bs_sl_{uuid.uuid4().hex[:8]}",
+            client_order_id=f"bs_sl_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"[:36],
             strategy=signal.strategy,
         )
-        try:
-            result = await self.client.place_order(sl_order)
-            sl_order.order_id = result.get("orderId", result.get("order_id", ""))
-            if sl_order.order_id:
-                self._active_orders[sl_order.order_id] = sl_order
-                sl_ok = True
-        except Exception as e:
-            logger.error("sl_order_failed", symbol=signal.symbol, error=str(e))
+        sl_ok = await self._place_with_retry(sl_order, "sl")
 
         # Take Profit
         tp_order = Order(
@@ -251,17 +349,10 @@ class OrderExecutionEngine:
             quantity=size,
             stop_price=signal.take_profit,
             reduce_only=True,
-            client_order_id=f"bs_tp_{uuid.uuid4().hex[:8]}",
+            client_order_id=f"bs_tp_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"[:36],
             strategy=signal.strategy,
         )
-        try:
-            result = await self.client.place_order(tp_order)
-            tp_order.order_id = result.get("orderId", result.get("order_id", ""))
-            if tp_order.order_id:
-                self._active_orders[tp_order.order_id] = tp_order
-                tp_ok = True
-        except Exception as e:
-            logger.error("tp_order_failed", symbol=signal.symbol, error=str(e))
+        tp_ok = await self._place_with_retry(tp_order, "tp")
 
         # EMERGENCY: If BOTH protective orders failed, close the position immediately
         if not sl_ok and not tp_ok:
@@ -273,7 +364,7 @@ class OrderExecutionEngine:
                 order_type=OrderType.MARKET,
                 quantity=size,
                 reduce_only=True,
-                client_order_id=f"bs_emg_{uuid.uuid4().hex[:8]}",
+                client_order_id=f"bs_emg_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"[:36],
                 strategy=signal.strategy,
             )
             try:
@@ -450,8 +541,78 @@ class OrderExecutionEngine:
 
     # ── Emergencia ─────────────────────────────────────────────────
 
+    async def close_all_positions(self, max_attempts: int = 3) -> Dict:
+        """Flatten every open position on the exchange (audit F01 / P0-03).
+
+        MUST be called BEFORE cancel_all(): cancel_all removes the exchange
+        SL/TP and would otherwise leave positions naked.
+
+        Uses client.close_all_positions() when the venue implements it
+        (BinanceClient); otherwise reads client.get_positions() and sends one
+        MARKET reduceOnly per open position, retrying up to `max_attempts`.
+        Returns {"closed": [...], "remaining": [...], "errors": [...]}.
+        """
+        native = getattr(self.client, "close_all_positions", None)
+        if native is not None:
+            try:
+                result = await native(max_attempts=max_attempts)
+            except TypeError:
+                result = await native()
+            except Exception as e:
+                logger.error("close_all_positions_failed", error=str(e))
+                return {"closed": [], "remaining": [], "errors": [str(e)]}
+            logger.warning("all_positions_close_requested",
+                           closed=len(result.get("closed", [])),
+                           remaining=len(result.get("remaining", [])),
+                           errors=len(result.get("errors", [])))
+            return result
+
+        closed: List[Dict] = []
+        errors: List[Dict] = []
+        remaining: List[Dict] = []
+        get_positions = getattr(self.client, "get_positions", None)
+        if get_positions is None:
+            logger.error("close_all_positions_unsupported_client")
+            return {"closed": [], "remaining": [], "errors": ["unsupported_client"]}
+
+        for attempt in range(max_attempts):
+            try:
+                positions = await get_positions()
+            except Exception as e:
+                errors.append({"stage": "get_positions", "error": str(e)})
+                await asyncio.sleep(0.5 * (attempt + 1))
+                continue
+            open_pos = [p for p in (positions or [])
+                        if float(p.get("positionAmt", p.get("size", 0)) or 0) != 0]
+            remaining = open_pos
+            if not open_pos:
+                break
+            for p in open_pos:
+                amt = float(p.get("positionAmt", p.get("size", 0)) or 0)
+                side = Side.SELL if amt > 0 else Side.BUY
+                order = Order(
+                    symbol=p.get("symbol", ""), side=side, order_type=OrderType.MARKET,
+                    quantity=abs(amt), reduce_only=True,
+                    client_order_id=f"bs_close_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"[:36],
+                )
+                try:
+                    res = await self.client.place_order(order)
+                    closed.append({"symbol": order.symbol, "qty": abs(amt),
+                                   "status": res.get("status")})
+                except Exception as e:
+                    errors.append({"symbol": order.symbol, "error": str(e)})
+            await asyncio.sleep(0.3 * (attempt + 1))
+        if remaining:
+            logger.critical("POSITIONS_STILL_OPEN_AFTER_CLOSE_ALL",
+                            symbols=[p.get("symbol") for p in remaining])
+        return {"closed": closed, "remaining": remaining, "errors": errors}
+
     async def cancel_all(self) -> None:
-        """Cancela todas las órdenes activas (emergencia)."""
+        """Cancela todas las órdenes activas (emergencia).
+
+        WARNING: this also cancels exchange SL/TP. Call close_all_positions()
+        first unless positions are deliberately being kept protected.
+        """
         try:
             await self.client.cancel_all_orders()
             self._active_orders.clear()

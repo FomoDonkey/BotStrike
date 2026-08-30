@@ -4,6 +4,10 @@
 Description=BotStrike trading bridge (FastAPI :9420) + engine autostart
 After=network-online.target chrony.service
 Wants=network-online.target
+# Crash-loop guard: the bridge exits with code 3 when the in-process engine watchdog gives up
+# (5 attempts / 10 min). Allow up to 10 service restarts per 10 min before systemd stops retrying.
+StartLimitIntervalSec=600
+StartLimitBurst=10
 
 [Service]
 Type=simple
@@ -13,6 +17,8 @@ WorkingDirectory=/opt/botstrike/app
 EnvironmentFile=/opt/botstrike/app/.env
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONIOENCODING=utf-8
+# No __pycache__ writes: the app must only write under data/ and logs/ (see ReadWritePaths)
+Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=BOTSTRIKE_HOST=0.0.0.0
 Environment=BOTSTRIKE_PORT=9420
 # paper | dry_run | (empty = wait for the desktop to click Start). NEVER "live" here.
@@ -29,6 +35,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
+# Runtime write paths (audit 03 section c): data/ (sqlite db+wal+shm, binance klines parquet,
+# catalog.json), logs/ (metrics.jsonl + rotation). /tmp is covered by PrivateTmp. Nothing else.
 ReadWritePaths=/opt/botstrike/app/data /opt/botstrike/app/logs
 LimitNOFILE=65536
 

@@ -85,6 +85,12 @@ class TradingConfig:
     max_total_exposure_pct: float = 0.6  # 60% max exposure (was 0.8)
     max_open_positions: int = 4          # Max concurrent positions (one per symbol)
     risk_per_trade_pct: float = 0.015   # 1.5% = $4.50 risk budget (was 1%)
+    # Shutdown policy (audit F01 / P0-03). True = flatten every open position
+    # (MARKET reduceOnly) BEFORE cancelling orders on a normal shutdown, so a
+    # restart/deploy never leaves a naked position. False = keep positions open
+    # AND keep their exchange SL/TP alive (cancel_all is skipped). The drawdown
+    # halt ALWAYS flattens regardless of this flag.
+    close_positions_on_shutdown: bool = True
     # Asignación por estrategia — MR (conservative) + Fib (growth)
     allocation_mean_reversion: float = 0.50
     allocation_fibonacci_retracement: float = 0.50  # aggressive account growth
