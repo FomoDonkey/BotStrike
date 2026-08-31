@@ -1,5 +1,28 @@
 # BotStrike — Tasks
 
+## FASE 1 QUANT — trend diario VALIDADO (2026-08-31, commit 35faa9e) ✅ 11/11 GO/NO-GO
+`scripts/trend_daily_research.py` — primera estrategia del proyecto que pasa la validación
+ANTES de tocar capital (MR se operó 2.284 veces antes de que nadie midiera su edge bruto).
+Independiente a propósito de `backtesting/backtester.py`, que no tiene paridad con el live.
+- **Resultado (9 años, 3.302 días, 373 trades):** Sharpe neto **1,21** · CAGR 11,4% · vol 9,3%
+  · maxDD **12,6%** · skew +0,40 · DSR 0,98 · Sharpe 2022+ 0,64 · Sharpe a 50 bps 0,92.
+- **Auditoría de look-ahead (lo que más importa):** shift=0 (usa el futuro) → 4,59; shift=1
+  (ejecuta al cierre de t, prohibido) → 4,22; shift=2 (la spec) → 1,21; **shift=3 → 1,21**.
+  Que no se mueva al retrasar un día más es la firma de un edge real, no de un artefacto.
+- **Contexto honesto:** comprar y aguantar BTC/ETH/BNB da CAGR 62,3% vs 11,4% de la estrategia.
+  El trend NO gana en retorno; gana en Sharpe (1,21 vs 1,04) y en drawdown (12,6% vs **84,7%**).
+- **Limitaciones declaradas en cada ejecución:** sesgo de supervivencia (pool de 20 pares que
+  existen HOY; mitigado con majors caídos, no eliminado), precios de Binance SPOT cuando Binance
+  está cerrado para Edgar (MiCA), y la trivialidad del test de sensibilidad a target_vol.
+- [ ] Pendientes de la checklist: criterio 4 (PBO/CSCV S=16) y criterio 7 (regímenes formales).
+- [ ] **Decisión de Edgar antes de seguir:** ¿venue? El backtest usa precios de Binance spot pero
+  hay que ejecutar en un CASP con licencia MiCA (research_r2_venues §8). Sin venue elegido no
+  tiene sentido integrarlo en el motor.
+- [ ] Integración en el motor SOLO después: hoy el bot es 1m/tick y esto es diario. Requiere
+  cadencia diaria, ejecución en apertura y datos spot — más los P0 de ejecución de la tanda 2.
+- [ ] Umbrales paper→real (research §11.4): ≥90 días de paper sin tocar el código de la
+  estrategia, tracking error <15%, slippage ≤2× el asumido, <1% de órdenes fallidas.
+
 ## Sesión 2026-08-31 — Web UI servida desde el CT 104 (v2.13.0) — EN CURSO
 Objetivo Edgar: ver/controlar el bot del CT desde el navegador (paper trades, charts, todo) como en la app desktop.
 - [x] Bridge sirve la web UI (server/webui/) como SPA en `/` — mismo origen, sin CORS ni config
