@@ -28,6 +28,31 @@ Objetivo Edgar: ver/controlar el bot del CT desde el navegador (paper trades, ch
   MR NO renormalizado al alza (también congelado por evidencia). Verificado /api/strategies: FIB active=false.
 - [x] Fix P1 risk_sizing-01: guard entry≈stop ABSOLUTO (0.001 en unidades de precio = 50 bps en ADA a $0.20) bloqueaba
   el 100% de trades de ADA (0 en la DB) → ahora relativo 1e-5 del entry. Tests 100/100 (4 nuevos).
+## Sesión 2026-08-31 — AUDITORÍA R2 TANDA 2 (fix_core, fix_exchange, persistence) — 12/12 agentes
+Informe: `tasks/audit/r2_batch2_report.md`. 58 hallazgos: 2 P0 + 2 P1 confirmados, 16 P0/P1 sin verificar, 38 P2/P3.
+**Veredicto de la tanda: NO se puede confiar hoy en la maquinaria** — "no cierra bien, actúa fuera de su perímetro,
+no sabe contar". El go-live estaba bloqueado por el edge y el regulador; ahora también por la ejecución.
+- [x] **fix_core-02 (P0) ARREGLADO**: el camino de parada de PRODUCCIÓN (`server/bridge.py stop_engine`, que es lo
+  que ejecuta systemd) llamaba a `cancel_all()` directo → borra los SL/TP del exchange y deja la posición ABIERTA
+  Y DESPROTEGIDA. La ronda 1 arregló la posición desnuda solo en el CLI (`main.py`), así que producción conservó
+  el bug que la auditoría daba por cerrado. Ahora pasa por `_flatten_all()` con el mismo flag que el CLI.
+- [x] **fix_core-01 (P0) ARREGLADO**: `_flatten_all()` ejecutaba `cancel_all()` incondicionalmente → un cierre
+  fallido o parcial cancelaba los stops de una posición aún abierta. Ahora retorna antes y loguea critical.
+- [x] Verificado que en modo paper `_flatten_all` retorna ANTES de tocar el exchange → el soak del CT no puede
+  disparar estas rutas y **tu cuenta de Binance no ha corrido riesgo**. 138/138 tests (6 nuevos).
+- [ ] **fix_core-03 (P1)**: `close_all_positions()` aplana TODA la cuenta de futuros, no solo los símbolos del bot
+  (reproducido cerrando un DOGEUSDT ajeno). Inerte hoy (paper), CRÍTICO antes de cualquier live.
+- [ ] **persistence-01 (P1)**: en LIVE la contabilidad mostrada sería la de PAPER (`source="paper"` hardcodeado y
+  `trade_type` sin rellenar) → 0 trades, 0 PnL, equity plana. La UI mentiría por completo en live.
+- [ ] **fix_exchange-05 (P1→P0 en el plan)**: no hay kill-switch en el CLI — `py main.py` sin flags opera EN VIVO
+  con las claves del `.env`. 30 min de trabajo y protege a todos los demás fixes.
+- [ ] 13 P0/P1 más sin verificar (ver anexo del informe): Sharpe inflado ×2,76 por omitir días sin trades,
+  `net_pnl` bruto de comisiones en live, funding nunca contabilizado en paper (~11%/año), `/api/trades?limit=N`
+  devuelve los N MÁS ANTIGUOS etiquetados como recientes, sesiones fantasma con `session_id=''`, Telegram con
+  HTML sin escapar que descarta `notify_error`.
+- [ ] **Tanda 3 pendiente**: microstructure, hyperliquid, tests_quality (script `tasks/audit/wf_r2_batch2.js`,
+  cambiar AREAS y el nombre del informe).
+
 ## Sesión 2026-08-31 — AUDITORÍA R2 TANDA 1 + fixes P0 (commit 1309927, desplegado, verify PASS)
 La tanda de 3 áreas completó **12/12 agentes sin fallos** (el troceo funcionó donde el fan-out de 17 murió 3 veces).
 Informe: `tasks/audit/r2_batch1_report.md`. 4 hallazgos confirmados, **0 refutados**.
