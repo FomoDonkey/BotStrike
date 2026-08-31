@@ -28,6 +28,35 @@ Objetivo Edgar: ver/controlar el bot del CT desde el navegador (paper trades, ch
   MR NO renormalizado al alza (también congelado por evidencia). Verificado /api/strategies: FIB active=false.
 - [x] Fix P1 risk_sizing-01: guard entry≈stop ABSOLUTO (0.001 en unidades de precio = 50 bps en ADA a $0.20) bloqueaba
   el 100% de trades de ADA (0 en la DB) → ahora relativo 1e-5 del entry. Tests 100/100 (4 nuevos).
+## Sesión 2026-08-31 — AUDITORÍA R2 TANDA 1 + fixes P0 (commit 1309927, desplegado, verify PASS)
+La tanda de 3 áreas completó **12/12 agentes sin fallos** (el troceo funcionó donde el fan-out de 17 murió 3 veces).
+Informe: `tasks/audit/r2_batch1_report.md`. 4 hallazgos confirmados, **0 refutados**.
+- [x] **strategies-01 (P0): Mean Reversion NO tiene edge ni bruto.** 2.284 trades sobre 149,7 días de klines reales
+  con el código de producción: retorno bruto medio −0,90/−0,63/−2,05/+0,45 bps (ETH/SOL/ADA/BTC), SE 1,2-2,6 → cero
+  estadístico. Neto: PF 0,40-0,60, t-stat −5 a −8,7. **Control decisivo: invertir todas las señales NO mejora el
+  resultado** → no hay información direccional que explotar. **CONGELADA** en las 3 puertas, como Fibonacci.
+  Sangría evitada: ~11,5 trades/día × 12 bps = **$62-133/mes sobre $1.000 (6-13% mensual) de pura fricción**.
+- [x] **risk_sizing-01 (P0, elevado desde P1 por AMBOS verificadores): pausa global, silenciosa y PERMANENTE.**
+  Una estrategia con edge negativo da RoR=1.0 por construcción → rechazaba TODAS las entradas de TODAS las
+  estrategias, con `/api/health` diciendo OK, y sin poder levantarse nunca (pausada → sin fills → la muestra no
+  cambia → deadlock). Ahora **por estrategia**, con probation a las 6 h y log a nivel error en el cambio de estado.
+- [x] **backtest_parity-01 (P0): `exit_fibonacci` ignorado por los dos backtesters** — el fix de ronda 1 solo tocó
+  el live y AGRANDÓ la brecha. Los 3 sitios usan ya `OrderExecutionEngine.is_exit_signal`, la misma que el live.
+- [x] **backtest_parity-02 (P0): ventana de 501 barras vs 2000 del live.** El resample 1m→1H daba 8 velas horarias
+  en vez de 33 → ADX/EMA sin converger → **el filtro que elige el LADO se invertía en el 38-41%** de las muestras
+  (solapamiento Jaccard de señales: 42,9%). Ventana derivada ya de `MAX_BARS`.
+- [x] Tests 127/127 en local Y en la réplica del set desplegado. Desplegado: ambas estrategias `active:false`.
+- [ ] **17 P0/P1 más quedaron SIN VERIFICAR por el tope de la tanda** (están listados en el informe §Anexo). Los
+  más graves: `backtest_parity-03` (el único backtest lanzable desde la UI usa datos SPOT caducados, ignora
+  start_date y deprime el Sharpe 59×), `risk_sizing-05` (vol targeting clavado en ×1,5: infla el 50% todas las
+  posiciones en vez de protegerlas), `risk_sizing-06` (el sizer entrega 0,061-0,117% del equity por trade frente
+  al 1,5% configurado: todos los límites de pérdida son decorativos), `risk_sizing-03` (cero persistencia del
+  estado de riesgo con Restart=always), `backtest_parity-13` (los datos correctos los escribe 1 archivo y los
+  leen 0: todo apunta aún a SPOT).
+- [ ] **Tandas pendientes de la ronda 2** (mismo patrón, 3 áreas por tanda): tanda 2 = fix_core, fix_exchange,
+  persistence · tanda 3 = microstructure, hyperliquid, tests_quality · (fix_bridge/fix_desktop ya parcialmente
+  cubiertos por security_supply). Script reutilizable: `tasks/audit/wf_r2_batch1.js` (cambiar AREAS).
+
 ## Sesión 2026-08-31 (madrugada) — Seguridad R2 aplicada + research entregado
 ### Auditoría R2: 3 intentos del workflow, 3 caídas por límite (sesión/créditos)
 - Run `wf_013db630-2e7`. **El resume NO replica desde caché de forma fiable** (security_supply completó en el

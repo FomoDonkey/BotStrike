@@ -1,5 +1,34 @@
 # BotStrike — Lessons Learned
 
+## Auditoría R2 tanda 1 — la lección quant más cara del proyecto (2026-08-31)
+- **El test que mata una estrategia es INVERTIR sus señales.** Si al operar al revés no pierdes claramente
+  más, no hay información direccional: no hay nada que optimizar. MR pasó ese test (invertida rinde igual)
+  → edge bruto nulo. Ningún ajuste de SL/TP, filtro o sizing arregla eso. Aplicar este control ANTES de
+  invertir semanas en calibrar.
+- **Distinguir "sin edge NETO" de "sin edge BRUTO".** Sin edge neto puedes atacar los costes (maker, menos
+  trades, mejor ejecución). Sin edge BRUTO no hay nada que abaratar. La auditoría midió el bruto: −0,90 bps
+  con SE de 1,2 → cero estadístico sobre 2.284 trades.
+- **Coste de operar sin edge: 6-13% MENSUAL de la cuenta en pura fricción** (11,5 trades/día × 12 bps sobre
+  $1.000). Para contexto: la mejor alternativa con evidencia replicada espera +$60 al AÑO. El bot perdía en
+  un mes lo que esa gana en dos años. Parar es la decisión rentable.
+- **Incoherencia que hay que evitar**: congelamos Fibonacci con 5 cierres y manteníamos MR con 2.284 trades y
+  PF 0,45. Si el criterio es la evidencia, se aplica al que más evidencia tiene EN CONTRA primero.
+- **Un freno de riesgo global es un single point of failure.** RoR pausaba TODAS las estrategias porque UNA
+  tenía edge negativo, en silencio y para siempre (pausada → sin fills → la muestra nunca cambia → deadlock),
+  con health OK. Reglas: los frenos van POR ESTRATEGIA, con probation (nunca terminales) y con log de CAMBIO
+  DE ESTADO a nivel error (no un warning por señal rechazada, que es ruido invisible).
+- **Un fix aplicado a un solo lado del sistema EMPEORA la paridad.** El fix de `exit_fibonacci` de la ronda 1
+  tocó solo el live: antes ambos motores ignoraban la señal (consistentes), después el live cerraba y el
+  backtest dejaba la posición huérfana. Al arreglar algo que existe en live y en backtest, se arreglan los dos
+  o ninguno — y mejor con UNA función compartida (`is_exit_signal`) que con listas duplicadas.
+- **Una constante duplicada puede invertir el sentido de la estrategia.** El backtester usaba 501 barras y el
+  live 2000: al remuestrear a 1H salían 8 velas en vez de 33, ADX(14) no convergía y **el filtro que elige el
+  LADO se invertía el 38-41% de las veces** (42,9% de solapamiento de señales). Los buffers de datos se
+  importan de un único sitio, jamás se re-declaran.
+- **Trocear las auditorías funciona**: 3 áreas / 12 agentes → 12/12 sin fallos, donde 17 agentes murieron 3
+  veces. El coste no está en los auditores sino en la matriz de verificación (áreas × hallazgos × lentes):
+  hay que ponerle tope explícito.
+
 ## Auditoría R2 + seguridad (2026-08-31 madrugada)
 - **Verificar SIEMPRE los hallazgos de un agente, aunque el informe sea excelente.** Las 3 lentes de
   verificación del workflow fallaron y los hallazgos llegaron crudos. Al verificarlos yo: dos SUBIERON de
