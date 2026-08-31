@@ -24,6 +24,12 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+# Risk-of-ruin pause hygiene (audit R2 risk_sizing-01). A pause held longer than the
+# probation window is re-measured instead of being terminal; the state change is logged
+# at most once per window so "the bot stopped trading" is visible, not buried.
+ROR_PROBATION_SEC = 6 * 3600.0
+ROR_LOG_EVERY_SEC = 900.0
+
 
 class RiskManager:
     """Controlador central de riesgo para todo el sistema."""
@@ -54,12 +60,19 @@ class RiskManager:
         self._drawdown_halted: bool = False  # Set by risk monitor when max drawdown exceeded
 
         # ── Modelos cuantitativos avanzados ──────────────────────────
-        # Risk of Ruin: probabilidad de alcanzar max drawdown
+        # Risk of Ruin: probabilidad de alcanzar max drawdown.
+        # `risk_of_ruin` stays as the PORTFOLIO-level model (metrics/reporting);
+        # gating uses one model PER STRATEGY (audit R2 risk_sizing-01) so a single
+        # negative-edge strategy cannot pause the whole bot.
         self.risk_of_ruin = RiskOfRuin(
             max_drawdown_pct=self.config.max_drawdown_pct,
             throttle_threshold=self.config.ror_throttle_threshold,
             pause_threshold=self.config.ror_pause_threshold,
         )
+        self._ror_by_strategy: Dict[StrategyType, RiskOfRuin] = {}
+        # A pause older than this is re-measured instead of held forever (no deadlock).
+        self._ror_paused_since: Dict[StrategyType, float] = {}
+        self._ror_last_logged: Dict[StrategyType, float] = {}
 
         # Volatility Targeting: escalar posiciones para vol constante
         self.vol_targeting = VolatilityTargeting(
@@ -196,15 +209,27 @@ class RiskManager:
                             consecutive=self._consecutive_losses)
 
         # ── Risk of Ruin auto-throttle ────────────────────────────
-        ror = self.risk_of_ruin.current
-        if ror.should_pause and ror.sample_size >= self.risk_of_ruin.min_trades:
-            logger.warning("ror_pause_active", ror=round(ror.ror_analytical, 4),
-                           symbol=signal.symbol)
-            return None
-        if ror.should_throttle and ror.sample_size >= self.risk_of_ruin.min_trades:
+        # PER STRATEGY, not global (audit R2 risk_sizing-01, P0). A strategy with a
+        # negative edge yields ror=1.0 by construction, which used to pause EVERY
+        # entry of EVERY strategy, permanently and silently: paused → no new fills →
+        # the sample never changes → deadlock, while /api/health kept reporting OK.
+        # Pausing a negative-edge strategy is correct; killing the whole bot without
+        # telling anyone is not.
+        ror_model = self._ror_for(signal.strategy)
+        ror = ror_model.current
+        if ror.should_pause and ror.sample_size >= ror_model.min_trades:
+            if self._ror_probation_expired(signal.strategy):
+                # Probation: drop the stale window so the model can re-measure instead
+                # of staying paused forever on a sample it can no longer update.
+                ror_model.reset()
+                self._notify_ror(signal.strategy, "ror_probation_reset", ror)
+            else:
+                self._notify_ror(signal.strategy, "ror_pause_active", ror)
+                return None
+        elif ror.should_throttle and ror.sample_size >= ror_model.min_trades:
             signal.size_usd *= 0.5
             logger.info("ror_throttle", ror=round(ror.ror_analytical, 4),
-                        symbol=signal.symbol)
+                        strategy=signal.strategy.value, symbol=signal.symbol)
 
         # ── Volatility Targeting scalar ──────────────────────────────
         vol_scalar = self.vol_targeting.scalar
@@ -455,13 +480,66 @@ class RiskManager:
         self.risk_of_ruin.record_trade(pnl)
         if strategy and strategy in self.kelly:
             self.kelly[strategy].record_trade(pnl)
-        # Recalcular Risk of Ruin
+        # Recalcular Risk of Ruin (portfolio + la estrategia que cerró el trade)
         self.risk_of_ruin.compute(self._current_equity)
+        if strategy is not None:
+            model = self._ror_for(strategy)
+            model.record_trade(pnl)
+            model.compute(self._current_equity)
 
     async def record_trade_result_safe(self, pnl: float, strategy: Optional[StrategyType] = None) -> None:
         """Async-safe version of record_trade_result — acquires lock."""
         async with self._state_lock:
             self.record_trade_result(pnl, strategy)
+
+    # ── Risk of Ruin, per strategy (audit R2 risk_sizing-01) ─────────
+    def _ror_for(self, strategy: Optional[StrategyType]) -> RiskOfRuin:
+        """One model per strategy, created on first use with the same config."""
+        key = strategy if strategy is not None else StrategyType.MEAN_REVERSION
+        model = self._ror_by_strategy.get(key)
+        if model is None:
+            model = RiskOfRuin(
+                max_drawdown_pct=self.config.max_drawdown_pct,
+                throttle_threshold=self.config.ror_throttle_threshold,
+                pause_threshold=self.config.ror_pause_threshold,
+            )
+            self._ror_by_strategy[key] = model
+        return model
+
+    def _ror_probation_expired(self, strategy: Optional[StrategyType]) -> bool:
+        """True once a pause has lasted longer than the probation window.
+
+        Without this the pause is terminal: no entries → no closed trades → the
+        pnl window never changes → `should_pause` stays True forever.
+        """
+        key = strategy if strategy is not None else StrategyType.MEAN_REVERSION
+        now = time.time()
+        started = self._ror_paused_since.get(key)
+        if started is None:
+            self._ror_paused_since[key] = now
+            return False
+        return (now - started) >= ROR_PROBATION_SEC
+
+    def _notify_ror(self, strategy: Optional[StrategyType], event: str, ror) -> None:
+        """Log a RoR state change ONCE per throttle window, not once per rejected
+        signal (the old code logged on every signal, which reads as noise and hid
+        the fact that the bot had stopped trading entirely)."""
+        key = strategy if strategy is not None else StrategyType.MEAN_REVERSION
+        now = time.time()
+        if event == "ror_probation_reset":
+            self._ror_paused_since.pop(key, None)
+            self._ror_last_logged.pop(key, None)
+            logger.warning(event, strategy=key.value,
+                           ror=round(ror.ror_analytical, 4), edge=round(ror.edge, 4),
+                           hint="pause exceeded probation; window reset to re-measure")
+            return
+        last = self._ror_last_logged.get(key, 0.0)
+        if now - last >= ROR_LOG_EVERY_SEC:
+            self._ror_last_logged[key] = now
+            logger.error(event, strategy=key.value,
+                         ror=round(ror.ror_analytical, 4), edge=round(ror.edge, 4),
+                         sample=ror.sample_size,
+                         hint="strategy paused by risk-of-ruin: NO entries are being taken")
 
     def reset_daily(self) -> None:
         """Reset de métricas diarias."""

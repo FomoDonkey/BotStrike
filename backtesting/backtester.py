@@ -25,7 +25,9 @@ from core.types import (
     OrderBookLevel,
 )
 from core.indicators import Indicators
+from core.market_data import MAX_BARS  # single source of truth for the live buffer size
 from core.regime_detector import RegimeDetector
+from execution.order_engine import OrderExecutionEngine  # is_exit_signal: shared with live
 from strategies.base import BaseStrategy
 from strategies.mean_reversion import MeanReversionStrategy
 from strategies.fibonacci_retracement import FibonacciRetracementStrategy
@@ -362,8 +364,13 @@ class Backtester:
             high = float(bar["high"])
             low = float(bar["low"])
 
-            # Windowed slice: last 500 bars (avoids O(n^2) full-prefix copy)
-            window_start = max(0, i - 500)
+            # Windowed slice, sized EXACTLY like the live buffer (audit R2
+            # backtest_parity-02, P0). With 501 bars the 1m→1H resample yields 8 hourly
+            # candles instead of 33, so ADX(14)/EMA(26) never converge: the median ADX
+            # reads 85 (warm-up artefact) against a real 44, and the 1H filter — which
+            # picks the SIDE of the trade — flips sign in 38-41% of samples. Measured
+            # effect: only 42.9% Jaccard overlap between backtest and live signals.
+            window_start = max(0, i - MAX_BARS + 1)
             df_slice = df.iloc[window_start:i + 1]
 
             # Detectar régimen
@@ -491,8 +498,10 @@ class Backtester:
             for signal in all_signals:
                 pos_key = f"{symbol}_{signal.strategy.value}"
 
-                # Señal de salida
-                if signal.metadata.get("action") in ("exit_mean_reversion", "trailing_stop_hit"):
+                # Señal de salida — misma función que el live (audit R2 backtest_parity-01):
+                # la lista hardcodeada no incluía exit_fibonacci, así que el backtest dejaba
+                # la posición huérfana hasta el SL/TP mientras el live la cerraba por señal.
+                if OrderExecutionEngine.is_exit_signal(signal):
                     if pos_key in positions:
                         pos = positions[pos_key]
                         # Apply slippage to exit price (adverse direction)
@@ -1076,9 +1085,7 @@ class RealisticBacktester:
                 ml_validated = []
                 for sig in validated:
                     # No filtrar exits ni MM
-                    is_exit = sig.metadata.get("action") in (
-                        "exit_mean_reversion", "trailing_stop_hit", "mm_unwind"
-                    )
+                    is_exit = OrderExecutionEngine.is_exit_signal(sig)
                     if is_exit or sig.strategy == StrategyType.MARKET_MAKING:
                         ml_validated.append(sig)
                     elif ml_filter.should_pass(sig.metadata):
@@ -1089,10 +1096,8 @@ class RealisticBacktester:
             for signal in validated:
                 pos_key = f"{symbol}_{signal.strategy.value}"
 
-                # Señal de salida
-                is_exit = signal.metadata.get("action") in (
-                    "exit_mean_reversion", "trailing_stop_hit", "mm_unwind"
-                )
+                # Señal de salida (misma función que el live — audit R2 backtest_parity-01)
+                is_exit = OrderExecutionEngine.is_exit_signal(signal)
                 if is_exit:
                     if pos_key in positions:
                         pos = positions[pos_key]

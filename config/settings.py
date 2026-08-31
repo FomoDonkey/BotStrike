@@ -92,10 +92,18 @@ class TradingConfig:
     # halt ALWAYS flattens regardless of this flag.
     close_positions_on_shutdown: bool = True
     # Asignación por estrategia — MR (conservative) + Fib (growth)
-    allocation_mean_reversion: float = 0.50
+    # FROZEN 2026-08-31 (audit R2 batch 1, strategies-01 — P0 confirmed by two
+    # independent verifiers): Mean Reversion has NO GROSS edge. Over 149.7 days of
+    # real Binance Futures klines and 2,284 simulated trades with production code,
+    # mean GROSS return per trade is -0.90/-0.63/-2.05/+0.45 bps (ETH/SOL/ADA/BTC)
+    # with SE 1.2-2.6 bps — statistically zero. Net of 11 bps friction: PF 0.40-0.60,
+    # -10.5/-13.1 bps per trade, t-stat -5 to -8.7. The decisive control: INVERTING
+    # every signal does not improve the result, so there is no directional information
+    # to exploit — no SL/TP tuning can fix a null gross edge. See
+    # tasks/audit/r2_batch1_report.md §3.1 for the unfreeze conditions.
+    allocation_mean_reversion: float = 0.00
     # FROZEN 2026-08-31: no published evidence for Fibonacci retracement
     # (research_sota_2026 §2.7) and 20% WR / -$2.11 over 5 paper closes.
-    # MR allocation deliberately NOT raised — it is also under evidence freeze.
     allocation_fibonacci_retracement: float = 0.00
     allocation_trend_following: float = 0.00   # archived
     allocation_market_making: float = 0.00     # archived

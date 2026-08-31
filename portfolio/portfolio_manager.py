@@ -20,41 +20,48 @@ logger = structlog.get_logger(__name__)
 # Mapeo de régimen → pesos ideales para cada estrategia
 # Fibonacci thrives in trending (impulse→retrace pattern).
 # MR thrives in ranging (pullback→reversion pattern).
-# FIBONACCI_RETRACEMENT frozen at 0.00 everywhere (2026-08-31): no published
-# evidence for the family (research_sota_2026 §2.7) and 20% WR / -$2.11 over
-# 5 paper closes. MR weights deliberately NOT renormalized upward — MR is also
-# under evidence freeze (§2.1: negative edge after costs at 1-5 min).
+# EVERY strategy is frozen at 0.00 as of 2026-08-31 (audit R2 batch 1).
+#   FIBONACCI_RETRACEMENT: no published evidence (research_sota_2026 §2.7), 20% WR live.
+#   MEAN_REVERSION: no GROSS edge over 2,284 trades on 150 days of real data
+#     (t-stat -5 to -8.7 net; INVERTING every signal does not improve it, so there is
+#     no directional information to exploit) — tasks/audit/r2_batch1_report.md §3.1.
+# The bot therefore holds no capital in any strategy: it keeps collecting market data
+# and exercising the live pipeline, but takes no positions. That is the correct state —
+# running a measured null edge burns 6-13%/month of the account in pure friction.
+# Unfreezing requires, per strategy: OOS gross edge > 3x its standard error, the
+# side-inversion control FAILING (inverted signals must lose clearly more), the cost
+# gates passing, and a backtest engine with demonstrated live parity (backtest_parity-01/02).
 REGIME_WEIGHTS: Dict[MarketRegime, Dict[StrategyType, float]] = {
     MarketRegime.RANGING: {
-        StrategyType.MEAN_REVERSION: 0.65,
+        StrategyType.MEAN_REVERSION: 0.00,
         StrategyType.FIBONACCI_RETRACEMENT: 0.00,
         StrategyType.TREND_FOLLOWING: 0.00,
         StrategyType.MARKET_MAKING: 0.00,
         StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
     },
     MarketRegime.TRENDING_UP: {
-        StrategyType.MEAN_REVERSION: 0.30,
+        StrategyType.MEAN_REVERSION: 0.00,
         StrategyType.FIBONACCI_RETRACEMENT: 0.00,
         StrategyType.TREND_FOLLOWING: 0.00,
         StrategyType.MARKET_MAKING: 0.00,
         StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
     },
     MarketRegime.TRENDING_DOWN: {
-        StrategyType.MEAN_REVERSION: 0.30,
+        StrategyType.MEAN_REVERSION: 0.00,
         StrategyType.FIBONACCI_RETRACEMENT: 0.00,
         StrategyType.TREND_FOLLOWING: 0.00,
         StrategyType.MARKET_MAKING: 0.00,
         StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
     },
     MarketRegime.BREAKOUT: {
-        StrategyType.MEAN_REVERSION: 0.10,
+        StrategyType.MEAN_REVERSION: 0.00,
         StrategyType.FIBONACCI_RETRACEMENT: 0.00,
         StrategyType.TREND_FOLLOWING: 0.00,
         StrategyType.MARKET_MAKING: 0.00,
         StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
     },
     MarketRegime.UNKNOWN: {
-        StrategyType.MEAN_REVERSION: 0.50,
+        StrategyType.MEAN_REVERSION: 0.00,
         StrategyType.FIBONACCI_RETRACEMENT: 0.00,
         StrategyType.TREND_FOLLOWING: 0.00,
         StrategyType.MARKET_MAKING: 0.00,
@@ -66,10 +73,10 @@ REGIME_WEIGHTS: Dict[MarketRegime, Dict[StrategyType, float]] = {
 # Only allow profitable or near-breakeven combinations.
 # Key: symbol → set of allowed StrategyTypes
 SYMBOL_STRATEGY_MAP: Dict[str, set] = {
-    "BTC-USD": set(),                                          # FIB frozen 2026-08-31 (was PF=1.11 on 14d backtest; 20% WR live) — BTC data-only
-    "ETH-USD": {StrategyType.MEAN_REVERSION},                  # MR PF=0.85 ⚠️ (Fib PF=0.58 ❌)
-    "ADA-USD": {StrategyType.MEAN_REVERSION},                  # MR PF=0.86 ⚠️ (Fib PF=0.14 ❌)
-    "SOL-USD": {StrategyType.MEAN_REVERSION},                   # MR only per user preference
+    "BTC-USD": set(),   # FIB frozen 2026-08-31
+    "ETH-USD": set(),   # MR frozen 2026-08-31 — gross edge -0.90 bps, SE 1.2 → zero
+    "ADA-USD": set(),   # MR frozen 2026-08-31 — gross edge -2.05 bps
+    "SOL-USD": set(),   # MR frozen 2026-08-31 — gross edge -0.63 bps, SE 2.6 → zero
 }
 
 # Performance factor (audit F03) — evaluated on CLOSED trades only, normalized

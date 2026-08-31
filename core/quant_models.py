@@ -320,6 +320,16 @@ class RiskOfRuin:
         """Registra resultado de un trade."""
         self._trade_pnls.append(pnl)
 
+    def reset(self) -> None:
+        """Drops the pnl window and the last verdict (probation).
+
+        A paused strategy takes no entries, so its window can never change on its
+        own — without this the pause is permanent by construction (audit R2
+        risk_sizing-01). The caller decides when probation is due.
+        """
+        self._trade_pnls.clear()
+        self._result = RiskOfRuinResult()
+
     def compute(self, current_equity: float) -> RiskOfRuinResult:
         """Calcula Risk of Ruin."""
         pnls = list(self._trade_pnls)

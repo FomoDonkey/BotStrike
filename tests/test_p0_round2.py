@@ -159,7 +159,20 @@ def test_paper_and_live_share_exit_criterion(settings):
 # ══════════════════════════════════════════════════════════════════════
 # F03 — performance factor normalized and never permanent
 # ══════════════════════════════════════════════════════════════════════
-def test_performance_factor_requires_min_closed_trades(settings):
+@pytest.fixture
+def funded(monkeypatch):
+    """Every strategy is frozen at 0.00 since audit R2 batch 1 (strategies-01), so
+    `should_strategy_trade` is False for everything. These tests exercise the
+    PERFORMANCE gate, not the freeze — give them a funded world to gate on."""
+    import portfolio.portfolio_manager as pmod
+    weights = {r: dict(w) for r, w in pmod.REGIME_WEIGHTS.items()}
+    weights[MarketRegime.RANGING][StrategyType.MEAN_REVERSION] = 0.65
+    monkeypatch.setattr(pmod, "REGIME_WEIGHTS", weights)
+    monkeypatch.setattr(pmod, "SYMBOL_STRATEGY_MAP",
+                        {"ETH-USD": {StrategyType.MEAN_REVERSION}})
+
+
+def test_performance_factor_requires_min_closed_trades(settings, funded):
     pm = PortfolioManager(settings, RiskManager(settings))
     mr = StrategyType.MEAN_REVERSION
     # Entries (pnl=0) never count — 100 of them leave the factor neutral.
@@ -189,7 +202,7 @@ def test_performance_factor_floor_and_warning(settings):
                and l.get("log_level") == "warning" for l in logs)
 
 
-def test_performance_block_is_not_permanent(settings):
+def test_performance_block_is_not_permanent(settings, funded):
     pm = PortfolioManager(settings, RiskManager(settings))
     mr = StrategyType.MEAN_REVERSION
     t0 = 1_000_000.0
