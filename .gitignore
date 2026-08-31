@@ -59,3 +59,4 @@ data/binance_futures/
 # Runtime artifacts (never commit)
 desktop/data/
 events.jsonl
+data/binance_daily/
