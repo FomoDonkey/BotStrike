@@ -28,6 +28,23 @@ from core.indicators import Indicators
 from core.market_data import MAX_BARS  # single source of truth for the live buffer size
 from core.regime_detector import RegimeDetector
 from execution.order_engine import OrderExecutionEngine  # is_exit_signal: shared with live
+
+
+def _notify_external_exit(strategies, strategy_type, symbol: str, ts: float) -> None:
+    """Tell the strategy that the POSITION was closed outside it (SL/TP hit).
+
+    Live does this in main.py; the backtesters never did (audit R2 backtest_parity-09),
+    so after a stop the strategy kept `_states[symbol]` alive and `_last_exit_time`
+    stale: it skipped its own 180 s cooldown and re-entered earlier than production,
+    and the next position started with the previous one's trailing state. The
+    divergence compounds with every stop.
+    """
+    for strategy in strategies:
+        if strategy.strategy_type == strategy_type and hasattr(strategy, "notify_external_exit"):
+            try:
+                strategy.notify_external_exit(symbol, ts)
+            except Exception:  # a research tool must not die on a bookkeeping callback
+                pass
 from strategies.base import BaseStrategy
 from strategies.mean_reversion import MeanReversionStrategy
 from strategies.fibonacci_retracement import FibonacciRetracementStrategy
@@ -431,6 +448,7 @@ class Backtester:
                     pnl = pos.close(exit_price_sltp, trading_config.taker_fee)
                     equity += pnl
                     result.trades.append(pos.trade_dict(i, symbol, exit_side_sltp, exit_price_sltp, pnl, ts))
+                    _notify_external_exit(active_strategies, pos.strategy, symbol, ts)
                     del positions[key]
 
             # Funding rate
@@ -887,9 +905,10 @@ class RealisticBacktester:
                     pnl = pos.close(exit_price_sltp, fee)
                     equity += pnl
                     risk_manager.update_equity(equity)
-                    risk_manager.record_trade_result(pnl)
+                    risk_manager.record_trade_result(pnl, strategy=pos.strategy)
                     risk_manager.update_position(symbol, None)
                     portfolio_manager.update_strategy_pnl(pos.strategy, pnl)
+                    _notify_external_exit(active_strategies, pos.strategy, symbol, ts)
                     trade_rec = pos.trade_dict(i, symbol, exit_side_sltp, exit_price_sltp, pnl, ts)
                     result.trades.append(trade_rec)
                     log_jsonl({"type": "trade", **trade_rec})
