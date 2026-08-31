@@ -50,8 +50,20 @@ no sabe contar". El go-live estaba bloqueado por el edge y el regulador; ahora t
   `net_pnl` bruto de comisiones en live, funding nunca contabilizado en paper (~11%/año), `/api/trades?limit=N`
   devuelve los N MÁS ANTIGUOS etiquetados como recientes, sesiones fantasma con `session_id=''`, Telegram con
   HTML sin escapar que descarta `notify_error`.
-- [ ] **Tanda 3 pendiente**: microstructure, hyperliquid, tests_quality (script `tasks/audit/wf_r2_batch2.js`,
-  cambiar AREAS y el nombre del informe).
+- [~] **Tanda 3 EN CURSO** (`wy96c0alm`, script `tasks/audit/wf_r2_batch3.js`): microstructure, hyperliquid,
+  tests_quality. Preguntas centrales que le he puesto: (a) ¿la microestructura discrimina ganadores de
+  perdedores o es coste sin retorno? (b) confirmar/refutar las 2 trampas del SDK de Hyperliquid documentadas en
+  el research; (c) **por qué la suite NO detectó los dos fixes aplicados a un solo lado** (exit_fibonacci solo
+  en live; posición desnuda solo en el CLI mientras systemd corre el bridge).
+- [x] **Desplegado en el CT** (commit 35aef65 → verify PASS, 0 errores, **138/138 tests DENTRO del CT**).
+  Tailscale requería re-autenticación (Edgar la aceptó); la ruta LAN al host Proxmox sigue sin responder,
+  solo el CT tiene el 22 abierto (sin nuestra clave). Vía única: Tailscale → host → `pct exec`.
+- [x] **persistence-02 (P1) ARREGLADO**: `/api/trades?limit=N` devolvía los N MÁS ANTIGUOS etiquetados como
+  recientes (ASC + LIMIT). El historial de la UI llevaba mostrando las primeras operaciones de la historia.
+  `get_trades(newest_first=True)`. Verificado en DB temporal: limit=3 daba [0,1,2], ahora [7,8,9].
+- [x] **Datos de futuros descargándose en el CT** (`scripts/download_futures_klines.py --days 150 --funding`).
+  Matiz corregido: el `data/binance/` del CT NO estaba caducado (se actualiza solo, llega hasta hoy) — el
+  problema allí era el MERCADO (spot vs futuros), no la antigüedad. En mi PC sí estaba parado en abril.
 
 ## Sesión 2026-08-31 — AUDITORÍA R2 TANDA 1 + fixes P0 (commit 1309927, desplegado, verify PASS)
 La tanda de 3 áreas completó **12/12 agentes sin fallos** (el troceo funcionó donde el fan-out de 17 murió 3 veces).
