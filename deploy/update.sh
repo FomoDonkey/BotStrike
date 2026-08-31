@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# Pull latest main, refresh deps, restart the service, and verify health. Run as root.
+# Pull latest main, refresh deps, RUN THE TEST SUITE, and only then restart + verify. Run as root.
+#
+# The test gate (audit R2 security_supply-02) exists because the deployed dependency set is NOT the
+# one developers run locally (CT: pandas 3.0.5 / starlette 1.6 / fastapi 0.141). Until 2026-08-31 the
+# suite could not even be COLLECTED in the CT (starlette >= 1.0 needs httpx2 for TestClient), so
+# "100/100 tests" covered nothing that actually runs here. A trading bot must never be restarted
+# onto code that fails its own tests: on failure this script aborts and LEAVES THE OLD PROCESS
+# RUNNING (the working tree is already updated, so re-run after fixing).
 set -euo pipefail
 APP_DIR=/opt/botstrike/app
 su - botstrike -c "
@@ -15,8 +22,18 @@ if [ -f requirements.lock ]; then
 else
   uv pip install -q --python .venv/bin/python -r requirements.txt
 fi
+# Test-only deps AFTER the sync: 'uv pip sync' prunes anything absent from the lock.
+[ -f requirements-dev.txt ] && uv pip install -q --python .venv/bin/python -r requirements-dev.txt
 git log --oneline -1
 "
+
+echo '-- test gate (suite must pass on the DEPLOYED dependency set)'
+if ! su - botstrike -c "cd $APP_DIR && PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest tests/ -q -p no:cacheprovider" ; then
+  echo '!! TESTS FAILED — service NOT restarted; the previous process keeps running.'
+  echo '   Fix, push, and re-run deploy/update.sh.'
+  exit 1
+fi
+
 cp $APP_DIR/deploy/botstrike-bridge.service /etc/systemd/system/botstrike-bridge.service
 systemctl daemon-reload
 systemctl restart botstrike-bridge

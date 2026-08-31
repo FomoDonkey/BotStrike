@@ -229,9 +229,14 @@ function extractError(body: unknown): string | null {
   return null;
 }
 
-function withToken(path: string, token: string): string {
-  if (!token) return path;
-  return `${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
+/**
+ * The token goes in a header, never in the URL: a query string is written verbatim to the
+ * bridge's access log (journald on the server), to proxy logs and to browser history
+ * (audit R2 security_supply-01 — reproduced). The bridge accepts both, so an older bridge
+ * that only reads `?token=` would reject these calls — upgrade the bridge, not this file.
+ */
+function tokenHeader(token: string): Record<string, string> {
+  return token ? { "X-BotStrike-Token": token } : {};
 }
 
 // ── Token resolution ─────────────────────────────────────────────
@@ -261,7 +266,10 @@ async function resolveToken(): Promise<string> {
 async function authed<T>(path: string, opts: RequestOpts): Promise<T> {
   const token = await resolveToken();
   try {
-    return await request<T>(withToken(path, token), opts);
+    return await request<T>(path, {
+      ...opts,
+      headers: { ...(opts.headers as Record<string, string> | undefined), ...tokenHeader(token) },
+    });
   } catch (e) {
     if (e instanceof ApiError && e.isAuth) discoveredToken = null; // stale local token → rediscover next time
     throw e;

@@ -1,3 +1,8 @@
 pytest>=8.0
 pytest-asyncio>=0.23
+# starlette < 1.0 builds TestClient on httpx; starlette >= 1.0 requires httpx2 instead.
+# The CT runs starlette 1.6, where `import starlette.testclient` raises RuntimeError without
+# httpx2 — the whole suite failed to COLLECT there, so no test covered production
+# (audit R2 security_supply-02). Both are listed so the suite runs on either pin.
 httpx>=0.27
+httpx2>=0.1; python_version >= "3.9"

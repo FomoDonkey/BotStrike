@@ -17,7 +17,9 @@ import argparse
 import asyncio
 import functools
 import json
+import logging
 import os
+import re
 import sys
 import time
 from collections import deque
@@ -47,12 +49,56 @@ BRIDGE_VERSION = "2.13.1"
 # Server deployments set BOTSTRIKE_AUTH_TOKEN in .env so the desktop can be configured with it;
 # otherwise a random per-process token is generated (desktop-local mode reads it from /api/bot/status).
 _AUTH_TOKEN = os.getenv("BOTSTRIKE_AUTH_TOKEN", "").strip() or secrets.token_hex(16)
+
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1", "[::1]")
+
 # Only expose the token over HTTP when bound to loopback (same-machine desktop). On 0.0.0.0 it would
-# hand live-trading control to anyone on the LAN/tailnet. Set in main() from --host.
+# hand live-trading control to anyone on the LAN/tailnet.
 # When False (non-loopback bind) start/stop/backtest REQUIRE the token in every mode.
-_EXPOSE_TOKEN = True
+#
+# Derived at MODULE level from BOTSTRIKE_HOST (audit R2 security_supply-05): main() alone was not
+# enough because `--dev` runs uvicorn with reload=True, and the reload worker imports
+# "server.bridge:app" WITHOUT executing main() — the flag stayed at its True default, which on a
+# non-loopback bind leaked the token via /api/bot/status, served /docs and accepted mutations with
+# no token at all (verified: 200 on POST /api/bot/stop without credentials). main() also exports
+# BOTSTRIKE_HOST so the reload child inherits the right value.
+_EXPOSE_TOKEN = os.getenv("BOTSTRIKE_HOST", "127.0.0.1").strip() in _LOOPBACK_HOSTS
+
+# Deploy-level kill switch for live trading (audit R1 03-P0-2, R2 security_supply-03). Defence in
+# depth: with it unset, a leaked token cannot start real-money trading. Set BOTSTRIKE_ALLOW_LIVE=1
+# only on a host that is actually meant to trade live.
+_ALLOW_LIVE = os.getenv("BOTSTRIKE_ALLOW_LIVE", "0").strip() == "1"
+
 VALID_MODES = {"paper", "dry_run", "live"}
 VALID_EXCHANGES = ("binance", "hyperliquid", "strike")
+
+# uvicorn's access log writes the full request line — including `?token=...` — to stdout, i.e. to
+# journald on the server (audit R2 security_supply-01, reproduced). Redact it instead of turning
+# the access log off: the log stays useful, the credential never lands on disk.
+_TOKEN_IN_URL_RE = re.compile(r"(token=)[^&\s\"']+", re.IGNORECASE)
+
+
+class _RedactTokenFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = _TOKEN_IN_URL_RE.sub(r"\1***", record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                _TOKEN_IN_URL_RE.sub(r"\1***", a) if isinstance(a, str) else a for a in record.args
+            )
+        return True
+
+
+def _install_token_redaction() -> None:
+    """Attach at import time so the `--dev` reload worker gets it too. dictConfig (which uvicorn
+    runs on startup) replaces handlers but keeps filters already attached to the logger object."""
+    for name in ("uvicorn.access", "uvicorn.error"):
+        lg = logging.getLogger(name)
+        if not any(isinstance(f, _RedactTokenFilter) for f in lg.filters):
+            lg.addFilter(_RedactTokenFilter())
+
+
+_install_token_redaction()
 
 # ── Health / watchdog thresholds ─────────────────────────────────
 # /api/health answers 503 when the engine is expected but dead, or running with no ticks for this long.
@@ -1214,13 +1260,20 @@ def _token_ok(supplied: str) -> bool:
     return bool(supplied) and secrets.compare_digest(supplied, _AUTH_TOKEN)
 
 
-async def require_token_when_remote(token: str = "", x_botstrike_token: str = Header(default="")):
+async def supplied_token(token: str = "", x_botstrike_token: str = Header(default="")) -> str:
+    """The caller's token from either source. `X-BotStrike-Token` is what clients SHOULD use
+    (the query string ends up in access logs, proxies and browser history — audit R2
+    security_supply-01); `?token=` stays accepted so older desktop builds keep working."""
+    return token or x_botstrike_token
+
+
+async def require_token_when_remote(supplied: str = Depends(supplied_token)):
     """Loopback bind (desktop-local): unchanged — paper/dry_run need no token.
     Non-loopback bind (server on 0.0.0.0): every mutation needs BOTSTRIKE_AUTH_TOKEN
-    (query `token=` or header `X-BotStrike-Token`)."""
+    (header `X-BotStrike-Token`, or legacy query `token=`)."""
     if _EXPOSE_TOKEN:
         return
-    if not _token_ok(token or x_botstrike_token):
+    if not _token_ok(supplied):
         raise HTTPException(status_code=401, detail="auth token required (BOTSTRIKE_AUTH_TOKEN)")
 
 
@@ -1267,10 +1320,16 @@ async def get_config():
 
 
 @app.post("/api/bot/start", dependencies=[Depends(require_token_when_remote)])
-async def bot_start(mode: str = "paper", exchange: str = "binance", token: str = ""):
+async def bot_start(mode: str = "paper", exchange: str = "binance",
+                    supplied: str = Depends(supplied_token)):
     # Auth: live always needs the token (any bind); other modes only on non-loopback (dependency)
-    if mode == "live" and not _token_ok(token):
+    if mode == "live" and not _token_ok(supplied):
         raise HTTPException(status_code=401, detail="Invalid or missing auth token for live mode")
+    # Deploy-level kill switch: a valid token is NOT enough to trade real money
+    if mode == "live" and not _ALLOW_LIVE:
+        raise HTTPException(
+            status_code=403,
+            detail="live trading disabled on this host (set BOTSTRIKE_ALLOW_LIVE=1 to enable)")
     if mode not in VALID_MODES:
         raise HTTPException(status_code=400, detail=f"Invalid mode: {mode!r}. Valid: {sorted(VALID_MODES)}")
     if exchange not in VALID_EXCHANGES:
@@ -1287,11 +1346,11 @@ async def bot_start(mode: str = "paper", exchange: str = "binance", token: str =
 
 
 @app.post("/api/bot/stop", dependencies=[Depends(require_token_when_remote)])
-async def bot_stop(token: str = ""):
+async def bot_stop(supplied: str = Depends(supplied_token)):
     if not state.running:
         return {"status": "not_running"}
     # Live always needs the token to stop (any bind); paper on loopback stops without it
-    if state.mode == "live" and not _token_ok(token):
+    if state.mode == "live" and not _token_ok(supplied):
         raise HTTPException(status_code=401, detail="Invalid or missing auth token to stop live trading")
     await stop_engine(manual=True)
     return {"status": "stopped"}
@@ -1573,7 +1632,10 @@ def main():
     args = parser.parse_args()
 
     global _EXPOSE_TOKEN
-    _EXPOSE_TOKEN = args.host in ("127.0.0.1", "localhost", "::1")
+    # Export before computing: with --dev the reload worker re-imports this module in a CHILD
+    # process that never runs main(), and derives _EXPOSE_TOKEN from this env var (R2 sec-05).
+    os.environ["BOTSTRIKE_HOST"] = args.host
+    _EXPOSE_TOKEN = args.host in _LOOPBACK_HOSTS
     if not _EXPOSE_TOKEN and not os.getenv("BOTSTRIKE_AUTH_TOKEN", "").strip():
         logger.warning("auth_token_random_on_public_bind",
                        hint="set BOTSTRIKE_AUTH_TOKEN in .env: on a non-loopback bind start/stop/backtest "
