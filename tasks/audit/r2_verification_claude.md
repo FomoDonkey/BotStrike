@@ -13,7 +13,7 @@ Aquí verifico cada uno con ejecución real y salida a la vista, y corrijo la se
 | ID | Severidad reportada | **Mi veredicto** | Cambio |
 |----|--------------------|------------------|--------|
 | security_supply-01 | P1 | **CONFIRMADO** (mecanismo reproducido) — pero **0 fugas reales hasta hoy** en el CT | matiz a la baja |
-| security_supply-02 | P1 | **CONFIRMADO Y AGRAVADO** → **P0 de mantenimiento** | ⬆ sube |
+| security_supply-02 | P1 | **PARCIALMENTE REFUTADO** → **P2**: el set desplegado pasa 100/100; solo falta `httpx2` en el CT | ⬇ baja |
 | security_supply-03 | P2 | **CONFIRMADO** (no hay `ALLOW_LIVE` en la unit) | = |
 | security_supply-05 | P2 | **CONFIRMADO Y AGRAVADO** → **P1**: bypass TOTAL de auth, no solo "silencioso" | ⬆ sube |
 | security_supply-07 | P3 | **CONFIRMADO** (secreto muerto presente en el `.env` del CT) | = |
@@ -51,14 +51,27 @@ E       $ pip install httpx2
 ```
 **El entorno desplegado no puede ni recolectar los tests** (starlette 1.6 movió TestClient a `httpx2`,
 que el lock no incluye). O sea: 0 de 100 tests cubren hoy lo que corre en producción; el "92/92 en el CT"
-del todo fue cierto con un lock anterior y hoy es falso. El bridge en sí funciona (verify.sh PASS), así
-que no es una caída de producción — es **pérdida total de cobertura sobre el entorno real**, que es como
-se cuelan las regresiones un domingo a las 3 AM. Lo trato como **P0 de mantenibilidad**.
+del todo fue cierto con un lock anterior y hoy es falso.
 
-Paquetes solo-dashboard confirmados en el servidor:
+### ⚠️ Corrección de mi propio veredicto (esto es lo que pasa cuando se verifica de verdad)
+
+Al leer eso escalé el hallazgo a "P0 de mantenibilidad" asumiendo que los majors no probados
+(pandas 3.0, starlette 1.6) **podían romper el código**. **Me equivoqué, y lo demuestro:** repliqué el set
+desplegado EXACTO en un venv desechable (`uv pip install -r requirements.lock`) y corrí la suite completa:
 ```
-altair  git(gitpython)  plotly  pydeck  streamlit
+replica: pandas 3.0.5  starlette 1.6.0  fastapi 0.141.1  numpy 2.5.2
+100 passed in 8.95s
 ```
+**El set desplegado pasa 100/100.** Lo único que faltaba era `httpx2`, dependencia SOLO de test que
+starlette 1.6 exige para su TestClient. Ni pandas 3.0 ni starlette 1.6 rompen nada del bot.
+
+Veredicto corregido → **P2**, y se descompone en dos cosas pequeñas y reales:
+1. **Falta `httpx2` en el CT** → allí la suite no arranca → no hay puerta de calidad en el despliegue.
+2. **Paquetes solo-dashboard en el servidor** (confirmado): `altair  git(gitpython)  plotly  pydeck  streamlit`
+   → superficie de ataque a cambio de cero función.
+
+La alarma "el CT corre versiones que podrían reventar" queda **refutada con datos**. Buena noticia:
+el CT está sobre un set que ahora sí está validado.
 
 ## security_supply-03 — sin kill-switch de host para live
 
@@ -90,14 +103,14 @@ Solo afecta a `--dev` (producción usa el arranque normal), pero el fix es de 3 
 
 ## Plan de corrección (por orden de valor)
 
-1. **SEC-02 (P0 mantenibilidad):** regenerar `requirements.lock` desde el set REALMENTE probado
-   (o añadir `httpx2` y volver a validar), separar `requirements-server.txt` sin streamlit/plotly/
-   altair/pydeck/gitpython, y **puerta de despliegue**: `update.sh` no reinicia el servicio si la suite
-   no pasa dentro del CT.
+1. **SEC-05 (P1, bypass total):** derivar `_EXPOSE_TOKEN` de entorno a nivel de módulo (o prohibir
+   `--dev` fuera de loopback). Es el único agujero que hoy regala el token y acepta mutaciones sin auth.
 2. **SEC-01 (P1):** token SOLO por cabecera `X-BotStrike-Token` desde la UI + redacción de `token=` en el
    access log del bridge (mantener el access log, que es útil) + aceptar cabecera en el check de live.
-3. **SEC-05 (P1):** derivar `_EXPOSE_TOKEN` de entorno a nivel de módulo (o prohibir `--dev` fuera de loopback).
-4. **SEC-03 (P2):** `BOTSTRIKE_ALLOW_LIVE` (default 0) + fijarlo a 0 en la unit del CT.
+3. **SEC-03 (P2):** `BOTSTRIKE_ALLOW_LIVE` (default 0) + fijarlo a 0 en la unit del CT.
+4. **SEC-02 (P2):** `httpx2` en `requirements-dev.txt` (para que la suite corra en el CT) + puerta de
+   calidad en `update.sh` (no reiniciar si los tests fallan) + `requirements-server.txt` sin
+   streamlit/plotly/altair/pydeck/gitpython.
 5. **SEC-07 (P3):** quitar `GEMINI_API_KEY` del `.env` del servidor.
 6. Pendientes de R1 que este área reconfirma abiertos: 03-P2-11, 03-P2-12, 03-P2-16.
 
