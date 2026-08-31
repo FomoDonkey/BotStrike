@@ -61,9 +61,16 @@ no sabe contar". El go-live estaba bloqueado por el edge y el regulador; ahora t
 - [x] **persistence-02 (P1) ARREGLADO**: `/api/trades?limit=N` devolvía los N MÁS ANTIGUOS etiquetados como
   recientes (ASC + LIMIT). El historial de la UI llevaba mostrando las primeras operaciones de la historia.
   `get_trades(newest_first=True)`. Verificado en DB temporal: limit=3 daba [0,1,2], ahora [7,8,9].
-- [x] **Datos de futuros descargándose en el CT** (`scripts/download_futures_klines.py --days 150 --funding`).
+- [x] **Datos de FUTUROS ya en el CT**: 4 símbolos × 216.000 velas 1m (150 d, 2026-04-03 → 2026-08-31),
+  **0 gaps y 0 duplicados**, + funding rates (450 pagos/símbolo). 48 MB, 334 s.
   Matiz corregido: el `data/binance/` del CT NO estaba caducado (se actualiza solo, llega hasta hoy) — el
   problema allí era el MERCADO (spot vs futuros), no la antigüedad. En mi PC sí estaba parado en abril.
+- [x] **VERIFICADO EN PRODUCCIÓN tras el deploy** (commit 48c7da4, verify PASS, `138 passed` dentro del CT
+  ANTES de reiniciar — la puerta de calidad ya opera de verdad):
+  · `/api/trades?limit=3` devuelve ahora las de HOY (07:13) en vez de las del 29-ago (las más antiguas).
+  · El backtest elige `data/binance_futures/` y el filtro de fechas funciona: 2026-08-01..15 → 20.161 barras
+    del rango exacto (antes: 0 barras = "Insufficient data").
+  · `POST /api/backtest/run` sin token → 401. Es el fix de seguridad haciendo su trabajo (la UI sí lo manda).
 
 ## Sesión 2026-08-31 — AUDITORÍA R2 TANDA 1 + fixes P0 (commit 1309927, desplegado, verify PASS)
 La tanda de 3 áreas completó **12/12 agentes sin fallos** (el troceo funcionó donde el fan-out de 17 murió 3 veces).
