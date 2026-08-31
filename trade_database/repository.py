@@ -258,10 +258,14 @@ class TradeRepository:
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
         limit: int = 0,
+        newest_first: bool = False,
     ) -> List[TradeRecord]:
         """Consulta trades con filtros opcionales.
 
-        Todos los filtros son AND. Retorna ordenado por timestamp ASC.
+        Todos los filtros son AND. Retorna SIEMPRE ordenado por timestamp ASC.
+
+        newest_first only changes WHICH rows `limit` keeps: with it, the most recent
+        N (still returned oldest-first). Without it, `limit` keeps the oldest N.
         """
         conditions = []
         params = []
@@ -292,13 +296,22 @@ class TradeRepository:
             params.append(end_time)
 
         where = " AND ".join(conditions) if conditions else "1=1"
-        sql = f"SELECT * FROM trades WHERE {where} ORDER BY timestamp ASC"
+        # `LIMIT n` on an ASC scan returns the n OLDEST rows. Callers asking for "the
+        # last N trades" were silently getting the FIRST N (audit R2 persistence-02:
+        # the UI's trade history showed the oldest trades labelled "most recent").
+        # With newest_first the DB does the ordering, and the result is flipped back to
+        # chronological order so every caller keeps the same ASC contract.
+        order = "DESC" if newest_first else "ASC"
+        sql = f"SELECT * FROM trades WHERE {where} ORDER BY timestamp {order}"
         if limit > 0:
             sql += f" LIMIT {limit}"
 
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
-            return [self._row_to_trade(r) for r in rows]
+            trades = [self._row_to_trade(r) for r in rows]
+            if newest_first:
+                trades.reverse()
+            return trades
 
     def get_trades_dataframe(self, **kwargs) -> "pd.DataFrame":
         """Retorna trades como DataFrame de pandas (import lazy)."""

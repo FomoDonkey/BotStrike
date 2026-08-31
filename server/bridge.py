@@ -1434,8 +1434,10 @@ async def get_trades(limit: int = 100):
     if not state.engine:
         return {"trades": []}
     try:
+        # newest_first: `limit` must keep the LAST N trades, not the first N
+        # (audit R2 persistence-02). The rows still arrive chronologically.
         records = state.engine.trade_repo.get_trades(
-            source="paper", limit=limit,
+            source="paper", limit=limit, newest_first=True,
         )
         trades = []
         import datetime
