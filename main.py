@@ -868,6 +868,14 @@ class BotStrike:
         for item in (result.get("closed") or []) if isinstance(result, dict) else []:
             self._positions.pop(item.get("symbol"), None)
             self._notify_strategies_flat(item.get("symbol"), None)
+        # Only cancel the protective orders once EVERY position is actually flat
+        # (audit R2 fix_core-01, P0). cancel_all() used to run unconditionally, so a
+        # failed or partial close left the position open WITHOUT its SL/TP — the exact
+        # naked position F01 set out to prevent. If anything is left, keep the stops.
+        if remaining:
+            logger.critical("flatten_keeping_protective_orders", reason=reason,
+                            hint="positions remain open; SL/TP intentionally NOT cancelled")
+            return
         await self.execution_engine.cancel_all()
 
     def _notify_strategies_flat(self, symbol: Optional[str], strategy_type) -> None:

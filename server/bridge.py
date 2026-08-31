@@ -381,8 +381,19 @@ async def stop_engine(manual: bool = False):
     if engine:
         engine._running = False
 
-        # Cancel live orders if in live mode (match CLI: main.py:1084-1085)
-        if not engine.dry_run and not engine.paper:
+        # Close positions FIRST, then cancel orders — via the engine's own _flatten_all,
+        # exactly like the CLI (main.py:893-894). Audit R2 fix_core-02 (P0): this path
+        # used to call cancel_all() directly, which removes the exchange SL/TP and
+        # leaves the position OPEN AND UNPROTECTED. Round 1 fixed the naked-position
+        # bug in the CLI only, while systemd runs the bridge — so production kept the
+        # bug the audit believed closed. _flatten_all handles paper (simulator fills
+        # through the normal pipeline), dry_run (no-op) and live.
+        if engine.settings.trading.close_positions_on_shutdown:
+            try:
+                await engine._flatten_all(reason="shutdown")
+            except Exception as e:
+                logger.error("shutdown_flatten_failed", error=str(e))
+        elif not engine.dry_run and not engine.paper:
             try:
                 await engine.execution_engine.cancel_all()
             except Exception as e:
