@@ -1555,21 +1555,35 @@ def _run_backtest_sync(body: dict) -> dict:
         settings = Settings()
         bt = Backtester(settings)
 
-        # Load Binance klines — directory uses BotStrike symbol format (BTC-USD)
-        data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                "data", "binance", "klines")
-        parquet_path = os.path.join(data_dir, symbol, "1m.parquet")
-
-        if not os.path.exists(parquet_path):
-            # Fallback: try without dash (legacy format)
-            legacy_path = os.path.join(data_dir, symbol.replace("-", ""), "1m.parquet")
-            if os.path.exists(legacy_path):
-                parquet_path = legacy_path
-            else:
-                return {"error": f"No data for {symbol}. Run: python main.py --download-binance"}
+        # Load klines — directory uses BotStrike symbol format (BTC-USD).
+        # FUTURES first (audit R2 backtest_parity-03/13): the engine trades USDT-M
+        # futures (fapi), but this endpoint used to read data/binance/ = SPOT, whose
+        # last candle is 2026-04-03. The correct dataset was written by one script and
+        # read by none. data/binance/ stays as a fallback for old checkouts.
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        parquet_path = None
+        for sub in ("binance_futures", "binance"):
+            data_dir = os.path.join(root, "data", sub, "klines")
+            for name in (symbol, symbol.replace("-", "")):  # dashed + legacy format
+                candidate = os.path.join(data_dir, name, "1m.parquet")
+                if os.path.exists(candidate):
+                    parquet_path = candidate
+                    break
+            if parquet_path:
+                break
+        if not parquet_path:
+            return {"error": f"No data for {symbol}. Run: python scripts/download_futures_klines.py"}
 
         import pandas as pd
         df = pd.read_parquet(parquet_path)
+        # Normalise ms → s BEFORE filtering (audit R2 backtest_parity-03). The parquet
+        # stores milliseconds while pd.Timestamp(...).timestamp() returns seconds, so
+        # every start_date was silently ignored, every end_date returned 0 bars, and the
+        # ms leaked into the metrics: the UI reported Sharpe -0.27 when the real figure
+        # was -15.97 (59x) and a mean trade duration of 22 days instead of 32 minutes.
+        if len(df) and float(df["timestamp"].median()) > 1e12:
+            df = df.copy()
+            df["timestamp"] = df["timestamp"] / 1000.0
         if start_date:
             df = df[df["timestamp"] >= pd.Timestamp(start_date).timestamp()]
         if end_date:
