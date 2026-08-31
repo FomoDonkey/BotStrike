@@ -855,11 +855,14 @@ class BotStrike:
         if self.dry_run:
             return
         result: Dict = {}
+        close_ok = False
         try:
             result = await self.execution_engine.close_all_positions()
+            close_ok = True
         except Exception as e:
             logger.error("flatten_close_positions_failed", reason=reason, error=str(e))
         remaining = result.get("remaining") if isinstance(result, dict) else None
+        errors = result.get("errors") if isinstance(result, dict) else None
         if remaining:
             logger.critical("flatten_incomplete_positions_remain", reason=reason,
                             symbols=[p.get("symbol") for p in remaining])
@@ -868,13 +871,24 @@ class BotStrike:
         for item in (result.get("closed") or []) if isinstance(result, dict) else []:
             self._positions.pop(item.get("symbol"), None)
             self._notify_strategies_flat(item.get("symbol"), None)
-        # Only cancel the protective orders once EVERY position is actually flat
-        # (audit R2 fix_core-01, P0). cancel_all() used to run unconditionally, so a
-        # failed or partial close left the position open WITHOUT its SL/TP — the exact
-        # naked position F01 set out to prevent. If anything is left, keep the stops.
-        if remaining:
+        # Cancel the protective orders ONLY when we are certain every position is flat
+        # (audit R2 fix_core-01 + tests_quality-05, both P0). Three ways to be unsure,
+        # and all three must keep the stops:
+        #   - close_all_positions() raised        → close_ok False, result empty
+        #   - it reported positions still open    → remaining
+        #   - it reported per-symbol errors       → errors
+        # The first case is the one the original fix missed: on an exception `remaining`
+        # is None (falsy), so the old guard sailed through and cancelled the SL/TP of a
+        # position that was almost certainly still open — the exact naked position this
+        # code exists to prevent, in the worst case (the exchange is misbehaving).
+        if not close_ok or remaining or errors:
             logger.critical("flatten_keeping_protective_orders", reason=reason,
-                            hint="positions remain open; SL/TP intentionally NOT cancelled")
+                            close_ok=close_ok,
+                            remaining=len(remaining) if remaining else 0,
+                            errors=len(errors) if errors else 0,
+                            hint="cannot prove positions are flat; SL/TP intentionally NOT cancelled")
+            asyncio.ensure_future(self.notifier.notify_error(
+                "flatten_stops_kept", f"{reason}: close_ok={close_ok}"))
             return
         await self.execution_engine.cancel_all()
 

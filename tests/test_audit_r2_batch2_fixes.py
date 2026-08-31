@@ -45,7 +45,10 @@ def test_bare_cancel_all_is_no_longer_the_default_path():
 # ── fix_core-01: never cancel the stops while a position survives ──────────
 
 class _Engine:
-    """Minimal stand-in exercising BotStrike._flatten_all's live branch."""
+    """Minimal stand-in exercising BotStrike._flatten_all's live branch.
+
+    close_result may be a dict (returned) or an Exception instance (raised).
+    """
 
     def __init__(self, close_result):
         self.paper = False
@@ -61,6 +64,8 @@ class _Engine:
 
         class _Exec:
             async def close_all_positions(self):
+                if isinstance(close_result, Exception):
+                    raise close_result
                 return close_result
 
             async def cancel_all(self):
@@ -91,6 +96,24 @@ def test_stops_are_cancelled_once_everything_is_flat():
 def test_partial_close_keeps_stops():
     eng = _Engine({"closed": [{"symbol": "BTC-USD"}],
                    "remaining": [{"symbol": "ETH-USD"}]})
+    _flatten(eng)
+    assert eng.cancel_all_called is False
+
+
+def test_stops_are_kept_when_the_close_RAISES():
+    """The hole the first version of this fix left (audit R2 tests_quality-05, P0).
+
+    On an exception `result` stays {} so `remaining` is None — falsy — and the old
+    guard sailed straight through to cancel_all(), deleting the SL/TP of a position
+    that was almost certainly still open, precisely when the exchange is misbehaving.
+    """
+    eng = _Engine(RuntimeError("exchange unreachable"))
+    _flatten(eng)
+    assert eng.cancel_all_called is False, "stops cancelled after a FAILED close"
+
+
+def test_stops_are_kept_when_the_close_reports_errors():
+    eng = _Engine({"closed": [], "remaining": [], "errors": [{"symbol": "BTC-USD"}]})
     _flatten(eng)
     assert eng.cancel_all_called is False
 

@@ -21,6 +21,7 @@ on:
       - "desktop/**"
       - "server/**"
       - "requirements.txt"
+      - "requirements-dev.txt"
       - ".github/workflows/ci.yml"
   pull_request:
     branches: [main]
@@ -59,7 +60,11 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install pytest
+          # requirements-dev, not a bare `pip install pytest` (audit R2 tests_quality-06):
+          # without httpx/httpx2 the starlette TestClient import raises at COLLECTION
+          # time, and `-x` turned that into "0 tests run, job red" — the CI was red in
+          # 16 of its last 20 runs while executing nothing at all.
+          pip install -r requirements-dev.txt
 
       - name: Verify imports compile
         run: |
@@ -68,8 +73,10 @@ jobs:
           python -c "from risk.risk_manager import RiskManager; print('Risk OK')"
           python -c "from execution.order_engine import OrderExecutionEngine; print('Execution OK')"
 
+      # No -x: a single collection error used to abort the whole run and hide every
+      # other result. Show all failures instead of stopping at the first.
       - name: Run tests
-        run: python -m pytest tests/ -x -q
+        run: python -m pytest tests/ -q -p no:cacheprovider
 
   check-tauri:
     runs-on: windows-latest
