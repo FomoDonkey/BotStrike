@@ -50,11 +50,50 @@ no sabe contar". El go-live estaba bloqueado por el edge y el regulador; ahora t
   `net_pnl` bruto de comisiones en live, funding nunca contabilizado en paper (~11%/año), `/api/trades?limit=N`
   devuelve los N MÁS ANTIGUOS etiquetados como recientes, sesiones fantasma con `session_id=''`, Telegram con
   HTML sin escapar que descarta `notify_error`.
-- [~] **Tanda 3 EN CURSO** (`wy96c0alm`, script `tasks/audit/wf_r2_batch3.js`): microstructure, hyperliquid,
-  tests_quality. Preguntas centrales que le he puesto: (a) ¿la microestructura discrimina ganadores de
-  perdedores o es coste sin retorno? (b) confirmar/refutar las 2 trampas del SDK de Hyperliquid documentadas en
-  el research; (c) **por qué la suite NO detectó los dos fixes aplicados a un solo lado** (exit_fibonacci solo
-  en live; posición desnuda solo en el CLI mientras systemd corre el bridge).
+## Sesión 2026-08-31 — TANDA 3 (cierra la RONDA 2). 12/12 agentes. Informe: `tasks/audit/r2_batch3_report.md`
+### La suite de tests era la ilusión más cara del proyecto
+- [x] **tests_quality-05 (P0) — MI PROPIO FIX ESTABA A MEDIAS y mis tests no lo detectaban.** `_flatten_all`
+  solo conservaba los SL/TP si el cierre DEVOLVÍA posiciones pendientes; si `close_all_positions()` LANZABA
+  excepción, `result` quedaba `{}`, `remaining` era `None` (falsy) y se cancelaban los stops igualmente — justo
+  cuando el exchange falla. Arreglado: los stops se conservan salvo que se pueda PROBAR que todo está plano
+  (`close_ok` + sin `remaining` + sin `errors`) + aviso por Telegram. **Los 2 tests nuevos están verificados por
+  mutación**: al revertir el guard, fallan (antes no).
+- [x] **tests_quality-06 (P0): la CI corría CERO tests y llevaba roja 16 de 20 ejecuciones.** Instalaba `pytest`
+  a secas, nunca `requirements-dev.txt` → el import de TestClient fallaba en RECOLECCIÓN → `-x` abortaba todo.
+  Arreglado: instala requirements-dev, sin `-x`, y vigila ese fichero.
+- [x] **tests_quality-07 (P0): 4 ficheros de test excluidos que nadie ejecuta.** Medido uno a uno:
+  `test_bug_fixes` exit 1, `test_self_audit` se cuelga (exit 124), `test_p0_fixes` exit 1,
+  `test_execution_intelligence` exit 0. Documentado como deuda con los números en `conftest.py`.
+- [ ] **tests_quality-08 (P0): mutation score ~32%** — 17 de 25 reintroducciones de bugs sobreviven a la suite.
+  Cobertura real 33% y con el perfil INVERTIDO: lo mejor cubierto es lo que no se usa.
+- [ ] tests_quality-01/02/03/04 (P0): el guard de `exit_fibonacci` es un grep sobre el fuente (el bug vuelve con
+  la suite en verde); el P0 de la posición desnuda en el bridge se revierte comentando código y pasa;
+  `check_sl_tp`/`on_price_update` del paper (¡el motor de PnL del soak!) sin cobertura; `validate_signal` sin
+  una sola aserción (se puede sustituir por `return signal` y pasan todos).
+
+### Microestructura: la respuesta a la pregunta central es NO
+- [ ] **MICRO-08 (P1): no discrimina nada.** IC direccional ≤0,012 en 4 horizontes, y el VPIN por barra es un
+  proxy INVERSO de la volatilidad (rho=−0,60 en BTC): marca "tóxico" cuando el mercado está tranquilo.
+- [ ] MICRO-07: `on_trade` consume el **16,5% de un core de forma permanente** (979 µs × 190,6 trades/s) dentro
+  del único event loop, y el 30% de ese coste es un `sorted()` de 500 elementos por trade.
+- [ ] MICRO-01/02/03/05: Hawkes descarta la auto-excitación en el 78-88% de trades reales (early-return `dt<=0`
+  justo en los clusters que existe para detectar); en backtest su spike_ratio es la CONSTANTE 1,500 en 216.592
+  barras → el filtro de MR **nunca se ha ejercitado en ningún backtest**; `is_toxic` no se disparó jamás
+  (0,00% en 33.961 trades); Kyle Lambda está 6-7 órdenes de magnitud por debajo de sus umbrales → código muerto.
+- [ ] MICRO-04: backtest y live ven microestructuras OPUESTAS (risk_score>0,5 en el 95-99,7% de barras de
+  backtest vs 3,8-9,9% en vivo) → ~25% más de sizing en producción que en lo testeado.
+- **Decisión pendiente de Edgar**: archivar el módulo de microestructura o arreglarlo. Coste hoy: 16,5% de CPU
+  permanente y cero poder predictivo medido.
+
+### Hyperliquid: el único venue legal NO funciona en absoluto
+- [ ] 4 P0 confirmados + 9 P0 sin verificar. **El 100% de las órdenes revienta con ValueError ANTES de salir a
+  la red** (sz sin redondear a szDecimals); toda orden MARKET pierde `reduce_only` → el flatten de shutdown
+  podría ABRIR posición contraria desnuda; el bridge ofrece Hyperliquid pero SIEMPRE arranca Binance
+  (`use_binance=True` hardcodeado); `use_testnet=True` (el valor POR DEFECTO) firma y envía a MAINNET.
+- [ ] Trampa `DEFAULT_SLIPPAGE` del research: **REFUTADA** en nuestro código (usamos IOC a 100 bps), pero el
+  riesgo residual es real: sin validación de profundidad.
+
+## Sesión 2026-08-31 (anterior) — TANDA 3 lanzada
 - [x] **Desplegado en el CT** (commit 35aef65 → verify PASS, 0 errores, **138/138 tests DENTRO del CT**).
   Tailscale requería re-autenticación (Edgar la aceptó); la ruta LAN al host Proxmox sigue sin responder,
   solo el CT tiene el 22 abierto (sin nuestra clave). Vía única: Tailscale → host → `pct exec`.

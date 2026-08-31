@@ -1,5 +1,31 @@
 # BotStrike — Lessons Learned
 
+## Auditoría R2 tanda 3 — "138 tests en verde" era una ilusión (2026-08-31)
+- **Un test que no falla al reintroducir el bug NO es un test.** La tanda 3 hizo mutation testing: 17 de 25
+  reintroducciones de bugs sobreviven a la suite completa (score ~32%). Regla nueva y no negociable: cada test
+  de regresión se valida revirtiendo el fix y comprobando que el test SE PONE ROJO. Yo lo apliqué al arreglar
+  mi propio fallo y encontró el hueco de inmediato.
+- **Mi propio fix estaba a medias y mis tests no lo veían.** `_flatten_all` conservaba los stops solo si el
+  cierre DEVOLVÍA posiciones pendientes; si lanzaba excepción, `result={}` → `remaining=None` → falsy → se
+  cancelaban los stops igual. Lección: al proteger contra un fallo, enumerar los MODOS de fallo (devuelve mal,
+  devuelve error, lanza, cuelga), no solo el que se te ocurre primero. "No puedo probar que está plano" debe
+  ser el estado por defecto, no "no me han dicho que quede algo".
+- **Un guard por `grep` sobre el fuente no protege nada** (tests_quality-01): mi test de `exit_fibonacci`
+  comprobaba que cierto texto estuviera en el archivo. El bug vuelve con la suite en verde si alguien
+  reescribe la línea de otra forma. Los tests verifican COMPORTAMIENTO, no la presencia de una cadena.
+- **Una CI que no ejecuta tests es peor que no tener CI**: llevaba roja 16 de 20 ejecuciones corriendo CERO
+  tests (instalaba `pytest` a secas sin `requirements-dev`, el import de TestClient fallaba en RECOLECCIÓN y
+  `-x` abortaba todo). Rojo permanente = nadie mira = ruido. Nunca uses `-x` en CI: esconde todo salvo el
+  primer error.
+- **Excluir un test de la suite lo mata.** 4 ficheros llevaban en `collect_ignore` con el comentario
+  "script-style"; medidos hoy: 2 en rojo, 1 colgándose, 1 verde. Si algo se excluye, hay que escribir POR QUÉ,
+  con números y con la deuda explícita — o se convierte en cobertura imaginaria.
+- **La cobertura estaba invertida respecto al riesgo**: lo mejor cubierto era lo que no se usa, y el motor de
+  PnL del paper (`check_sl_tp`, `on_price_update`) y `validate_signal` no tenían ni una aserción.
+- **Microestructura: medir el poder predictivo ANTES de construir sobre ello.** IC direccional ≤0,012 y el VPIN
+  por barra resultó ser un proxy INVERSO de la volatilidad (rho=−0,60): marcaba "tóxico" en mercado tranquilo.
+  Coste: 16,5% de un core permanente dentro del event loop. Todo un módulo sofisticado sin señal medible.
+
 ## Auditoría R2 tanda 1 — la lección quant más cara del proyecto (2026-08-31)
 - **El test que mata una estrategia es INVERTIR sus señales.** Si al operar al revés no pierdes claramente
   más, no hay información direccional: no hay nada que optimizar. MR pasó ese test (invertida rinde igual)
