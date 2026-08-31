@@ -1,5 +1,34 @@
 # BotStrike — Lessons Learned
 
+## Auditoría R2 + seguridad (2026-08-31 madrugada)
+- **Verificar SIEMPRE los hallazgos de un agente, aunque el informe sea excelente.** Las 3 lentes de
+  verificación del workflow fallaron y los hallazgos llegaron crudos. Al verificarlos yo: dos SUBIERON de
+  severidad (sec-05 no era "auth relajada", era bypass TOTAL: token regalado + mutaciones sin credencial)
+  y uno BAJÓ (sec-02: repliqué el set desplegado en un venv y pasa 112/112 — pandas 3.0/starlette 1.6 no
+  rompen nada; solo faltaba `httpx2`). **Yo mismo había escalado sec-02 a P0 antes de medirlo: error mío,
+  corregido con datos.** Primero mide, luego opina — incluso sobre tu propio veredicto.
+- **Replicar el entorno de producción en un venv desechable** (`uv pip install -r requirements.lock`) es la
+  forma barata y sin riesgo de responder "¿lo que corre en el servidor está realmente probado?". Zero riesgo
+  para el CT y respuesta definitiva en 2 minutos.
+- **Bootstrap de scripts de deploy**: cambiar `update.sh` no surte efecto en ESE deploy — el host ejecuta la
+  copia en disco ANTES del `git pull`. El fix nuevo solo aplica desde el siguiente despliegue. Si el cambio
+  es crítico, aplicarlo a mano una vez.
+- **Un bot de trading nunca debe reiniciarse sobre tests en rojo.** `update.sh` ahora corre la suite en el CT
+  y aborta el restart dejando el proceso viejo vivo. Antes se reiniciaba a ciegas sobre el set desplegado,
+  que además NI SIQUIERA podía recolectar los tests.
+- **`_EXPOSE_TOKEN` y el reloader de uvicorn**: cualquier flag de seguridad calculado dentro de `main()` es
+  inseguro si existe `reload=True` — el worker importa el módulo sin pasar por `main()` y se queda con el
+  default. Los flags de seguridad se derivan del ENTORNO a nivel de módulo, nunca de argv en main().
+- **Secretos en query string**: uvicorn escribe la línea de petición completa en el access log → journald.
+  Un filtro de logging que redacta `token=***` conserva la observabilidad sin filtrar la credencial; mejor
+  que `access_log=False`. Y el cliente debe mandar cabecera, no query.
+- **Workflows de 17 agentes pesados no caben en una sesión**: 3 intentos, 3 caídas por límite, ~1-2,2M
+  tokens cada uno. Además el resume NO replicó desde caché de forma fiable. Lección: auditorías grandes en
+  tandas de 2-3 áreas, no en un único fan-out gigante.
+- **Los agentes que "fallan" pueden haber entregado igualmente**: `research:trend_evidence` figuraba como
+  fallido y sin embargo había escrito 58 KB de investigación (escritura incremental). Revisar SIEMPRE el
+  disco antes de dar por perdido el trabajo de un agente.
+
 ## Web UI + métricas persistentes (2026-08-31, v2.13.x)
 - **La UI mostraba 0 tras cada restart** porque MetricsCollector es de sesión. Regla: el rendimiento REALIZADO
   siempre desde la trade DB (persistente); el engine solo aporta lo vivo/unrealized. Un solo builder

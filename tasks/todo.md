@@ -28,12 +28,58 @@ Objetivo Edgar: ver/controlar el bot del CT desde el navegador (paper trades, ch
   MR NO renormalizado al alza (también congelado por evidencia). Verificado /api/strategies: FIB active=false.
 - [x] Fix P1 risk_sizing-01: guard entry≈stop ABSOLUTO (0.001 en unidades de precio = 50 bps en ADA a $0.20) bloqueaba
   el 100% de trades de ADA (0 en la DB) → ahora relativo 1e-5 del entry. Tests 100/100 (4 nuevos).
-- [~] Auditoría RONDA 2 RELANZADA: run `wf_013db630-2e7` (la anterior wf_d284053e-b20 quedó en stubs; parciales
-  respaldados en tasks/audit/r2_prev_partial/). Reanudar si se corta:
-  Workflow({scriptPath: "C:\Users\edgar\.claude\projects\C--Users-edgar-Desktop-proyectos-BotStrike\74c3f0b9-a0ae-4a7d-af7d-4bb536ff2ee5\workflows\scripts\botstrike-audit-round2-wf_d284053e-b20.js", resumeFromRunId: "wf_013db630-2e7"})
-- [ ] FASE 1 QUANT (tras síntesis R2): estrategia trend/momentum 1D-1W (única familia con edge neto replicado,
-  research §2.2/§2.8; "desarchivar trend semanal"), entradas maker, riesgo 1-2%/trade, funding como filtro;
-  candidato secundario MR post-shock 4h-3d. Validar con umbrales research §4.4 ANTES de asignar capital.
+## Sesión 2026-08-31 (madrugada) — Seguridad R2 aplicada + research entregado
+### Auditoría R2: 3 intentos del workflow, 3 caídas por límite (sesión/créditos)
+- Run `wf_013db630-2e7`. **El resume NO replica desde caché de forma fiable** (security_supply completó en el
+  intento 2 y volvió a fallar en el 3), así que cada relanzamiento cuesta el total (~1-2,2M tokens).
+- **Completado y aprovechado:** `security_supply` (8 hallazgos) + 3 docs de research (venues ES, Hyperliquid,
+  trend evidence — este último escribió el fichero aunque el workflow lo diera por fallido).
+- **PENDIENTE: los 11 finders restantes** (strategies, risk_sizing, backtest_parity, fix_core, fix_bridge,
+  fix_desktop, fix_exchange, microstructure, persistence, hyperliquid, tests_quality) + síntesis.
+  Recomendación: lanzarlos en tandas de 2-3 áreas por sesión, no los 17 agentes de golpe.
+
+### Seguridad R2 — VERIFICADA POR MÍ y aplicada (commits 6d528d9, e0d05f5)
+Las 3 lentes de verificación del workflow fallaron → verifiqué cada hallazgo yo (tasks/audit/r2_verification_claude.md).
+- [x] **sec-05 (subido a P1): bypass TOTAL de auth con `--dev` en bind no-loopback.** Reproducido: token
+  regalado por /api/bot/status, /docs abierto, `POST /api/bot/stop` sin credencial → 200. `_EXPOSE_TOKEN`
+  ahora se deriva de `BOTSTRIKE_HOST` a nivel de MÓDULO (el worker de reload nunca ejecuta main()).
+  Re-verificado tras el fix: token oculto, /docs 404, stop → 401.
+- [x] **sec-01 (P1): token en query string → access log en claro.** UI ahora manda `X-BotStrike-Token`;
+  filtro de logging redacta `token=***` en uvicorn.access/error. Verificado en el CT con canario: `token=***`.
+  (Matiz: 0 fugas reales previas — journald limpio en 7 días; la UI solo lo mandaba en start/stop.)
+- [x] **sec-03 (P2): kill-switch `BOTSTRIKE_ALLOW_LIVE=0`** en la unit. Verificado en el CT:
+  `POST /api/bot/start?mode=live` con token VÁLIDO → **HTTP 403**. Un token filtrado ya no puede operar real.
+- [x] **sec-02 (P2, bajado de P1): PARCIALMENTE REFUTADO.** Repliqué el set desplegado exacto en un venv y
+  pasa 112/112 → pandas 3.0/starlette 1.6 NO rompen nada. Lo real era: faltaba `httpx2` (dep solo de test) →
+  la suite no arrancaba en el CT. Añadido a requirements-dev.txt.
+- [x] **Puerta de calidad en el deploy:** `update.sh` corre la suite en el CT y **aborta el restart si falla**
+  (antes se reiniciaba el bot a ciegas). Verificado: **112/112 dentro del CT**, primera cobertura real de producción.
+- [ ] sec-04 (GET/WS sin auth en LAN): confirmado, pero su fix es decisión de producto — exigir token en los
+  GET rompe el flujo "abro el navegador y veo el bot". Propuesta: `BOTSTRIKE_REQUIRE_AUTH_READS` (default 0).
+- [ ] sec-07 (P3): quitar `GEMINI_API_KEY` del `.env` del CT (secreto muerto). Un `sed -i` de Edgar.
+- [ ] sec-06: verificar scope de la API key de Binance (no re-verificado por mí).
+
+### Research entregado (3 documentos, ~155 KB)
+- `research_r2_venues_es_2026.md`: **Binance MUERTO para residentes ES** (sin MiCA; desde 1-jul-2026 solo
+  reducir/cerrar y retirar). **MiCA NO habilita perps** (son MiFID II). ESMA 25-feb-2026: perps = CFD →
+  **tope 2:1 retail**. HALLAZGO CENTRAL: el carve-out "futuro con vencimiento" — OKX X-Perps y Coinbase EU
+  usan contratos con vencimiento a 5 años + funding: se comportan como perps pero legalmente son futuros y
+  escapan al 2:1.
+- `research_r2_trend_evidence.md`: **réplica propia con datos reales de Binance** (BTCUSDT 2017-2026):
+  Sharpe 1.14 neto (no el 1.58 del paper — la diferencia es régimen 2015-17). **Trend PIERDE en retorno
+  absoluto vs comprar y aguantar BTC** (17,3% vs 36,7% CAGR); gana en Sharpe (1,14 vs 0,82) y MDD (19,5% vs 76,6%).
+  Con $1000: 3-5 activos máximo (granularidad), **SPOT recomendado** (funding=0, la estrategia es long-only),
+  Sharpe esperado ~0,7 → **~6%/año ≈ $60**, con ~25-30% de probabilidad de año en pérdidas.
+- `research_r2_hyperliquid_execution.md`: **2 trampas críticas del SDK** — `DEFAULT_SLIPPAGE=0.05`
+  (market_open sin slippage explícito = IOC a ±5% del mid = hasta 500 bps sobre $1000) y `market_close()`
+  que con agent wallet y sin `account_address` **no cierra nada, en silencio, sin excepción**.
+- [ ] FASE 1 QUANT — **especificación ya cerrada por el research** (`research_r2_trend_evidence.md` §10-§11):
+  Donchian ensemble de 9 lookbacks (5-360d) + vol targeting + trailing stop, **long-only**, **SPOT**,
+  **3 activos** (BTC, ETH, +1), rebalanceo por umbral 20%, coste 10 bps. NO perps: el funding es el mayor
+  coste identificado y el apalancamiento no mejora el Sharpe (verificado: idéntico de 15% a 40% de vol
+  objetivo), solo escala retorno Y drawdown. Validar con los umbrales de §6/§4.4 ANTES de asignar capital.
+  ⚠️ Expectativa honesta a $1000: ~6%/año (~$60), no 3-8% mensual. Mi estimación anterior era demasiado
+  optimista; la evidencia replicada manda.
 - [ ] Prerequisito Fase 2: backtester fiel al live (P0) — sin paridad, los backtests son decorativos
 - [ ] Fase 3: venue legal ES (ejecutar recomendación research_r2_venues §8) + live escalonado 25% × 4 semanas
 - [ ] Opcional: Tailscale login en el CT para acceder a la UI fuera de casa (hoy solo LAN)
