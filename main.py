@@ -38,6 +38,7 @@ from core.microprice import MicropriceCalculator
 from backtesting.backtester import Backtester
 from trade_database.repository import TradeRepository
 from trade_database.adapter import TradeDBAdapter
+from analytics.alltime import compute_alltime_performance
 from execution.paper_simulator import PaperTradingSimulator
 from notifications import get_notifier
 import structlog
@@ -213,6 +214,7 @@ class BotStrike:
                 "testnet": self.settings.use_testnet,
                 "risk_per_trade_pct": self.settings.trading.risk_per_trade_pct,
                 "max_drawdown_pct": self.settings.trading.max_drawdown_pct,
+                "alltime": self._alltime_summary(),
             },
         )
 
@@ -559,7 +561,6 @@ class BotStrike:
 
             for sig in signals:
                 self.trading_logger.log_signal(sig)
-                asyncio.ensure_future(self.notifier.notify_signal(sig))
                 all_signals.append(sig)
                 is_exit = sig.metadata.get("action", "").startswith("exit") or sig.metadata.get("exit_reason")
                 log_type = "signal_exit" if is_exit else "signal_generated"
@@ -579,6 +580,9 @@ class BotStrike:
             )
             if valid:
                 validated.append(valid)
+                # Telegram only sees signals the bot will actually act on,
+                # with the risk-adjusted size (exits always pass validation).
+                asyncio.ensure_future(self.notifier.notify_signal(valid))
                 logger.info("signal_validated",
                             symbol=sig.symbol, strategy=sig.strategy.value,
                             side=sig.side.value, size_usd=round(sig.size_usd, 2))
@@ -828,13 +832,60 @@ class BotStrike:
                 # Correlation regime update
                 self.risk_manager.correlation_regime.compute(time.time())
 
-                # Telegram portfolio snapshot (cada 5 min internamente)
-                await self.notifier.notify_portfolio_snapshot(summary)
+                # Telegram portfolio snapshot (cada 5 min internamente).
+                # El provider (misma fuente de verdad que la UI: trade DB +
+                # unrealized vivo) es perezoso: implica un scan completo de la
+                # DB y el notifier solo lo invoca en la llamada que SI envia.
+                await self.notifier.notify_portfolio_snapshot(
+                    summary, alltime_provider=self._alltime_summary)
 
                 await asyncio.sleep(60)  # cada minuto
             except Exception as e:
                 logger.error("metrics_error", error=str(e))
                 await asyncio.sleep(30)
+
+    def _alltime_summary(self) -> Optional[Dict]:
+        """Vista all-time para notificaciones: realizado desde la trade DB +
+        unrealized vivo del simulador — la misma verdad que muestra la UI
+        (v2.13.1). None si la DB no esta disponible (el notifier cae al
+        formato de sesion, etiquetado como tal).
+
+        SOLO en paper: en live la verdad del equity es el wallet del exchange
+        (ACCOUNT_UPDATE → risk_manager.current_equity), que ya muestra el
+        formato legacy; derivar el equity del DB alli ocultaria el unrealized
+        real (paper_sim es None) y el balance real de la cuenta."""
+        if not self.paper or not self.paper_sim:
+            return None
+        try:
+            cum = compute_alltime_performance(
+                self.trade_repo,
+                float(self.settings.trading.initial_capital),
+                source="paper",
+            )
+            if cum is None:
+                return None
+            unrealized = float(sum(
+                getattr(p, "unrealized_pnl", 0.0) or 0.0
+                for p in self.paper_sim.get_all_positions().values()
+            ))
+            m = self.metrics.get_metrics()
+            return {
+                "equity": round(cum["initial_capital"] + cum["pnl"] + unrealized, 4),
+                "initial_capital": cum["initial_capital"],
+                "realized_pnl": cum["pnl"],
+                "unrealized_pnl": round(unrealized, 4),
+                "total_trades": cum["total_trades"],
+                "win_rate": cum["win_rate"],
+                "total_fees": cum["total_fees"],
+                "max_drawdown": cum["max_drawdown"],
+                "session_pnl": float(m.get("total_pnl", 0.0)),
+                "session_trades": int(m.get("total_trades", 0)),
+            }
+        except Exception as e:
+            # warning, no debug: sin esta vista Telegram vuelve al formato de
+            # sesion y el operador debe poder ver por que en el journal.
+            logger.warning("alltime_summary_error", error=str(e))
+            return None
 
     async def _flatten_all(self, reason: str) -> None:
         """Close EVERY open position, THEN cancel all orders (audit F01 / P0-03).

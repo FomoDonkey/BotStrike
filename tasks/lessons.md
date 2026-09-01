@@ -1,5 +1,33 @@
 # BotStrike — Lessons Learned
 
+## Telegram desincronizado (2026-09-02) — el fix de una superficie no cura a las demás
+- **Al arreglar un bug de "fuente de verdad", enumerar TODAS las superficies que muestran ese
+  dato.** v2.13.1 arregló "la UI se resetea a 0 tras cada restart" con la vista merged de la
+  trade DB — y Telegram siguió 2 días mandando el MISMO bug cada 5 minutos ("equity intacto,
+  0 trades") porque nadie listó sus consumidores. La solución estructural es la de siempre:
+  UN builder compartido (`analytics/alltime.py`) y cero cálculos duplicados por superficie.
+- **Las notificaciones informan de ACCIONES, no de intenciones.** `notify_signal` se emitía antes
+  de `validate_signal`, así que Telegram anunciaba operaciones que el risk manager bloqueaba.
+  Cualquier evento notificado debe salir DESPUÉS del último filtro que puede vetarlo, y con el
+  objeto final (size ajustado), no el borrador.
+- **`parse_mode=HTML` sin `html.escape()` = mensajes que desaparecen en silencio.** Telegram
+  devuelve 400 por un `<` sin escapar y `_send` solo hace log warning: justo los errores (que
+  suelen contener reprs con `<...>`) eran los mensajes que nunca llegaban. Escapar TODO campo
+  dinámico en el punto de interpolación; y los fallos de envío de un notifier deberían contarse
+  en algún sitio visible.
+- **Un payload caro con puerta de cadencia interna se pasa como provider perezoso.** Computábamos
+  el scan completo de la DB cada 60 s para que el notifier lo tirara 4 de cada 5 veces (5 de 5
+  con NullNotifier). Si el receptor decide cuándo consumir, el emisor no precomputa: le pasa un
+  callable.
+- **La vista "bonita" puede ocultar la verdad en otro modo.** La cabecera all-time derivada de la
+  DB habría sustituido en LIVE al equity real del wallet (ACCOUNT_UPDATE) y mostrado
+  "Abierto: $0.00" con posiciones abiertas — el mismo bug que veníamos a arreglar, al revés.
+  Vista all-time SOLO en paper; en live manda el exchange.
+- **"La URL no funciona" ≠ "el servicio está caído".** El bot llevaba 30 h de uptime con la URL
+  respondiendo; lo que muere al reiniciar el PC es el ACCESO (Proton VPN kill-switch al arrancar
+  Windows). Antes de tocar el servidor, probar la URL/puerto desde la máquina del usuario y
+  revisar su VPN. La URL de marcadores es una sola: http://192.168.1.204:9420.
+
 ## Auditoría R2 tanda 3 — "138 tests en verde" era una ilusión (2026-08-31)
 - **Un test que no falla al reintroducir el bug NO es un test.** La tanda 3 hizo mutation testing: 17 de 25
   reintroducciones de bugs sobreviven a la suite completa (score ~32%). Regla nueva y no negociable: cada test

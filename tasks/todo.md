@@ -1,5 +1,41 @@
 # BotStrike — Tasks
 
+## Sesión 2026-09-02 — Telegram sincronizado con la realidad + URL del dashboard
+Quejas de Edgar: (1) la URL de supervisión "deja de funcionar" al reiniciar su PC; (2) las
+notificaciones de Telegram "no cuadran en nada" con lo que opera el bot (portfolio siempre
+"como si nunca se hubiera tocado").
+### Diagnóstico URL — el bot NUNCA se cayó
+- [x] Verificado en vivo: `http://192.168.1.204:9420` responde (health OK, engine paper 30,6 h
+  de uptime, equity 989.04 consistente con la UI). El CT corre 24/7; lo que muere al reiniciar
+  el PC de Edgar es SU acceso: Proton VPN arranca con kill-switch y bloquea la LAN (lección ya
+  conocida). No hay URL efímera ni nada que "recrear": ESA es la URL de marcadores.
+- [ ] Edgar: en Proton VPN activar "Allow LAN connections" (o no dejar que arranque con Windows)
+- [ ] Pendiente de verificar (necesita SSH): que la IP del CT es estática en `pct config 104`
+  (si fuera DHCP sin reserva la URL podría cambiar algún día)
+- [ ] Tailscale del host pide re-auth OTRA VEZ (bloquea deploy + journal). Enlace en la sesión.
+### Telegram — 4 causas raíz encontradas y ARREGLADAS (151/151 tests, 6 mutation-verified)
+- [x] **El snapshot de portfolio usaba estado de SESIÓN** (`portfolio_manager.get_portfolio_summary()`):
+  con `Restart=always` + deploys, cada restart → "equity $1.000, 0 trades, sin posiciones". Es el
+  MISMO bug que la UI tenía hasta v2.13.1 — el fix de la UI nunca llegó a Telegram. Ahora:
+  `analytics/alltime.py::compute_alltime_performance` = UN solo builder (DB + unrealized) que
+  alimenta UI (bridge) y Telegram (`BotStrike._alltime_summary`, provider perezoso: solo se evalúa
+  en el 1 de cada 5 envíos reales, nunca con NullNotifier). Mensaje nuevo: equity/PnL/WR/fees/DD
+  históricos + "Sesión actual (desde el último arranque)" etiquetada aparte.
+- [x] **Las señales se notificaban ANTES del risk manager** → llegaban señales que se bloqueaban y
+  jamás se operaban. Ahora solo las VALIDADAS (objeto ajustado por riesgo, con el size real);
+  los exits siempre pasan validación, así que no se pierde ninguno.
+- [x] **P1 de auditoría confirmado: HTML sin escapar** → un error con `<`/`&` (p.ej.
+  `<PaperPosition object at 0x...>`) hacía que Telegram devolviera 400 y el mensaje se
+  PERDIERA EN SILENCIO. `_esc()` en todos los campos dinámicos.
+- [x] **"Bot encendido" solo decía capital inicial** → parecía un bot recién estrenado en cada
+  restart. Ahora añade equity actual + PnL histórico + nº de ops.
+- [x] Workflow de revisión adversarial (27 agentes): 8 hallazgos confirmados aplicados
+  (vista all-time SOLO en paper — en live el equity real es el wallet del exchange y ocultarlo
+  habría sido el mismo bug al revés; provider perezoso; fallback legacy etiquetado "solo sesión"
+  + warning en journal; test reforzado para el objeto ajustado), 4 refutados.
+- [ ] Deploy al CT 104 pendiente de la re-auth de Tailscale de Edgar; después verificar en el
+  journal los `telegram_send_failed` históricos (la prueba del descarte por HTML)
+
 ## FASE 1 QUANT — trend diario VALIDADO (2026-08-31, commit 35faa9e) ✅ 11/11 GO/NO-GO
 `scripts/trend_daily_research.py` — primera estrategia del proyecto que pasa la validación
 ANTES de tocar capital (MR se operó 2.284 veces antes de que nadie midiera su edge bruto).

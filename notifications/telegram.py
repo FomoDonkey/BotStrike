@@ -26,10 +26,11 @@ Uso:
 """
 from __future__ import annotations
 import asyncio
+import html
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import aiohttp
 import structlog
@@ -45,6 +46,15 @@ ERROR_DEDUP_WINDOW_SEC = 300  # Mismo error suprimido por 5 minutos
 SIGNAL_BATCH_SEC = 30         # Agrupar señales en ventanas de 30s
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
+
+
+def _esc(value: Any) -> str:
+    """Escapa texto dinamico para parse_mode=HTML.
+
+    Un `<`/`&` sin escapar (p. ej. "<PaperPosition object at 0x...>" en un
+    error) hace que Telegram rechace el mensaje ENTERO con 400 y se pierda
+    en silencio (audit R2 P1)."""
+    return html.escape(str(value), quote=False)
 
 
 @dataclass
@@ -147,7 +157,7 @@ class TelegramNotifier:
             "paper": "Paper Trading (simulado, sin dinero real)",
             "live": "🔥 LIVE (operando con dinero real)",
             "dry_run": "Dry Run (solo observa, no opera)",
-        }.get(mode, mode)
+        }.get(mode, _esc(mode))
 
         strat_nombres = {
             "MEAN_REVERSION": "Mean Reversion",
@@ -155,7 +165,7 @@ class TelegramNotifier:
             "MARKET_MAKING": "Market Making",
             "ORDER_FLOW_MOMENTUM": "Order Flow Momentum",
         }
-        strat_list = ", ".join(strat_nombres.get(s, s) for s in strategies) if strategies else "Todas"
+        strat_list = ", ".join(strat_nombres.get(s, _esc(s)) for s in strategies) if strategies else "Todas"
 
         text = (
             "🟢 <b>Bot encendido</b>\n"
@@ -163,7 +173,21 @@ class TelegramNotifier:
             f"📌 Modo: <b>{mode_desc}</b>\n"
             f"🌐 Red: {'Testnet' if testnet else 'Mainnet (real)'}\n\n"
             f"💰 Capital inicial: <b>${capital:,.0f}</b>\n"
-            f"📊 Monedas: {', '.join(symbols)}\n"
+        )
+
+        # Contexto historico (trade DB): sin esto, cada reinicio del servicio
+        # parece un bot "recien estrenado" aunque lleve semanas operando.
+        at = cfg.get("alltime") or {}
+        if at.get("total_trades", 0) > 0:
+            at_pnl = at.get("realized_pnl", 0.0) + at.get("unrealized_pnl", 0.0)
+            at_emoji = "✅" if at_pnl > 0 else ("❌" if at_pnl < 0 else "➖")
+            text += (
+                f"📈 Equity actual: <b>${at.get('equity', 0):,.2f}</b> "
+                f"({at_emoji} ${at_pnl:+,.2f} en {at['total_trades']} ops historicas)\n"
+            )
+
+        text += (
+            f"📊 Monedas: {_esc(', '.join(symbols))}\n"
             f"🧠 Estrategias: {strat_list}\n"
         )
         if risk_per_trade:
@@ -222,7 +246,7 @@ class TelegramNotifier:
                 }
                 text += "\n<b>🧠 Por estrategia</b>\n"
                 for st, data in sorted(by_strat.items()):
-                    nombre = strat_nombres.get(st, st)
+                    nombre = strat_nombres.get(st, _esc(st))
                     st_pnl = data.get("pnl", 0)
                     st_trades = data.get("trades", 0)
                     st_wr = data.get("win_rate", 0)
@@ -257,12 +281,12 @@ class TelegramNotifier:
             "TREND_FOLLOWING": "Trend Following",
             "MARKET_MAKING": "Market Making",
             "ORDER_FLOW_MOMENTUM": "Order Flow Momentum",
-        }.get(strat_str, strat_str)
+        }.get(strat_str, _esc(strat_str))
 
         pnl_emoji = "✅" if pnl > 0 else ("❌" if pnl < 0 else "➖")
 
         text = (
-            f"{emoji} <b>{accion} — {symbol}</b>\n"
+            f"{emoji} <b>{accion} — {_esc(symbol)}</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"💲 Precio: <b>${price:,.4f}</b>\n"
             f"💰 Nocional: ${nocional:,.2f}\n"
@@ -309,11 +333,11 @@ class TelegramNotifier:
             "BREAKOUT": ("💥", "Ruptura", "rotura de nivel importante — volatilidad esperada alta"),
             "UNKNOWN": ("❓", "Indefinido", "datos insuficientes — operando con cautela"),
         }
-        old_emoji, old_nombre, _ = desc_map.get(old_str, ("🔄", old_str, ""))
-        emoji, nombre, explicacion = desc_map.get(new_str, ("🔄", new_str, ""))
+        old_emoji, old_nombre, _ = desc_map.get(old_str, ("🔄", _esc(old_str), ""))
+        emoji, nombre, explicacion = desc_map.get(new_str, ("🔄", _esc(new_str), ""))
 
         text = (
-            f"{emoji} <b>Cambio de regimen — {symbol}</b>\n"
+            f"{emoji} <b>Cambio de regimen — {_esc(symbol)}</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"Antes: {old_emoji} {old_nombre}\n"
             f"Ahora: {emoji} <b>{nombre}</b>\n\n"
@@ -331,7 +355,7 @@ class TelegramNotifier:
             "impact_stress": "Mercado demasiado peligroso para operar",
             "ror_throttle": "Risk of Ruin elevado — reduciendo posiciones",
             "correlation_stress": "Correlacion entre activos anormalmente alta",
-        }.get(event, event)
+        }.get(event, _esc(event))
 
         event_action = {
             "max_drawdown": "Se cancelan todas las ordenes abiertas. El bot seguira monitoreando pero no abrira nuevas posiciones hasta que el drawdown se recupere.",
@@ -354,14 +378,14 @@ class TelegramNotifier:
 
         detail_lines = ""
         for k, v in d.items():
-            label = label_map.get(k, k)
+            label = label_map.get(k, _esc(k))
             if isinstance(v, float):
                 if k.endswith("_pct") or k in ("risk_of_ruin", "avg_correlation"):
                     detail_lines += f"  {label}: {v:.2%}\n"
                 else:
                     detail_lines += f"  {label}: ${v:,.2f}\n"
             else:
-                detail_lines += f"  {label}: {v}\n"
+                detail_lines += f"  {label}: {_esc(v)}\n"
 
         text = (
             "🚨 <b>ALERTA DE RIESGO</b>\n"
@@ -394,12 +418,12 @@ class TelegramNotifier:
             "risk_monitor": "Monitor de riesgo",
             "data_refresh": "Actualizacion de datos",
             "metrics": "Metricas",
-        }.get(task_name, task_name)
+        }.get(task_name, _esc(task_name))
 
         text = (
             f"❌ <b>Error en el bot</b>\n\n"
             f"Componente: {task_desc}\n"
-            f"Detalle: <code>{error[:300]}</code>\n\n"
+            f"Detalle: <code>{_esc(error[:300])}</code>\n\n"
             f"El sistema intentara reiniciar este componente automaticamente."
         )
         self._enqueue(text)
@@ -417,8 +441,20 @@ class TelegramNotifier:
         existing[f"flush_{data_type}"] = existing.get(f"flush_{data_type}", 0) + count
         self._collector_status[symbol] = existing
 
-    async def notify_portfolio_snapshot(self, summary: Dict) -> None:
-        """Snapshot de portfolio completo. Envia cada 5 llamadas (5 min)."""
+    async def notify_portfolio_snapshot(
+        self, summary: Dict,
+        alltime_provider: Optional[Callable[[], Optional[Dict]]] = None,
+    ) -> None:
+        """Snapshot de portfolio completo. Envia cada 5 llamadas (5 min).
+
+        Con vista "alltime" (fusionada trade DB + unrealized — la MISMA fuente
+        que la UI) el encabezado muestra el historico y la sesion va etiquetada
+        aparte. Sin ella cae al formato legacy, que solo conoce la sesion
+        actual (se resetea en cada restart) y lo dice explicitamente.
+
+        `alltime_provider` es perezoso a proposito: implica un scan completo
+        de la trade DB, asi que solo se invoca en la llamada que SI envia
+        (1 de cada 5), nunca en las descartadas ni en NullNotifier."""
         self._portfolio_counter += 1
         if self._portfolio_counter < PORTFOLIO_SUMMARY_EVERY:
             return
@@ -454,22 +490,48 @@ class TelegramNotifier:
         daily_emoji = "✅" if daily_pnl > 0 else ("❌" if daily_pnl < 0 else "➖")
         dd_emoji = "🟢" if dd < 0.05 else ("🟡" if dd < 0.10 else "🔴")
 
-        text = (
-            "📊 <b>Portfolio</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"💰 Equity: <b>${equity:,.2f}</b>\n"
-            f"🏔️ Peak: ${equity_peak:,.2f}\n"
-            f"{pnl_emoji} PnL total: <b>${pnl:+,.2f}</b>\n"
-            f"{daily_emoji} PnL hoy: ${daily_pnl:+,.2f}\n"
-            f"{dd_emoji} Drawdown: {dd:.2%}\n"
-        )
+        at = summary.get("alltime") or (alltime_provider() if alltime_provider else None) or {}
+        if at:
+            at_realized = at.get("realized_pnl", 0.0)
+            at_unreal = at.get("unrealized_pnl", 0.0)
+            at_pnl = at_realized + at_unreal
+            at_emoji = "✅" if at_pnl > 0 else ("❌" if at_pnl < 0 else "➖")
+            s_pnl = at.get("session_pnl", 0.0)
+            s_trades = at.get("session_trades", 0)
+            s_emoji = "✅" if s_pnl > 0 else ("❌" if s_pnl < 0 else "➖")
+            at_dd = at.get("max_drawdown", 0.0)
+            at_dd_emoji = "🟢" if at_dd < 0.05 else ("🟡" if at_dd < 0.10 else "🔴")
+            text = (
+                "📊 <b>Portfolio</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"💰 Equity: <b>${at.get('equity', equity):,.2f}</b>\n"
+                f"{at_emoji} PnL historico: <b>${at_pnl:+,.2f}</b>"
+                f" ({at.get('total_trades', 0)} ops, WR {at.get('win_rate', 0):.1%})\n"
+                f"    Realizado: ${at_realized:+,.2f} · Abierto: ${at_unreal:+,.2f}\n"
+                f"💸 Comisiones acumuladas: ${at.get('total_fees', 0):,.2f}\n"
+                f"{at_dd_emoji} Max drawdown historico: {at_dd:.2%}\n"
+                f"{s_emoji} Sesion actual (desde el ultimo arranque):"
+                f" ${s_pnl:+,.2f} ({s_trades} ops)\n"
+            )
+        else:
+            text = (
+                "📊 <b>Portfolio</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"💰 Equity: <b>${equity:,.2f}</b>\n"
+                f"🏔️ Peak: ${equity_peak:,.2f}\n"
+                f"{pnl_emoji} PnL total: <b>${pnl:+,.2f}</b>\n"
+                f"{daily_emoji} PnL hoy: ${daily_pnl:+,.2f}\n"
+                f"{dd_emoji} Drawdown: {dd:.2%}\n"
+                "⚠️ <i>Solo sesion actual (desde el ultimo arranque) — "
+                "sin vista historica</i>\n"
+            )
 
         # Posiciones abiertas
         active_pos = {s: n for s, n in positions.items() if abs(n) > 0.01}
         if active_pos:
             text += f"\n<b>📍 Posiciones abiertas</b>\n"
             for sym, notional in sorted(active_pos.items()):
-                text += f"  {'🟢' if notional > 0 else '🔴'} {sym}: ${notional:+,.2f}\n"
+                text += f"  {'🟢' if notional > 0 else '🔴'} {_esc(sym)}: ${notional:+,.2f}\n"
             text += f"📏 Exposicion total: ${total_exposure:,.2f}\n"
         else:
             text += f"\n📍 Sin posiciones abiertas\n"
@@ -483,7 +545,7 @@ class TelegramNotifier:
             }
             text += f"\n<b>🧠 Estrategias</b> ({total_trades} ops)\n"
             for st in sorted(strat_pnl.keys()):
-                nombre = strat_nombres.get(st, st)
+                nombre = strat_nombres.get(st, _esc(st))
                 sp = strat_pnl.get(st, 0)
                 st_n = strat_trades.get(st, 0)
                 w = weights.get(st, 0)
@@ -590,8 +652,8 @@ class TelegramNotifier:
             else:
                 confianza = "⚪ baja"
             lines.append(
-                f"{emoji} {accion} <b>{s.symbol}</b> a ${s.entry_price:,.4f}\n"
-                f"    🧠 {strat_nombre.get(s.strategy, s.strategy)}\n"
+                f"{emoji} {accion} <b>{_esc(s.symbol)}</b> a ${s.entry_price:,.4f}\n"
+                f"    🧠 {strat_nombre.get(s.strategy, _esc(s.strategy))}\n"
                 f"    📊 Confianza: {confianza} ({s.strength:.0%})\n"
                 f"    💰 Tamano: ${s.size_usd:,.2f}"
             )
@@ -629,7 +691,7 @@ class TelegramNotifier:
                 else:
                     price_str = f"${last_price:,.2f}"
 
-            line = f"<b>{symbol}</b>"
+            line = f"<b>{_esc(symbol)}</b>"
             if price_str:
                 line += f" — {price_str}"
 
@@ -761,5 +823,8 @@ class NullNotifier(TelegramNotifier):
                                      count: int) -> None:
         pass
 
-    async def notify_portfolio_snapshot(self, summary: Dict) -> None:
+    async def notify_portfolio_snapshot(
+        self, summary: Dict,
+        alltime_provider: Optional[Callable[[], Optional[Dict]]] = None,
+    ) -> None:
         pass

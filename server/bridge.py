@@ -862,58 +862,27 @@ def _paper_unrealized_pnl() -> float:
 
 
 def _cumulative_performance() -> Optional[Dict]:
-    """All-time paper performance from the trade DB (survives restarts). Cached 5 s."""
+    """All-time paper performance from the trade DB (survives restarts). Cached 5 s.
+
+    The computation itself lives in analytics.alltime so Telegram and the UI
+    share ONE builder and can never show different numbers."""
     now = time.time()
     if _perf_cache["data"] is not None and now - _perf_cache["ts"] < _PERF_CACHE_TTL_SEC:
         return _perf_cache["data"]  # type: ignore[return-value]
     engine = state.engine
     if not engine:
         return None
-    try:
-        initial = float(engine.settings.trading.initial_capital)
-        trades = engine.trade_repo.get_trades(source="paper")
-        closes = [t for t in trades if t.trade_type and t.trade_type != "ENTRY"]
-        if not closes:
-            data = {
-                "initial_capital": initial, "total_trades": 0, "pnl": 0.0,
-                "win_rate": 0.0, "sharpe_ratio": 0.0, "sortino_ratio": 0.0,
-                "max_drawdown": 0.0, "total_fees": 0.0, "avg_win": 0.0,
-                "avg_loss": 0.0, "profit_factor": 0.0, "expectancy": 0.0,
-                "equity_curve_ts": [],
-            }
-        else:
-            from analytics.performance import PerformanceAnalyzer
-            rep = PerformanceAnalyzer().analyze(
-                closes, initial_equity=initial, use_equity_after=False)
-            # (timestamp, equity) pairs; first point = capital before first close
-            pts = [[float(closes[0].timestamp), initial]] + [
-                [float(t.timestamp), float(v)]
-                for t, v in zip(closes, rep.equity_curve[1:])
-            ]
-            if len(pts) > 500:  # downsample for the chart, always keep the last point
-                step = len(pts) // 500 + 1
-                pts = pts[::step] + [pts[-1]]
-            data = {
-                "initial_capital": initial,
-                "total_trades": rep.total_trades,
-                "pnl": round(rep.total_pnl, 4),
-                "win_rate": round(rep.win_rate, 4),
-                "sharpe_ratio": round(rep.sharpe_ratio, 2),
-                "sortino_ratio": round(rep.sortino_ratio, 2),
-                "max_drawdown": round(rep.max_drawdown, 4),
-                "total_fees": round(rep.total_fees, 4),
-                "avg_win": round(rep.avg_win, 4),
-                "avg_loss": round(rep.avg_loss, 4),
-                "profit_factor": round(rep.profit_factor, 2),
-                "expectancy": round(rep.expectancy, 4),
-                "equity_curve_ts": pts,
-            }
-        _perf_cache["ts"] = now
-        _perf_cache["data"] = data
-        return data
-    except Exception as e:
-        logger.debug("cumulative_perf_error", error=str(e), error_type=type(e).__name__)
+    from analytics.alltime import compute_alltime_performance
+    data = compute_alltime_performance(
+        engine.trade_repo,
+        float(engine.settings.trading.initial_capital),
+        source="paper",
+    )
+    if data is None:
         return None
+    _perf_cache["ts"] = now
+    _perf_cache["data"] = data
+    return data
 
 
 def _merged_performance() -> Optional[Dict]:
