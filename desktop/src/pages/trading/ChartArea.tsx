@@ -109,7 +109,7 @@ export function ChartArea({ symbol, timeframe, onTimeframe, markers, positions, 
               )}
             </div>
             {indicator !== "none" && (
-              <div className="h-[26%] min-h-[96px] max-h-[180px] border-t border-hairline-soft shrink-0">
+              <div className="relative h-[26%] min-h-[96px] max-h-[180px] border-t border-hairline-soft shrink-0">
                 <IndicatorPane symbol={symbol} timeframe={timeframe} kind={indicator} mainChart={mainChart} />
               </div>
             )}

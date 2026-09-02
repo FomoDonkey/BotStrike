@@ -232,7 +232,9 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
       return;
     }
 
-    const hash = `${trades.length}_${trades[0]?.timestamp}_${trades[trades.length - 1]?.timestamp}_${timeframe}`;
+    // firstTime is part of the key: markers must be rebuilt when the candle history (re)loads
+    const firstTime = firstTimeRef.current;
+    const hash = `${trades.length}_${trades[0]?.timestamp}_${trades[trades.length - 1]?.timestamp}_${timeframe}_${firstTime}`;
     if (hash === lastMarkersHash.current) return;
     lastMarkersHash.current = hash;
 
@@ -243,6 +245,10 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
         if (!t.timestamp || !t.price) continue;
         // Align trade timestamp to timeframe bucket
         const time = (Math.floor(t.timestamp / tfSeconds) * tfSeconds) as UTCTimestamp;
+        // Trades older than the loaded candles have no bar to sit on: lightweight-charts would
+        // stack them all on the first visible bar (seen on the CT: 24 closed trades piled up at
+        // the left edge). Keep only markers that fall inside the loaded history.
+        if (firstTime && (time as number) < firstTime) continue;
 
         if (t.trade_type === "ENTRY") {
           const isBuy = t.side === "BUY";

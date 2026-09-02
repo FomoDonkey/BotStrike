@@ -190,8 +190,11 @@ export function IndicatorPane({ symbol, timeframe, kind, mainChart, className }:
     };
   }, [ready, mainChart]);
 
+  // absolute inset-0: the parent block is sized by min-height on mobile and a percentage
+  // height never resolves against that (tasks/lessons.md) → the ResizeObserver saw 0 px and
+  // the pane stayed blank at 390 px. The parent is position: relative.
   return (
-    <div className={className} style={{ position: "relative", width: "100%", height: "100%" }}>
+    <div className={className} style={{ position: "absolute", inset: 0 }}>
       <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
       <div ref={legendRef} className="absolute left-2 top-1 z-[2] text-[10.5px] font-mono text-text-muted pointer-events-none select-none whitespace-pre">
         {kind === "rsi" ? "RSI 14" : "MACD 12 26 close 9"}
