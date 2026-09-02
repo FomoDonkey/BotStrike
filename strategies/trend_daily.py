@@ -50,6 +50,9 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DATA_DIR = os.getenv("BOTSTRIKE_TREND_DATA_DIR", os.path.join(PROJECT_ROOT, "data", "binance_daily"))
 DEFAULT_STATE_PATH = os.getenv("BOTSTRIKE_TREND_STATE", os.path.join(PROJECT_ROOT, "data", "trend_daily_state.json"))
 START_MS = 1_502_928_000_000  # 2017-08-17 — first Binance daily candle
+# A run more than this late after the scheduled open (restart, first deploy) must fill at the
+# CURRENT price, never at the stale daily open — the model assumes execution AT the open.
+LATE_FILL_SEC = 3600.0
 SPOT_KLINES_URL = "https://api.binance.com/api/v3/klines"
 
 
@@ -184,6 +187,7 @@ class TrendState:
     last_run_status: str = ""
     last_error: str = ""
     equity_basis: float = 0.0
+    last_run_late: bool = False
     opens_prev: Dict[str, float] = field(default_factory=dict)   # opens used at the last execution
     tracking: List[Dict[str, Any]] = field(default_factory=list)
     candidates: int = 0
@@ -199,7 +203,8 @@ class TrendState:
         for k, v in (d.get("positions") or {}).items():
             st.positions[k] = BookPosition(**{f: v.get(f, 0.0) for f in BookPosition.__dataclass_fields__})
         for k in ("weights", "universe", "universe_month", "targets", "last_run_date", "last_run_ts",
-                  "last_run_status", "last_error", "equity_basis", "opens_prev", "tracking", "candidates"):
+                  "last_run_status", "last_error", "equity_basis", "opens_prev", "tracking", "candidates",
+                  "last_run_late"):
             if k in d:
                 setattr(st, k, d[k])
         return st
@@ -330,22 +335,33 @@ class TrendDailyEngine:
             for sym in list(st.positions):
                 targets.setdefault(sym, 0.0)
             exec_w = apply_rebalance_threshold(targets, st.weights, params.rebalance_threshold)
+            # Scheduled execution time of today; a late run (restart/first deploy hours after
+            # the open) cannot honestly claim the open price → fill at the forming candle's close
+            sched = today.timestamp() + int(self.config.trend_execution_hour_utc) * 3600                 + int(self.config.trend_execution_delay_min) * 60
+            late = (now - sched) > LATE_FILL_SEC
             opens: Dict[str, float] = {}
+            fills_at: Dict[str, float] = {}
             for sym in exec_w:
                 df = data.get(sym)
                 if df is None:
                     continue
                 if today in df.index and float(df.loc[today, "open"]) > 0:
                     opens[sym] = float(df.loc[today, "open"])
+                    cur = float(df.loc[today, "close"])
+                    fills_at[sym] = cur if (late and cur > 0) else opens[sym]
                 else:  # forming candle not returned (rare): fall back to yesterday's close
                     closes = df.loc[df.index < today, "close"]
                     if len(closes):
                         opens[sym] = float(closes.iloc[-1])
+                        fills_at[sym] = opens[sym]
+            if late:
+                logger.warning("trend_late_run_fills_at_current_price", lag_hours=round((now - sched) / 3600, 1))
+            st.last_run_late = late
             equity = float(self._equity_provider())
             st.equity_basis = equity
             turnover = 0.0
             for sym, w in sorted(exec_w.items()):
-                price = opens.get(sym)
+                price = fills_at.get(sym)
                 if not price:
                     logger.warning("trend_no_price_skipped", symbol=sym)
                     continue
@@ -550,6 +566,7 @@ class TrendDailyEngine:
             "last_run_utc": (datetime.fromtimestamp(st.last_run_ts, timezone.utc).isoformat().replace("+00:00", "Z")
                              if st.last_run_ts else ""),
             "last_run_status": st.last_run_status, "last_error": st.last_error,
+            "last_run_late": bool(getattr(st, "last_run_late", False)),
             "universe": list(st.universe), "candidates": st.candidates,
             "targets": dict(st.targets), "weights": {k: round(v, 6) for k, v in st.weights.items() if v},
             "positions": positions, "equity_basis": round(equity, 4),

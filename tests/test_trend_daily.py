@@ -143,6 +143,24 @@ def test_run_once_enters_trending_assets_sized_on_equity(tmp_path):
     assert st["next_run_utc"].startswith("2026-09-03T00:05")
 
 
+def test_late_run_fills_at_current_price_not_the_stale_open(tmp_path):
+    # forming candle: open 250 at 00:00 UTC, price now 240; run happens at 11:02 UTC
+    frames = {"UPUSDT": _frame("up", today_open=250.0)}
+    frames["UPUSDT"].loc[TODAY, "close"] = 240.0
+    late_clock = datetime(2026, 9, 2, 11, 2, tzinfo=timezone.utc).timestamp()
+    eng, fills, s = _engine(tmp_path, frames, trend_n_assets=1, clock=late_clock)
+    asyncio.run(eng.run_once())
+    t = next(t for t in fills.trades if t.side == Side.BUY)
+    assert t.price == pytest.approx(240.0 * (1 + s.trading.slippage_bps / 1e4))   # current, not 250
+    assert eng.status()["last_run_late"] is True
+    # an on-time run (00:10 UTC) still fills at the open
+    eng2, fills2, s2 = _engine(tmp_path / "b", frames, trend_n_assets=1)
+    asyncio.run(eng2.run_once())
+    t2 = next(t for t in fills2.trades if t.side == Side.BUY)
+    assert t2.price == pytest.approx(250.0 * (1 + s2.trading.slippage_bps / 1e4))
+    assert eng2.status()["last_run_late"] is False
+
+
 def test_unchanged_weights_do_not_retrade_and_state_reloads(tmp_path):
     frames = {"UPUSDT": _frame("up"), "DOWNUSDT": _frame("down", seed=2)}
     eng, fills, s = _engine(tmp_path, frames)
