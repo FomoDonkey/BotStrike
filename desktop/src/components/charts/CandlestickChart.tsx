@@ -30,6 +30,8 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
   const priceLineRefs = useRef<Map<string, IPriceLine>>(new Map());
   const overlayRefs = useRef<OverlayRefs>({ series: [] });
   const firstTimeRef = useRef(0);
+  /** first loaded candle time as STATE so effects that depend on the history window re-run when it loads */
+  const [historyStart, setHistoryStart] = useState(0);
   const lastCandleHash = useRef("");
   const lastMarkersHash = useRef("");
   const lastLinesHash = useRef("");
@@ -148,7 +150,10 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
     // Resample if timeframe > 1m
     const candles = tfSeconds > 60 ? resampleCandles(rawCandles, tfSeconds) : rawCandles;
     if (!candles.length) return;
-    firstTimeRef.current = candles[0].time;
+    if (firstTimeRef.current !== candles[0].time) {
+      firstTimeRef.current = candles[0].time;
+      setHistoryStart(candles[0].time);          // store callback, not render: safe to set state here
+    }
 
     const last = candles[candles.length - 1];
     const hash = `${candles.length}_${last.time}_${last.open}_${last.close}_${last.high}_${last.low}_${last.volume}`;
@@ -232,8 +237,8 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
       return;
     }
 
-    // firstTime is part of the key: markers must be rebuilt when the candle history (re)loads
-    const firstTime = firstTimeRef.current;
+    // historyStart is a dependency: markers are rebuilt when the candle history (re)loads
+    const firstTime = historyStart;
     const hash = `${trades.length}_${trades[0]?.timestamp}_${trades[trades.length - 1]?.timestamp}_${timeframe}_${firstTime}`;
     if (hash === lastMarkersHash.current) return;
     lastMarkersHash.current = hash;
@@ -279,7 +284,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
     } catch (e) {
       console.error("[Chart] markers error:", e);
     }
-  }, [trades, chartReady, timeframe, tfSeconds]);
+  }, [trades, chartReady, timeframe, tfSeconds, historyStart]);
 
   // Step 4: live price lines (entry / SL / TP / liq of open positions)
   useEffect(() => {

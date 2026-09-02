@@ -125,17 +125,25 @@ export function IndicatorPane({ symbol, timeframe, kind, mainChart, className }:
       lastHash = hash;
       try {
         const values = new Map<number, number>();
+        // The indicators drop their warm-up bars (RSI 14, MACD 26+9). The main chart and this pane
+        // are synced by LOGICAL index, so the pane must hold one point per candle: pad the warm-up
+        // with whitespace points, otherwise the pane is shifted by the warm-up length (at 390 px
+        // that pushed the whole MACD out of the visible window).
+        const pad = (firstTime: number) =>
+          candles.filter((c) => c.time < firstTime).map((c) => ({ time: c.time as UTCTimestamp }));
         if (kind === "rsi" && cur.a) {
           const pts = rsi(candles, 14);
-          cur.a.setData(pts.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })));
+          const ws = pts.length ? pad(pts[0].time) : [];
+          cur.a.setData([...ws, ...pts.map((p) => ({ time: p.time as UTCTimestamp, value: p.value }))]);
           for (const p of pts) values.set(p.time, p.value);
           const v = pts.length ? pts[pts.length - 1].value : NaN;
           setLegend(`RSI 14   ${Number.isFinite(v) ? v.toFixed(1) : "---"}`);
         } else if (kind === "macd" && cur.h && cur.a && cur.b) {
           const pts = macd(candles, 12, 26, 9);
-          cur.h.setData(pts.map((p) => ({ time: p.time as UTCTimestamp, value: p.hist, color: p.hist >= 0 ? HIST_UP : HIST_DOWN })));
-          cur.a.setData(pts.map((p) => ({ time: p.time as UTCTimestamp, value: p.macd })));
-          cur.b.setData(pts.map((p) => ({ time: p.time as UTCTimestamp, value: p.signal })));
+          const ws = pts.length ? pad(pts[0].time) : [];
+          cur.h.setData([...ws, ...pts.map((p) => ({ time: p.time as UTCTimestamp, value: p.hist, color: p.hist >= 0 ? HIST_UP : HIST_DOWN }))]);
+          cur.a.setData([...ws, ...pts.map((p) => ({ time: p.time as UTCTimestamp, value: p.macd }))]);
+          cur.b.setData([...ws, ...pts.map((p) => ({ time: p.time as UTCTimestamp, value: p.signal }))]);
           for (const p of pts) values.set(p.time, p.macd);
           const l = pts[pts.length - 1];
           setLegend(l ? `MACD 12 26 close 9   ${l.macd.toFixed(2)}   ${l.signal.toFixed(2)}   ${l.hist.toFixed(2)}` : "MACD 12 26 close 9");
