@@ -44,6 +44,7 @@ SUMMARY_INTERVAL_SEC = 300    # Resumen cada 5 minutos
 PORTFOLIO_SUMMARY_EVERY = 5   # Cada N llamadas a notify_portfolio (1 call/min → cada 5min)
 ERROR_DEDUP_WINDOW_SEC = 300  # Mismo error suprimido por 5 minutos
 SIGNAL_BATCH_SEC = 30         # Agrupar señales en ventanas de 30s
+SEND_BACKOFF_SEC = (1.0, 3.0, 9.0)  # reintentos ante timeout/5xx antes de dar el mensaje por perdido
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 
@@ -72,9 +73,16 @@ class _PendingSignal:
 class TelegramNotifier:
     """Notificador de Telegram con cola async y rate limiting."""
 
-    def __init__(self, bot_token: str, chat_id: str) -> None:
+    def __init__(self, bot_token: str, chat_id: str, settings: Any = None) -> None:
         self._token = bot_token
         self._chat_id = chat_id
+        # Live switches (Settings.trading.telegram_*) — edited from the UI without restart
+        self._settings = settings
+        # Delivery accounting (audit 2026-09-02: 9 timeouts in 4 nights were invisible)
+        self.send_failures = 0        # messages lost after every retry
+        self.send_retries = 0         # retries that eventually succeeded
+        self.last_failure_ts = 0.0
+        self.last_failure_error = ""
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
         self._session: Optional[aiohttp.ClientSession] = None
         self._running = False
@@ -98,6 +106,8 @@ class TelegramNotifier:
 
         # Error dedup
         self._recent_errors: Dict[str, float] = {}
+        # Regime-change throttle per symbol (telegram_regime_min_interval_min)
+        self._last_regime_sent: Dict[str, float] = {}
 
     # ── Lifecycle ────────────────────────────────────────────────
 
@@ -131,6 +141,19 @@ class TelegramNotifier:
         if self._session and not self._session.closed:
             await self._session.close()
         logger.info("telegram_notifier_stopped")
+
+    def _flag(self, name: str, default: bool = True) -> bool:
+        """Live notification switch from Settings.trading (True when unconfigured)."""
+        tc = getattr(self._settings, "trading", None)
+        if tc is None:
+            return default
+        return bool(getattr(tc, name, default))
+
+    def _portfolio_every(self) -> int:
+        tc = getattr(self._settings, "trading", None)
+        if tc is None:
+            return PORTFOLIO_SUMMARY_EVERY
+        return max(1, int(getattr(tc, "telegram_portfolio_every_min", PORTFOLIO_SUMMARY_EVERY)))
 
     async def _drain_queue(self) -> None:
         """Envia todos los mensajes pendientes en la cola."""
@@ -259,6 +282,8 @@ class TelegramNotifier:
 
     async def notify_trade(self, trade: Any) -> None:
         """Trade ejecutado (live o paper). Envio inmediato con detalle completo."""
+        if not self._flag("telegram_notify_trades"):
+            return
         side = getattr(trade, "side", "?")
         side_str = side.value if hasattr(side, "value") else str(side)
         symbol = getattr(trade, "symbol", "?")
@@ -308,6 +333,8 @@ class TelegramNotifier:
 
     async def notify_signal(self, signal: Any) -> None:
         """Senal generada. Se agrupa en batches de 30s."""
+        if not self._flag("telegram_notify_signals"):
+            return
         side = getattr(signal, "side", "?")
         strategy = getattr(signal, "strategy", "?")
         self._signal_buffer.append(_PendingSignal(
@@ -322,7 +349,17 @@ class TelegramNotifier:
 
     async def notify_regime_change(self, symbol: str, old_regime: Any,
                                    new_regime: Any) -> None:
-        """Cambio de regimen de mercado. Envio inmediato."""
+        """Cambio de regimen de mercado. Envio inmediato (con intervalo minimo por simbolo)."""
+        if not self._flag("telegram_notify_regime", True):
+            return
+        tc = getattr(self._settings, "trading", None)
+        min_gap = float(getattr(tc, "telegram_regime_min_interval_min", 0) or 0) * 60.0 if tc else 0.0
+        now = time.time()
+        last = self._last_regime_sent.get(symbol, 0.0)
+        if min_gap > 0 and now - last < min_gap:
+            logger.debug("telegram_regime_throttled", symbol=symbol, remaining_sec=round(min_gap - (now - last)))
+            return
+        self._last_regime_sent[symbol] = now
         old_str = old_regime.value if hasattr(old_regime, "value") else str(old_regime)
         new_str = new_regime.value if hasattr(new_regime, "value") else str(new_regime)
 
@@ -455,8 +492,10 @@ class TelegramNotifier:
         `alltime_provider` es perezoso a proposito: implica un scan completo
         de la trade DB, asi que solo se invoca en la llamada que SI envia
         (1 de cada 5), nunca en las descartadas ni en NullNotifier."""
+        if not self._flag("telegram_notify_portfolio"):
+            return
         self._portfolio_counter += 1
-        if self._portfolio_counter < PORTFOLIO_SUMMARY_EVERY:
+        if self._portfolio_counter < self._portfolio_every():
             return
         self._portfolio_counter = 0
 
@@ -752,25 +791,91 @@ class TelegramNotifier:
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
         }
-        try:
-            async with self._session.post(url, json=payload) as resp:
-                if resp.status == 200:
-                    return True
-                elif resp.status == 429:
-                    # Rate limited by Telegram
-                    data = await resp.json()
-                    retry_after = data.get("parameters", {}).get("retry_after", 5)
-                    logger.warning("telegram_rate_limited", retry_after=retry_after)
-                    await asyncio.sleep(retry_after)
-                    return False
-                else:
-                    body = await resp.text()
-                    logger.warning("telegram_send_failed",
-                                   status=resp.status, body=body[:200])
-                    return False
-        except Exception as e:
-            logger.error("telegram_send_error", error=str(e))
-            return False
+        # Retry with backoff on transport errors and 5xx (audit 2026-09-02: a 1-minute
+        # router blip at 03:12 lost every message of that minute, silently). 4xx other
+        # than 429 is a bug in the message itself — never retried.
+        last_err = ""
+        for attempt, delay in enumerate(SEND_BACKOFF_SEC + (None,)):
+            try:
+                async with self._session.post(url, json=payload) as resp:
+                    if resp.status == 200:
+                        if attempt:
+                            self.send_retries += 1
+                        return True
+                    if resp.status == 429:
+                        data = await resp.json()
+                        retry_after = data.get("parameters", {}).get("retry_after", 5)
+                        logger.warning("telegram_rate_limited", retry_after=retry_after)
+                        await asyncio.sleep(retry_after)
+                        last_err = "429 rate limited"
+                    elif resp.status >= 500:
+                        body = await resp.text()
+                        last_err = f"{resp.status} {body[:120]}"
+                        logger.warning("telegram_send_failed", status=resp.status, body=body[:200],
+                                       attempt=attempt + 1)
+                    else:
+                        body = await resp.text()
+                        logger.warning("telegram_send_failed",
+                                       status=resp.status, body=body[:200])
+                        self._record_failure(f"{resp.status} {body[:120]}")
+                        return False
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {e}"
+                logger.warning("telegram_send_error", error=str(e), error_type=type(e).__name__,
+                               attempt=attempt + 1, will_retry=delay is not None)
+            if delay is None:
+                break
+            await asyncio.sleep(delay)
+        self._record_failure(last_err)
+        return False
+
+    def _record_failure(self, error: str) -> None:
+        self.send_failures += 1
+        self.last_failure_ts = time.time()
+        self.last_failure_error = error[:200]
+        logger.error("telegram_message_lost", error=error[:200], failures=self.send_failures)
+
+    def delivery_stats(self) -> Dict[str, Any]:
+        return {"failures": self.send_failures, "retries": self.send_retries,
+                "last_failure_ts": self.last_failure_ts, "last_failure_error": self.last_failure_error}
+
+    # ── Daily digest (2026-09-02) ─────────────────────────────────
+    async def notify_daily_digest(self, alltime: Optional[Dict], edge: Optional[Dict],
+                                  trend: Optional[Dict], risk: Optional[Dict]) -> None:
+        """One message a day with the numbers that matter: equity, PnL, drawdown ladder,
+        edge verdicts and the trend book. Sent by the engine at telegram_digest_hour_utc."""
+        if not self._flag("telegram_notify_daily_digest"):
+            return
+        at = alltime or {}
+        rk = risk or {}
+        lines = ["📰 <b>Resumen diario BotStrike</b>"]
+        if at:
+            lines.append(f"💼 Equity: <b>${at.get('equity', 0):,.2f}</b>  "
+                         f"(PnL total ${at.get('realized_pnl', 0):+,.2f}, "
+                         f"abierto ${at.get('unrealized_pnl', 0):+,.2f})")
+            lines.append(f"📈 {int(at.get('total_trades', 0))} ops · WR {at.get('win_rate', 0) * 100:.1f}% "
+                         f"· fees ${at.get('total_fees', 0):,.2f} · maxDD {at.get('max_drawdown', 0) * 100:.2f}%")
+        if rk:
+            lines.append(f"🛡 DD actual {rk.get('drawdown_pct', 0) * 100:.2f}% / límite "
+                         f"{rk.get('max_drawdown_pct', 0) * 100:.0f}% · hoy ${rk.get('daily_pnl', 0):+,.2f} "
+                         f"(lím. -${rk.get('daily_limit', 0):,.2f}) · semana ${rk.get('weekly_pnl', 0):+,.2f} "
+                         f"(lím. -${rk.get('weekly_limit', 0):,.2f})")
+        if trend:
+            pos = trend.get("positions") or []
+            lines.append(f"🌊 Trend diario: {'ON' if trend.get('enabled') else 'OFF'} · "
+                         f"{len(pos)} posiciones · exposición {trend.get('exposure', 0) * 100:.0f}% · "
+                         f"último run {_esc(trend.get('last_run_status') or 'nunca')}")
+            for p in pos[:6]:
+                lines.append(f"   • {_esc(p.get('ui_symbol', p.get('symbol', '?')))} "
+                             f"w={p.get('weight', 0) * 100:.0f}% PnL ${p.get('unrealized_pnl', 0):+,.2f}")
+        if edge and edge.get("strategies"):
+            lines.append("🧪 Edge:")
+            for name, st in edge["strategies"].items():
+                lines.append(f"   • {_esc(name)}: n={st.get('n', 0)} t={st.get('t_stat', 0):.2f} "
+                             f"PF={st.get('profit_factor', 0):.2f} → <b>{_esc(st.get('verdict', '?'))}</b>")
+        self._enqueue("\n".join(lines))
 
 
 class NullNotifier(TelegramNotifier):
@@ -802,6 +907,13 @@ class NullNotifier(TelegramNotifier):
 
     async def notify_trade(self, trade: Any) -> None:
         pass
+
+    async def notify_daily_digest(self, alltime: Optional[Dict], edge: Optional[Dict],
+                                  trend: Optional[Dict], risk: Optional[Dict]) -> None:
+        pass
+
+    def delivery_stats(self) -> Dict[str, Any]:
+        return {"failures": 0, "retries": 0, "last_failure_ts": 0.0, "last_failure_error": ""}
 
     async def notify_signal(self, signal: Any) -> None:
         pass

@@ -60,3 +60,10 @@ data/binance_futures/
 desktop/data/
 events.jsonl
 data/binance_daily/
+
+# Runtime state edited/written by the bot itself (never commit; untracked = survives git reset --hard on deploy)
+data/config_overrides.json
+data/config_overrides.json.tmp
+data/trend_daily_state.json
+data/trend_daily_state.json.tmp
+data/binance_daily/

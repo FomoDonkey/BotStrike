@@ -43,6 +43,10 @@ class StrategyType(Enum):
     MARKET_MAKING = "MARKET_MAKING"
     ORDER_FLOW_MOMENTUM = "ORDER_FLOW_MOMENTUM"
     FIBONACCI_RETRACEMENT = "FIBONACCI_RETRACEMENT"
+    # Daily-cadence Donchian ensemble (research_r2_trend_evidence §11.2, validated
+    # 11/11 GO/NO-GO 2026-08-31). Runs in its own engine (strategies/trend_daily.py),
+    # not in the 3-second intraday loop.
+    TREND_DAILY = "TREND_DAILY"
 
 
 @dataclass

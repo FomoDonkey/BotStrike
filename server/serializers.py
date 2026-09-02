@@ -169,53 +169,26 @@ def serialize_micro_snapshot(micro) -> Optional[Dict]:
 
 
 def serialize_settings(s: Settings) -> Dict:
-    """Serialize Settings for REST API (excludes secrets)."""
+    """Serialize Settings for REST API (excludes secrets). Every dataclass field is
+    exported (2026-09-02: the UI edits all of them through /api/config/schema)."""
     return {
         "use_testnet": s.use_testnet,
         "symbols": [_serialize_symbol_config(sc) for sc in s.symbols],
         "trading": _serialize_trading_config(s.trading),
         "log_level": s.log_level,
-        "has_api_key": bool(s.api_public_key),
+        "has_api_key": bool(s.api_public_key or s.binance_api_key),
         "has_telegram": bool(s.telegram_bot_token and s.telegram_chat_id),
     }
 
 
 def _serialize_symbol_config(sc: SymbolConfig) -> Dict:
-    return {
-        "symbol": sc.symbol,
-        "leverage": sc.leverage,
-        "max_position_usd": sc.max_position_usd,
-        "mr_zscore_entry": sc.mr_zscore_entry,
-        "mr_atr_mult_sl": sc.mr_atr_mult_sl,
-        "mr_atr_mult_tp": sc.mr_atr_mult_tp,
-        "vpin_bucket_size": sc.vpin_bucket_size,
-        "vpin_toxic_threshold": sc.vpin_toxic_threshold,
-        "hawkes_spike_mult": sc.hawkes_spike_mult,
-        "mm_gamma": sc.mm_gamma,
-        "obi_levels": sc.obi_levels,
-    }
+    from dataclasses import asdict
+    return asdict(sc)
 
 
 def _serialize_trading_config(tc: TradingConfig) -> Dict:
-    return {
-        "initial_capital": tc.initial_capital,
-        "max_drawdown_pct": tc.max_drawdown_pct,
-        "max_leverage": tc.max_leverage,
-        "max_total_exposure_pct": tc.max_total_exposure_pct,
-        "risk_per_trade_pct": tc.risk_per_trade_pct,
-        "allocation_mean_reversion": tc.allocation_mean_reversion,
-        "allocation_fibonacci_retracement": tc.allocation_fibonacci_retracement,
-        "allocation_trend_following": tc.allocation_trend_following,
-        "allocation_market_making": tc.allocation_market_making,
-        "allocation_order_flow_momentum": tc.allocation_order_flow_momentum,
-        "maker_fee": tc.maker_fee,
-        "taker_fee": tc.taker_fee,
-        "slippage_bps": tc.slippage_bps,
-        "vol_target_annual": tc.vol_target_annual,
-        "kelly_min_trades": tc.kelly_min_trades,
-        "kelly_floor_pct": tc.kelly_floor_pct,
-        "kelly_ceiling_pct": tc.kelly_ceiling_pct,
-    }
+    from dataclasses import asdict
+    return asdict(tc)
 
 
 def _serialize_metadata(meta: dict) -> dict:

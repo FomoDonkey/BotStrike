@@ -12,6 +12,7 @@ Uso:
 from __future__ import annotations
 import argparse
 import asyncio
+import math
 import os
 import signal
 import sys
@@ -29,7 +30,10 @@ from strategies.mean_reversion import MeanReversionStrategy
 from strategies.fibonacci_retracement import FibonacciRetracementStrategy
 from strategies.base import BaseStrategy
 from risk.risk_manager import RiskManager
-from portfolio.portfolio_manager import PortfolioManager
+from risk.persistence import compute_historical_risk_state, restore_risk_state
+from portfolio.portfolio_manager import PortfolioManager, strategy_allocation
+from analytics.edge import compute_edge_stats, VERDICT_KILL
+from strategies.trend_daily import TrendDailyEngine
 from execution.order_engine import OrderExecutionEngine
 from logging_metrics.logger import TradingLogger, MetricsCollector
 from core.microstructure import MicrostructureEngine
@@ -92,7 +96,8 @@ class BotStrike:
             else:
                 self.websocket = StrikeWebSocket(settings)
 
-        self.regime_detector = RegimeDetector()
+        # Regime on N-minute bars with dwell hysteresis (reads Settings.trading live)
+        self.regime_detector = RegimeDetector(settings=settings)
         self.market_data = MarketDataCollector(settings, self.client, self.regime_detector)
         self.risk_manager = RiskManager(settings)
         self.portfolio_manager = PortfolioManager(settings, self.risk_manager)
@@ -140,6 +145,19 @@ class BotStrike:
         # Telegram notifications
         self.notifier = get_notifier(settings)
 
+        # TREND_DAILY engine (paper only for now: live needs the venue adapter of the
+        # research §7.2 decision). Its fills go through _process_paper_fill like any
+        # other paper fill; its sizing uses _sizing_equity (compounding-aware).
+        self.trend_engine: Optional[TrendDailyEngine] = None
+        if self.paper:
+            self.trend_engine = TrendDailyEngine(
+                settings, on_fill=self._process_paper_fill, equity_provider=self._sizing_equity)
+
+        # Edge monitor state (analytics/edge.py) — refreshed by _metrics_loop
+        self.edge_stats: Dict = {}
+        self._last_edge_check: float = 0.0
+        self._last_digest_date: str = ""
+
         # Estado: último régimen por símbolo
         self._last_regime: Dict[str, MarketRegime] = {}
         # Posiciones internas por símbolo+estrategia
@@ -172,12 +190,17 @@ class BotStrike:
 
         # Seed with Binance klines for immediate chart data (6h of 1m candles)
         if self.use_binance:
+            seed_hours = self._seed_hours()
             for sym_config in self.settings.symbols:
-                await self.market_data.seed_from_binance(sym_config.symbol, sym_config, hours=6)
+                await self.market_data.seed_from_binance(sym_config.symbol, sym_config, hours=seed_hours)
 
-        # Iniciar sesión de trade database
+        # Risk state that survives restarts + compounding (paper: the trade DB is the
+        # ledger; live: the wallet is the equity truth, only the ladder is restored).
+        self._restore_history()
+
+        # Iniciar sesión de trade database (starts at the compounded equity)
         self.trade_db.start_session(
-            initial_equity=self.settings.trading.initial_capital,
+            initial_equity=self.risk_manager.current_equity,
             symbol="MULTI",
             notes=f"{mode} trading",
         )
@@ -194,6 +217,8 @@ class BotStrike:
             asyncio.create_task(self._data_refresh_loop()),
             asyncio.create_task(self._metrics_loop()),
         ]
+        if self.trend_engine is not None:
+            tasks.append(asyncio.create_task(self.trend_engine.run_loop()))
 
         # WebSocket de usuario solo si hay API key Y no estamos en paper mode
         has_api_key = (
@@ -232,6 +257,8 @@ class BotStrike:
         Si un task crítico (strategy, mm, risk, websocket) muere 3 veces, se hace shutdown.
         """
         task_names = ["ws_market", "strategy", "risk_monitor", "data_refresh", "metrics"]
+        if self.trend_engine is not None:
+            task_names.append("trend_daily")
         if len(tasks) > len(task_names):
             task_names.append("ws_user")
 
@@ -240,6 +267,8 @@ class BotStrike:
             "metrics": self._metrics_loop,
             "data_refresh": self._data_refresh_loop,
         }
+        if self.trend_engine is not None:
+            restartable_methods["trend_daily"] = self.trend_engine.run_loop
         crash_counts: Dict[str, int] = {name: 0 for name in task_names}
         max_restarts = 3
 
@@ -299,12 +328,13 @@ class BotStrike:
                     self.market_data.on_trade(symbol, price, qty, ts)
                     # Clasificar dirección: m=True → buyer is maker → sell aggressor
                     is_buy = not data.get("m", False)
-                    # Alimentar indicadores de microestructura tick-a-tick (+ Kyle Lambda)
-                    self.microstructure.on_trade(symbol, price, qty, ts, is_buy=is_buy)
-                    # Alimentar trade intensity model (bidireccional)
-                    intensity_model = self.execution_engine.trade_intensity.get(symbol)
-                    if intensity_model:
-                        intensity_model.on_trade(ts, is_buy, price * qty)
+                    if self.settings.trading.microstructure_enabled:
+                        # Alimentar indicadores de microestructura tick-a-tick (+ Kyle Lambda)
+                        self.microstructure.on_trade(symbol, price, qty, ts, is_buy=is_buy)
+                        # Alimentar trade intensity model (bidireccional)
+                        intensity_model = self.execution_engine.trade_intensity.get(symbol)
+                        if intensity_model:
+                            intensity_model.on_trade(ts, is_buy, price * qty)
                     # Paper trading: verificar SL/TP en cada tick de precio
                     if self.paper_sim:
                         sl_tp_trades = self.paper_sim.on_price_update(symbol, price)
@@ -468,17 +498,19 @@ class BotStrike:
         # Actualizar régimen en snapshot
         snapshot.regime = regime
 
-        # 1b. Obtener snapshot de microestructura (VPIN, Hawkes, A-S)
-        micro = self.microstructure.get_snapshot(symbol)
+        # 1b. Obtener snapshot de microestructura (VPIN, Hawkes, A-S) — opcional
+        # (trading.microstructure_enabled, UI). Off: no VPIN/OBI/microprice work at all.
+        micro_on = bool(self.settings.trading.microstructure_enabled)
+        micro = self.microstructure.get_snapshot(symbol) if micro_on else None
 
         # 1c. Calcular Order Book Imbalance
         obi_result = None
-        if symbol in self.obi and snapshot.orderbook:
+        if micro_on and symbol in self.obi and snapshot.orderbook:
             obi_result = self.obi[symbol].compute(snapshot.orderbook)
 
         # 1d. Calcular Microprice (fair value superior al mid_price)
         microprice_result = None
-        if symbol in self.microprice and snapshot.orderbook:
+        if micro_on and symbol in self.microprice and snapshot.orderbook:
             # Trade intensity para microprice ajustado
             intensity = self.execution_engine.trade_intensity.get(symbol)
             buy_int = intensity.current.buy_intensity if intensity else 0.0
@@ -658,7 +690,8 @@ class BotStrike:
             )
         # Persistir en trade database — extract execution quality from signal_features
         regime = self._last_regime.get(trade.symbol, MarketRegime.UNKNOWN)
-        micro = self.microstructure.get_snapshot(trade.symbol)
+        micro = (self.microstructure.get_snapshot(trade.symbol)
+                 if getattr(self.settings.trading, "microstructure_enabled", True) else None)
         sf = trade.signal_features or {}
         is_exit = trade.pnl != 0 or sf.get("action", "").startswith("exit")
         self.trade_db.on_trade(
@@ -701,6 +734,11 @@ class BotStrike:
                     symbol_positions: Dict[str, list] = {}
                     for key, pos in self.paper_sim.get_all_positions().items():
                         symbol_positions.setdefault(pos.symbol, []).append(pos)
+                    # TREND_DAILY book (held for days): counts towards exposure/DD too
+                    trend = getattr(self, "trend_engine", None)
+                    if trend is not None:
+                        for pos in trend.positions_as_positions():
+                            symbol_positions.setdefault(pos.symbol, []).append(pos)
 
                     paper_symbols = set()
                     for sym, pos_list in symbol_positions.items():
@@ -839,10 +877,137 @@ class BotStrike:
                 await self.notifier.notify_portfolio_snapshot(
                     summary, alltime_provider=self._alltime_summary)
 
+                # Edge monitor + daily digest (both cheap; DB scan every N minutes)
+                await self._edge_monitor_tick()
+                await self._daily_digest_tick()
+
                 await asyncio.sleep(60)  # cada minuto
             except Exception as e:
                 logger.error("metrics_error", error=str(e))
                 await asyncio.sleep(30)
+
+    def _seed_hours(self) -> int:
+        """1-minute history to seed at start: enough COMPLETE regime bars
+        (regime_timeframe_min × regime_vol_lookback) so the detector is not UNKNOWN
+        for hours after every restart. Capped at 24 h (Binance limit 1500 bars)."""
+        tc = self.settings.trading
+        tf = max(1, int(getattr(tc, "regime_timeframe_min", 1)))
+        lookback = max((s.regime_vol_lookback for s in self.settings.symbols), default=50)
+        hours = int(math.ceil(tf * (lookback + 5) / 60.0)) + 1
+        return max(6, min(24, hours))
+
+    # ── Compounding / persisted risk state (2026-09-02) ───────────────
+    def _restore_history(self) -> None:
+        """Seed equity (compounding), peak and daily/weekly PnL from the trade DB."""
+        tc = self.settings.trading
+        source = "paper" if self.paper else "live"
+        hist = compute_historical_risk_state(self.trade_repo, tc.initial_capital, source=source)
+        # Live: the wallet (ACCOUNT_UPDATE) is the equity truth → restore the ladder only.
+        compounding = bool(tc.compounding_enabled) and self.paper
+        restore_risk_state(self.risk_manager, hist, compounding=compounding)
+        self.metrics.update_equity(self.risk_manager.current_equity)
+
+    def _unrealized_total(self) -> float:
+        total = 0.0
+        sim = getattr(self, "paper_sim", None)
+        if sim is not None:
+            total += float(sum(getattr(p, "unrealized_pnl", 0.0) or 0.0
+                               for p in sim.get_all_positions().values()))
+        trend = getattr(self, "trend_engine", None)
+        if trend is not None:
+            total += float(trend.unrealized_pnl())
+        return total
+
+    def _sizing_equity(self) -> float:
+        """Equity used to size positions: all-time equity + open PnL when compounding,
+        the fixed initial capital otherwise."""
+        tc = self.settings.trading
+        if tc.compounding_enabled:
+            return max(1.0, float(self.risk_manager.current_equity) + self._unrealized_total())
+        return float(tc.initial_capital)
+
+    # ── Edge monitor (analytics/edge.py) ──────────────────────────────
+    async def _edge_monitor_tick(self, force: bool = False) -> None:
+        tc = self.settings.trading
+        now = time.time()
+        if not force and now - self._last_edge_check < float(tc.edge_check_interval_sec):
+            return
+        self._last_edge_check = now
+        stats = compute_edge_stats(
+            self.trade_repo, source="paper" if self.paper else "live",
+            window=int(tc.edge_window), min_trades=int(tc.edge_kill_min_trades),
+            t_kill=float(tc.edge_kill_t_stat), fee_kill=float(tc.edge_kill_fee_share),
+            strategies=[s.strategy_type.value for s in self.strategies] + [StrategyType.TREND_DAILY.value],
+        )
+        self.edge_stats = stats
+        if not tc.edge_monitor_enabled:
+            return
+        for name, st in stats.get("strategies", {}).items():
+            try:
+                strategy = StrategyType(name)
+            except ValueError:
+                continue
+            if st.get("verdict") == VERDICT_KILL:
+                reason = st.get("reason", "negative edge")
+                if self.portfolio_manager.kill_strategy(strategy, reason):
+                    self.trading_logger.log_risk_event("edge_kill", {"strategy": name, "reason": reason})
+                    asyncio.ensure_future(self.notifier.notify_risk_event("edge_kill", {
+                        "strategy": name, "reason": reason, "n": st.get("n"),
+                        "t_stat": st.get("t_stat"), "profit_factor": st.get("profit_factor"),
+                    }))
+                if strategy == StrategyType.TREND_DAILY and self.trend_engine is not None:
+                    # the daily engine reads allocation live; a kill parks it at 0 entries by
+                    # marking the engine (positions are still marked and exited on signal)
+                    self.trend_engine.killed = True
+            elif strategy in self.portfolio_manager.killed and st.get("verdict") in ("ok", "insufficient"):
+                self.portfolio_manager.unkill_strategy(strategy)
+                if strategy == StrategyType.TREND_DAILY and self.trend_engine is not None:
+                    self.trend_engine.killed = False
+
+    async def _daily_digest_tick(self) -> None:
+        tc = self.settings.trading
+        if not tc.telegram_notify_daily_digest:
+            return
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        if now.hour < int(tc.telegram_digest_hour_utc):
+            return
+        key = now.strftime("%Y-%m-%d")
+        if self._last_digest_date == key:
+            return
+        self._last_digest_date = key
+        try:
+            await self.notifier.notify_daily_digest(
+                self._alltime_summary(), self.edge_stats,
+                self.trend_engine.status() if self.trend_engine is not None else None,
+                self.risk_snapshot(),
+            )
+        except Exception as e:
+            logger.warning("daily_digest_failed", error=str(e), error_type=type(e).__name__)
+
+    def risk_snapshot(self) -> Dict:
+        """Ladder + persisted state for /api/risk, the WS risk channel and the digest."""
+        rm = self.risk_manager
+        tc = self.settings.trading
+        eq = float(rm.current_equity)
+        return {
+            "equity": round(eq, 4),
+            "peak_equity": round(float(rm.equity_peak), 4),
+            "drawdown_pct": round(float(rm.current_drawdown_pct), 6),
+            "max_drawdown_pct": float(tc.max_drawdown_pct),
+            "daily_pnl": round(float(rm.daily_pnl), 4),
+            "daily_limit": round(eq * float(tc.max_daily_loss_pct), 4),
+            "max_daily_loss_pct": float(tc.max_daily_loss_pct),
+            "weekly_pnl": round(float(rm.weekly_pnl), 4),
+            "weekly_limit": round(eq * float(tc.max_weekly_loss_pct), 4),
+            "max_weekly_loss_pct": float(tc.max_weekly_loss_pct),
+            "circuit_breaker": bool(rm.is_circuit_breaker_active),
+            "drawdown_halted": bool(getattr(rm, "_drawdown_halted", False)),
+            "killed_strategies": {k.value: v for k, v in self.portfolio_manager.killed.items()},
+            "compounding_enabled": bool(tc.compounding_enabled),
+            "equity_basis": round(self._sizing_equity(), 4),
+            "unrealized_pnl": round(self._unrealized_total(), 4),
+        }
 
     def _alltime_summary(self) -> Optional[Dict]:
         """Vista all-time para notificaciones: realizado desde la trade DB +
@@ -864,10 +1029,7 @@ class BotStrike:
             )
             if cum is None:
                 return None
-            unrealized = float(sum(
-                getattr(p, "unrealized_pnl", 0.0) or 0.0
-                for p in self.paper_sim.get_all_positions().values()
-            ))
+            unrealized = self._unrealized_total()
             m = self.metrics.get_metrics()
             return {
                 "equity": round(cum["initial_capital"] + cum["pnl"] + unrealized, 4),
@@ -902,6 +1064,14 @@ class BotStrike:
                     self._notify_strategies_flat(trade.symbol, trade.strategy)
             except Exception as e:
                 logger.error("paper_flatten_failed", reason=reason, error=str(e))
+            # The daily trend book holds for weeks: a deploy/restart must NOT close it
+            # (that would destroy the strategy). Only a risk halt flattens it.
+            trend = getattr(self, "trend_engine", None)
+            if trend is not None and reason == "max_drawdown":
+                try:
+                    await trend.close_all(reason=reason)
+                except Exception as e:
+                    logger.error("trend_flatten_failed", reason=reason, error=str(e))
             return
         if self.dry_run:
             return
@@ -970,6 +1140,10 @@ class BotStrike:
                                open_positions=list(self._positions.keys()))
         await self.websocket.stop()
         await self.client.close()
+        trend = getattr(self, "trend_engine", None)
+        if trend is not None:
+            trend.stop()
+            trend.save_state()
 
         # Cerrar sesión de trade database
         self.trade_db.end_session(

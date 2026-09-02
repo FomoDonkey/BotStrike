@@ -48,3 +48,34 @@ En la app: **Settings → Connection** (también accesible desde el overlay inic
 El puerto 9420 sólo está abierto (ufw) para la LAN `192.168.1.0/24` y la tailnet `100.64.0.0/10`.
 Si la app dice "Bridge unreachable": comprobar `pct exec 104 -- curl -s localhost:9420/api/health`,
 el ufw y que el PC esté en la LAN o en la tailnet.
+
+## v2.14 — configuración en caliente, trend diario, interés compuesto
+
+- **Todo se edita desde la UI** (Settings / Strategies). La UI habla con `GET /api/config/schema`
+  (campos editables con tipo/límites/ayuda) y `PUT /api/config` (parche parcial, token
+  `X-BotStrike-Token` obligatorio fuera de loopback). Los cambios se aplican EN CALIENTE al engine y
+  se guardan en **`data/config_overrides.json`** (no versionado; sobrevive a `git reset --hard` del
+  deploy). Los campos marcados `restart_required` (capital inicial, vol targeting, Kelly, venue…)
+  piden "Restart engine" (`POST /api/bot/restart`). `POST /api/config/reset` borra el fichero.
+- **TREND_DAILY** (`strategies/trend_daily.py`): motor de cadencia diaria, REST a Binance SPOT
+  (`api.binance.com`, sin API key), cache en **`data/binance_daily/*.parquet`**, libro persistente en
+  **`data/trend_daily_state.json`**. Ejecuta a las 00:05 UTC (configurable); al arrancar después de
+  esa hora ejecuta el día en curso. `POST /api/trend/run` fuerza la decisión del día; `GET /api/trend`
+  muestra universo, pesos, posiciones y tracking. **Un restart/deploy NO cierra el libro** (solo el halt
+  por drawdown máximo lo aplana).
+- **Interés compuesto** (`trading.compounding_enabled`, por defecto ON): el sizing usa el equity
+  histórico (capital inicial + PnL realizado de la DB + PnL abierto). El pico de equity y las pérdidas
+  del día/semana se reconstruyen desde la DB al arrancar (`risk/persistence.py`): la escalera
+  −2 % día / −5 % semana / −10 % desde máximo ya no se reinicia con cada deploy.
+- **Edge monitor** (`analytics/edge.py`, `GET /api/edge`): estadísticas por estrategia sobre los
+  últimos N cierres; kill automático (sin nuevas entradas + aviso Telegram) si t-stat ≤ −2 con ≥ 100
+  trades o si las comisiones se comen ≥ 50 % del bruto de las ganadoras. Se levanta solo si mejora.
+- **Microestructura** apagada por defecto (`trading.microstructure_enabled`); Telegram con
+  interruptores por tipo de mensaje, reintento con backoff y digest diario.
+- Comprobación rápida tras un deploy:
+  ```
+  pct exec 104 -- curl -s localhost:9420/api/health      # version 2.14.0, trend_daily_enabled
+  pct exec 104 -- curl -s localhost:9420/api/trend       # last_run_status ok, positions
+  pct exec 104 -- curl -s localhost:9420/api/risk        # peak_equity, daily/weekly limits
+  pct exec 104 -- ls -la /opt/botstrike/app/data/        # config_overrides.json, trend_daily_state.json
+  ```

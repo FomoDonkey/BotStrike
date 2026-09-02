@@ -15,6 +15,11 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+# Minimum sample before an annualized Sharpe is shown at all (research §4.4 asks
+# for far more before trusting one; this is only the "not pure noise" floor).
+SHARPE_MIN_DAYS = 30.0
+SHARPE_MIN_TRADES = 30
+
 
 def compute_alltime_performance(trade_repo, initial_capital: float,
                                 source: str = "paper") -> Optional[Dict]:
@@ -29,9 +34,11 @@ def compute_alltime_performance(trade_repo, initial_capital: float,
                 "win_rate": 0.0, "sharpe_ratio": 0.0, "sortino_ratio": 0.0,
                 "max_drawdown": 0.0, "total_fees": 0.0, "avg_win": 0.0,
                 "avg_loss": 0.0, "profit_factor": 0.0, "expectancy": 0.0,
-                "equity_curve_ts": [],
+                "equity_curve_ts": [], "peak_equity": initial, "current_drawdown": 0.0,
+                "sample_days": 0.0, "sharpe_valid": False, "first_trade_ts": 0.0,
             }
         from analytics.performance import PerformanceAnalyzer
+        closes = sorted(closes, key=lambda t: float(t.timestamp or 0.0))
         rep = PerformanceAnalyzer().analyze(
             closes, initial_equity=initial, use_equity_after=False)
         # (timestamp, equity) pairs; first point = capital before first close
@@ -39,6 +46,15 @@ def compute_alltime_performance(trade_repo, initial_capital: float,
             [float(t.timestamp), float(v)]
             for t, v in zip(closes, rep.equity_curve[1:])
         ]
+        peak = max(v for _, v in pts)
+        last = pts[-1][1]
+        current_dd = (peak - last) / peak if peak > 0 else 0.0
+        first_ts = float(closes[0].timestamp)
+        sample_days = max(0.0, (float(closes[-1].timestamp) - first_ts) / 86400.0)
+        # A Sharpe annualized from a handful of daily returns is noise (audit
+        # 2026-09-02: -29.51 from two days). The UI shows "n/a" until the sample
+        # covers at least SHARPE_MIN_DAYS days AND SHARPE_MIN_TRADES closes.
+        sharpe_valid = sample_days >= SHARPE_MIN_DAYS and rep.total_trades >= SHARPE_MIN_TRADES
         if len(pts) > 500:  # downsample for the chart, always keep the last point
             step = len(pts) // 500 + 1
             pts = pts[::step] + [pts[-1]]
@@ -56,6 +72,11 @@ def compute_alltime_performance(trade_repo, initial_capital: float,
             "profit_factor": round(rep.profit_factor, 2),
             "expectancy": round(rep.expectancy, 4),
             "equity_curve_ts": pts,
+            "peak_equity": round(peak, 4),
+            "current_drawdown": round(current_dd, 4),
+            "sample_days": round(sample_days, 2),
+            "sharpe_valid": bool(sharpe_valid),
+            "first_trade_ts": first_ts,
         }
     except Exception as e:
         logger.debug("alltime_perf_error", error=str(e), error_type=type(e).__name__)

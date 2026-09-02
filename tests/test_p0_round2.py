@@ -164,12 +164,17 @@ def funded(monkeypatch):
     """Every strategy is frozen at 0.00 since audit R2 batch 1 (strategies-01), so
     `should_strategy_trade` is False for everything. These tests exercise the
     PERFORMANCE gate, not the freeze — give them a funded world to gate on."""
-    import portfolio.portfolio_manager as pmod
-    weights = {r: dict(w) for r, w in pmod.REGIME_WEIGHTS.items()}
-    weights[MarketRegime.RANGING][StrategyType.MEAN_REVERSION] = 0.65
-    monkeypatch.setattr(pmod, "REGIME_WEIGHTS", weights)
-    monkeypatch.setattr(pmod, "SYMBOL_STRATEGY_MAP",
-                        {"ETH-USD": {StrategyType.MEAN_REVERSION}})
+    # 2026-09-02: the switch is Settings.trading.allocation_* (UI-editable) plus the
+    # per-symbol eligibility list; RANGING keeps a 1.0 multiplier for MR.
+    import portfolio.portfolio_manager as pmod  # noqa: F401 (kept for symmetry)
+
+    def _fund(settings):
+        settings.trading.allocation_mean_reversion = 0.65
+        settings.get_symbol_config("ETH-USD").strategies = "MEAN_REVERSION"
+        return settings
+    monkeypatch.setattr(PortfolioManager, "__init__",
+                        (lambda orig: lambda self, settings, rm: orig(self, _fund(settings), rm))(
+                            PortfolioManager.__init__))
 
 
 def test_performance_factor_requires_min_closed_trades(settings, funded):

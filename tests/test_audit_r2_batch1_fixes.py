@@ -13,21 +13,31 @@ from config.settings import Settings
 from core.quant_models import RiskOfRuin
 from core.types import Signal, Side, StrategyType, MarketRegime
 from execution.order_engine import OrderExecutionEngine
-from portfolio.portfolio_manager import REGIME_WEIGHTS, SYMBOL_STRATEGY_MAP
+from portfolio.portfolio_manager import REGIME_MULTIPLIER, PortfolioManager
 from risk.risk_manager import RiskManager, ROR_PROBATION_SEC
 
 
 # ── strategies-01: the freeze must hold at every gate ──────────────────────
+# 2026-09-02: the switch moved from hardcoded tables to Settings.trading.allocation_*
+# (editable from the UI). With the code defaults (all intraday allocations 0.0) no
+# strategy may open a position in any regime on any symbol.
 
-def test_no_strategy_has_capital_in_any_regime():
-    for regime, weights in REGIME_WEIGHTS.items():
-        for strategy, w in weights.items():
-            assert w == 0.0, f"{strategy} still funded in {regime}"
+def test_no_intraday_strategy_has_capital_in_any_regime_by_default():
+    settings = Settings()
+    pm = PortfolioManager(settings, RiskManager(settings))
+    for regime in MarketRegime:
+        for strategy in (StrategyType.MEAN_REVERSION, StrategyType.FIBONACCI_RETRACEMENT):
+            assert pm.base_weight(strategy, regime) == 0.0, f"{strategy} funded in {regime}"
+            for sym in settings.symbol_names:
+                assert not pm.should_strategy_trade(strategy, regime, symbol=sym)
 
 
-def test_no_symbol_is_eligible_for_any_strategy():
-    for symbol, allowed in SYMBOL_STRATEGY_MAP.items():
-        assert allowed == set(), f"{symbol} still eligible for {allowed}"
+def test_mean_reversion_never_funded_outside_ranging():
+    # Paper audit 2026-09-02: 98% of the gross loss came from MR trades opened
+    # outside RANGING. Even when the owner funds MR, trending/breakout stay at 0.
+    for regime in (MarketRegime.TRENDING_UP, MarketRegime.TRENDING_DOWN,
+                   MarketRegime.BREAKOUT, MarketRegime.UNKNOWN):
+        assert REGIME_MULTIPLIER[regime][StrategyType.MEAN_REVERSION] == 0.0
 
 
 def test_settings_allocations_are_zero():

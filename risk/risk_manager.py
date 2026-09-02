@@ -47,6 +47,8 @@ class RiskManager:
         self._current_equity: float = self.config.initial_capital
         self._positions: Dict[str, Position] = {}
         self._daily_pnl: float = 0.0
+        self._weekly_pnl: float = 0.0
+        self._last_weekly_reset_key: tuple = ()   # (iso_year, iso_week) of the last reset
         self._total_pnl: float = 0.0
 
         # Contadores de riesgo
@@ -265,12 +267,20 @@ class RiskManager:
             logger.info("circuit_breaker_deactivated",
                         drawdown_pct=round(self.current_drawdown_pct, 4))
 
-        # 1a. Verificar daily loss limit
+        # 1a. Verificar daily loss limit (escalera de drawdown, nivel 1)
         max_daily_loss = self._current_equity * self.config.max_daily_loss_pct
         if self._daily_pnl < 0 and abs(self._daily_pnl) >= max_daily_loss:
             logger.warning("daily_loss_limit_reached",
                            daily_pnl=round(self._daily_pnl, 2),
                            limit=round(-max_daily_loss, 2))
+            return None
+
+        # 1a'. Verificar weekly loss limit (nivel 2; restaurado desde la DB al arrancar)
+        max_weekly_loss = self._current_equity * getattr(self.config, "max_weekly_loss_pct", 1.0)
+        if self._weekly_pnl < 0 and abs(self._weekly_pnl) >= max_weekly_loss:
+            logger.warning("weekly_loss_limit_reached",
+                           weekly_pnl=round(self._weekly_pnl, 2),
+                           limit=round(-max_weekly_loss, 2))
             return None
 
         # 1b. Verificar drawdown máximo
@@ -456,6 +466,7 @@ class RiskManager:
     def record_trade_result(self, pnl: float, strategy: Optional[StrategyType] = None) -> None:
         """Registra resultado de trade para tracking de riesgo."""
         self._daily_pnl += pnl
+        self._weekly_pnl += pnl
         self._total_pnl += pnl
         if pnl < 0:
             self._consecutive_losses += 1
@@ -546,12 +557,14 @@ class RiskManager:
         self._daily_pnl = 0.0
 
     def check_daily_reset(self) -> None:
-        """Auto-reset daily PnL at UTC midnight. Robust: uses date comparison, not exact timing.
+        """Auto-reset daily PnL at UTC midnight and weekly PnL on Monday 00:00 UTC.
+        Robust: uses date comparison, not exact timing.
 
         Protected by _state_lock when called via check_daily_reset_safe().
         """
         from datetime import datetime, timezone
-        today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        now = datetime.now(timezone.utc)
+        today_utc = now.strftime("%Y-%m-%d")
         if self._last_daily_reset_date != today_utc:
             old_pnl = self._daily_pnl
             self.reset_daily()
@@ -559,6 +572,40 @@ class RiskManager:
             logger.info("daily_pnl_auto_reset",
                         previous_daily_pnl=round(old_pnl, 2),
                         new_date=today_utc)
+        week_key = tuple(now.isocalendar()[:2])
+        if self._last_weekly_reset_key and self._last_weekly_reset_key != week_key:
+            old_w = self._weekly_pnl
+            self._weekly_pnl = 0.0
+            logger.info("weekly_pnl_auto_reset", previous_weekly_pnl=round(old_w, 2),
+                        new_week=f"{week_key[0]}-W{week_key[1]:02d}")
+        self._last_weekly_reset_key = week_key
+
+    def restore_history(self, equity: float, peak: float, daily_pnl: float,
+                        weekly_pnl: float) -> None:
+        """Seed the persisted risk state at startup (risk/persistence.py). The daily
+        and weekly reset keys are set to NOW so the restored amounts are not wiped by
+        the first check_daily_reset() of the session."""
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        self._current_equity = float(equity)
+        self._equity_peak = max(float(peak), float(equity))
+        self._daily_pnl = float(daily_pnl)
+        self._weekly_pnl = float(weekly_pnl)
+        self._last_daily_reset_date = now.strftime("%Y-%m-%d")
+        self._last_weekly_reset_key = tuple(now.isocalendar()[:2])
+        self.vol_targeting.on_equity_update(self._current_equity, time.time())
+
+    @property
+    def daily_pnl(self) -> float:
+        return self._daily_pnl
+
+    @property
+    def weekly_pnl(self) -> float:
+        return self._weekly_pnl
+
+    @property
+    def equity_peak(self) -> float:
+        return self._equity_peak
 
     async def check_daily_reset_safe(self) -> None:
         """Async-safe version of check_daily_reset — acquires lock."""
@@ -619,6 +666,10 @@ class RiskManager:
             "total_exposure": self.total_exposure,
             "daily_pnl": self._daily_pnl,
             "max_daily_loss": round(self._current_equity * self.config.max_daily_loss_pct, 2),
+            "weekly_pnl": self._weekly_pnl,
+            "max_weekly_loss": round(
+                self._current_equity * getattr(self.config, "max_weekly_loss_pct", 1.0), 2),
+            "drawdown_halted": self._drawdown_halted,
             "total_pnl": self._total_pnl,
             "consecutive_losses": self._consecutive_losses,
             "circuit_breaker": self._circuit_breaker_active,

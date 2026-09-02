@@ -40,10 +40,11 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 from config.settings import Settings
+from config import overrides as cfg_overrides
 from core.types import MarketRegime, StrategyType, Side
 
 # Single source of truth for the bridge version (reported by /api/health and the OpenAPI schema).
-BRIDGE_VERSION = "2.13.1"
+BRIDGE_VERSION = "2.14.0"
 
 # Auth token for mutating endpoints (live start / live stop).
 # Server deployments set BOTSTRIKE_AUTH_TOKEN in .env so the desktop can be configured with it;
@@ -120,6 +121,7 @@ from server.serializers import (
     serialize_trade, serialize_market_snapshot, serialize_micro_snapshot,
     serialize_settings,
 )
+from portfolio.portfolio_manager import strategy_allocation
 
 
 # ── WebSocket Connection Manager ─────────────────────────────────
@@ -197,6 +199,8 @@ class BridgeState:
         self.watchdog_stale_strikes = 0
         self.bg_tasks: Set[asyncio.Task] = set()
         self.backtest_running = False
+        # Settings shown/edited while the engine is stopped (carries the saved overrides)
+        self.pending_settings: Optional[Settings] = None
 
         # Throttled broadcast: swap-and-drain pattern (thread-safe for asyncio)
         self._market_queue: Dict[str, dict] = {}
@@ -660,6 +664,12 @@ async def _broadcast_symbol_state(engine, symbol: str):
             pos = engine.paper_sim.get_position(symbol, strat)
             if pos:
                 positions.append(serialize_position(pos))
+        # TREND_DAILY book positions on this symbol (held for days, separate book)
+        trend = getattr(engine, "trend_engine", None)
+        if trend is not None:
+            for pos in trend.positions_as_positions():
+                if pos.symbol == symbol:
+                    positions.append(serialize_position(pos))
         await state.channels.broadcast("trading", {
             "type": "positions",
             "symbol": symbol,
@@ -683,7 +693,7 @@ async def _broadcast_symbol_state(engine, symbol: str):
 
     # Risk state (include symbol for per-symbol regime tracking in UI)
     rm = engine.risk_manager
-    await state.channels.broadcast("risk", {
+    risk_msg = {
         "type": "risk_update",
         "timestamp": time.time(),
         "symbol": symbol,
@@ -692,7 +702,23 @@ async def _broadcast_symbol_state(engine, symbol: str):
         "max_drawdown_pct": float(engine.settings.trading.max_drawdown_pct),
         "circuit_breaker_active": bool(rm.is_circuit_breaker_active),
         "regime": engine._last_regime.get(symbol, MarketRegime.UNKNOWN).value,
-    })
+    }
+    if hasattr(engine.regime_detector, "status"):
+        try:
+            rs = engine.regime_detector.status(symbol)
+            risk_msg["regime_candidate"] = rs.get("candidate", "")
+            risk_msg["regime_since"] = rs.get("confirmed_since", 0.0)
+        except Exception:
+            pass
+    if hasattr(engine, "risk_snapshot"):
+        try:
+            snap = engine.risk_snapshot()
+            risk_msg.update({k: snap[k] for k in (
+                "peak_equity", "daily_pnl", "daily_limit", "weekly_pnl", "weekly_limit",
+                "drawdown_halted", "compounding_enabled", "equity_basis") if k in snap})
+        except Exception as e:
+            logger.debug("risk_snapshot_error", error=str(e))
+    await state.channels.broadcast("risk", risk_msg)
 
     # Broadcast pending signals/trades (route log_entry to system channel)
     while state._pending_signals:
@@ -849,8 +875,10 @@ _PERF_CACHE_TTL_SEC = 5.0
 
 
 def _paper_unrealized_pnl() -> float:
-    """Mark-to-market PnL of open paper positions (0.0 when none/unavailable)."""
+    """Mark-to-market PnL of open paper positions, intraday + trend book (0.0 when none)."""
     try:
+        if state.engine and hasattr(state.engine, "_unrealized_total"):
+            return float(state.engine._unrealized_total())
         if state.engine and state.engine.paper_sim:
             return float(sum(
                 getattr(p, "unrealized_pnl", 0.0) or 0.0
@@ -914,13 +942,17 @@ def _merged_performance() -> Optional[Dict]:
         }
     unrealized = _paper_unrealized_pnl()
     out = dict(cum)
+    equity = cum["initial_capital"] + cum["pnl"] + unrealized
+    peak = max(float(cum.get("peak_equity", cum["initial_capital"])), equity)
     out.update({
-        "equity": round(cum["initial_capital"] + cum["pnl"] + unrealized, 4),
+        "equity": round(equity, 4),
         "pnl": round(cum["pnl"] + unrealized, 4),
         "realized_pnl": cum["pnl"],
         "unrealized_pnl": round(unrealized, 4),
         "session_pnl": session_pnl,
         "session_trades": session_trades,
+        "peak_equity": round(peak, 4),
+        "current_drawdown": round((peak - equity) / peak, 6) if peak > 0 else 0.0,
     })
     return out
 
@@ -951,9 +983,33 @@ async def metrics_broadcast_loop():
                     })
                     state.equity = p["equity"]
                     state.pnl = p["pnl"]
+                await _broadcast_trend_positions()
         except Exception as e:
             logger.debug("metrics_broadcast_error", error=str(e))
         await asyncio.sleep(2)
+
+
+_trend_symbols_sent: Set[str] = set()
+
+
+async def _broadcast_trend_positions() -> None:
+    """TREND_DAILY positions on symbols the intraday loop does not stream (BNB-USD…):
+    broadcast them here, and clear the ones that closed."""
+    engine = state.engine
+    trend = getattr(engine, "trend_engine", None) if engine else None
+    if trend is None:
+        return
+    configured = set(engine.settings.symbol_names)
+    by_symbol: Dict[str, list] = {}
+    for pos in trend.positions_as_positions():
+        if pos.symbol not in configured:
+            by_symbol.setdefault(pos.symbol, []).append(serialize_position(pos))
+    for sym, rows in by_symbol.items():
+        await state.channels.broadcast("trading", {"type": "positions", "symbol": sym, "data": rows})
+    for sym in list(_trend_symbols_sent - set(by_symbol)):
+        await state.channels.broadcast("trading", {"type": "positions", "symbol": sym, "data": []})
+    _trend_symbols_sent.clear()
+    _trend_symbols_sent.update(by_symbol)
 
 
 async def system_broadcast_loop():
@@ -1049,7 +1105,21 @@ def _health_snapshot() -> dict:
         "exchange": state.exchange,
         "uptime_sec": now - state.start_time,
         "clients": state.channels.client_count,
+        "telegram_failures": _telegram_failures(),
+        "microstructure_enabled": bool(getattr(getattr(state.engine, "settings", None), "trading", None)
+                                       and state.engine.settings.trading.microstructure_enabled),
+        "trend_daily_enabled": bool(getattr(getattr(state.engine, "trend_engine", None), "enabled", False)),
     }
+
+
+def _telegram_failures() -> int:
+    try:
+        notifier = getattr(state.engine, "notifier", None)
+        if notifier is not None and hasattr(notifier, "delivery_stats"):
+            return int(notifier.delivery_stats().get("failures", 0))
+    except Exception:
+        pass
+    return 0
 
 
 def _hard_exit(code: int) -> None:
@@ -1230,10 +1300,19 @@ _DOCS_PATHS = {"/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
 
 @app.middleware("http")
 async def _hide_docs_when_remote(request, call_next):
-    """API docs are only served on a loopback bind (desktop-local)."""
+    """API docs are only served on a loopback bind (desktop-local). Also: the web UI
+    uses a HashRouter, so a typed/bookmarked `/performance` (no `#`) used to answer a
+    JSON 404 (audit 2026-09-02) — redirect any extension-less non-API path to `/#/…`."""
     if not _EXPOSE_TOKEN and request.url.path in _DOCS_PATHS:
         return JSONResponse({"detail": "Not Found"}, status_code=404)
-    return await call_next(request)
+    response = await call_next(request)
+    path = request.url.path
+    if (response.status_code == 404 and request.method == "GET" and path != "/"
+            and not path.startswith(("/api", "/ws", "/assets", "/docs", "/redoc", "/openapi"))
+            and "." not in path.rsplit("/", 1)[-1] and _WEBUI_DIR.is_dir()):
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=f"/#{path}", status_code=302)
+    return response
 
 
 def _token_ok(supplied: str) -> bool:
@@ -1292,11 +1371,161 @@ async def health(response: Response):
     return snap
 
 
+def _config_settings() -> Settings:
+    """The live engine settings when running, otherwise a fresh Settings() that
+    already carries the persisted overrides — so the UI can edit before starting."""
+    if state.engine:
+        return state.engine.settings
+    if state.pending_settings is None:
+        state.pending_settings = Settings()
+    return state.pending_settings
+
+
+def _config_payload() -> dict:
+    s = _config_settings()
+    out = serialize_settings(s)
+    out.update(cfg_overrides.overrides_state(s))
+    out["engine_running"] = bool(state.running)
+    return out
+
+
 @app.get("/api/config")
 async def get_config():
-    if state.engine:
-        return serialize_settings(state.engine.settings)
-    return {"error": "Engine not started"}
+    return _config_payload()
+
+
+@app.get("/api/config/schema")
+async def get_config_schema():
+    return cfg_overrides.schema(symbols=_config_settings().symbol_names)
+
+
+@app.put("/api/config", dependencies=[Depends(require_token_when_remote)])
+async def put_config(body: dict = {}):
+    """Partial update {trading: {...}, symbols: {SYM: {...}}} — validated (bounds +
+    Settings.validate()), applied LIVE to the running engine's settings object and
+    persisted to data/config_overrides.json so the next start keeps it."""
+    if not isinstance(body, dict) or not body:
+        raise HTTPException(status_code=400, detail="empty patch")
+    s = _config_settings()
+    try:
+        applied, restart_now = cfg_overrides.validate_and_apply(s, body)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    merged = cfg_overrides.merge_overrides(cfg_overrides.load_overrides(), body)
+    cfg_overrides.save_overrides(merged)
+    if state.engine is not None:
+        _after_live_config_change(applied)
+    logger.info("config_updated", applied=applied, restart_required=restart_now)
+    payload = _config_payload()
+    return {"status": "ok", "applied": applied,
+            "restart_required": bool(restart_now or payload.get("restart_required")),
+            "config": payload}
+
+
+def _after_live_config_change(applied: list) -> None:
+    """Hooks for fields the engine caches (everything else is read at use time)."""
+    engine = state.engine
+    try:
+        if any(p.startswith("trading.allocation_") for p in applied):
+            engine.portfolio_manager._current_weights = {
+                st: strategy_allocation(engine.settings.trading, st) for st in StrategyType}
+        if "trading.telegram_enabled" in applied:
+            logger.info("telegram_enabled_change_needs_restart")
+        if any(p.startswith("trading.edge_") for p in applied):
+            engine._last_edge_check = 0.0   # re-evaluate on the next metrics tick
+    except Exception as e:
+        logger.warning("live_config_hook_error", error=str(e))
+
+
+@app.post("/api/config/reset", dependencies=[Depends(require_token_when_remote)])
+async def reset_config():
+    cfg_overrides.clear_overrides()
+    state.pending_settings = None
+    payload = _config_payload()
+    payload["restart_required"] = True
+    return {"status": "ok", "restart_required": True, "config": payload}
+
+
+@app.post("/api/bot/restart", dependencies=[Depends(require_token_when_remote)])
+async def bot_restart(supplied: str = Depends(supplied_token)):
+    """Stop + start in the same mode/exchange (config changes marked restart_required)."""
+    mode, exchange = state.mode, state.exchange
+    if mode == "live" and not _token_ok(supplied):
+        raise HTTPException(status_code=401, detail="Invalid or missing auth token for live mode")
+    if state.running:
+        await stop_engine(manual=True)
+    state.pending_settings = None
+    settings = _build_settings(exchange)
+    await start_engine(mode, settings=settings)
+    return {"status": "restarting", "mode": mode, "exchange": exchange}
+
+
+@app.get("/api/edge")
+async def get_edge():
+    engine = state.engine
+    if not engine:
+        return {"window": 0, "min_trades": 0, "strategies": {}}
+    stats = getattr(engine, "edge_stats", None)
+    if not stats:
+        await engine._edge_monitor_tick(force=True)
+        stats = engine.edge_stats
+    return stats
+
+
+@app.get("/api/trend")
+async def get_trend():
+    engine = state.engine
+    trend = getattr(engine, "trend_engine", None) if engine else None
+    if trend is None:
+        s = _config_settings()
+        return {"enabled": float(s.trading.allocation_trend_daily) > 0, "allocation": s.trading.allocation_trend_daily,
+                "mode": state.mode, "engine": False, "positions": [], "targets": {}, "universe": [],
+                "tracking": {"days": 0, "records": []}, "next_run_utc": "", "last_run_utc": "",
+                "last_run_status": "engine not running", "last_error": ""}
+    out = trend.status()
+    out["mode"] = state.mode
+    out["engine"] = True
+    return out
+
+
+@app.post("/api/trend/run", dependencies=[Depends(require_token_when_remote)])
+async def trend_run_now():
+    """Operator button: execute today's daily decision now (data refresh + rebalance).
+    Idempotent per day: a second call the same day re-evaluates but only trades if
+    the targets changed beyond the rebalance threshold."""
+    engine = state.engine
+    trend = getattr(engine, "trend_engine", None) if engine else None
+    if trend is None:
+        raise HTTPException(status_code=409, detail="trend engine not running (paper mode only)")
+    if not trend.enabled:
+        raise HTTPException(status_code=409, detail="trend daily is disabled (allocation 0)")
+    result = await trend.run_once()
+    return {"result": result, "status": trend.status()}
+
+
+@app.get("/api/regime")
+async def get_regime():
+    """Confirmed/candidate regime per symbol with the inputs behind it (15-min bars + dwell)."""
+    engine = state.engine
+    if not engine:
+        return {"symbols": {}}
+    det = engine.regime_detector
+    return {"symbols": {sym: det.status(sym) for sym in engine.settings.symbol_names},
+            "timeframe_min": det.params()[0], "min_dwell_min": det.params()[1]}
+
+
+@app.get("/api/risk")
+async def get_risk():
+    engine = state.engine
+    if not engine or not hasattr(engine, "risk_snapshot"):
+        s = _config_settings()
+        return {"engine": False, "max_drawdown_pct": s.trading.max_drawdown_pct,
+                "max_daily_loss_pct": s.trading.max_daily_loss_pct,
+                "max_weekly_loss_pct": s.trading.max_weekly_loss_pct,
+                "compounding_enabled": s.trading.compounding_enabled}
+    snap = engine.risk_snapshot()
+    snap["engine"] = True
+    return snap
 
 
 @app.post("/api/bot/start", dependencies=[Depends(require_token_when_remote)])
@@ -1363,37 +1592,78 @@ async def get_performance():
     return p
 
 
+_STRATEGY_NAMES = {
+    StrategyType.MEAN_REVERSION: "Mean Reversion",
+    StrategyType.FIBONACCI_RETRACEMENT: "Fibonacci retracement",
+    StrategyType.TREND_DAILY: "Trend daily (Donchian ensemble)",
+    StrategyType.TREND_FOLLOWING: "Trend following (archived)",
+    StrategyType.MARKET_MAKING: "Market making (archived)",
+    StrategyType.ORDER_FLOW_MOMENTUM: "Order flow momentum (archived)",
+}
+
+
+def _strategy_view(settings: Settings, st: StrategyType) -> dict:
+    """Description + params generated from the LIVE configuration (never a stale string)."""
+    tc = settings.trading
+    symbols = [s.symbol for s in settings.symbols
+               if st.value in [x.strip().upper() for x in str(s.strategies).split(",")]]
+    if st == StrategyType.TREND_DAILY:
+        params = {"lookbacks": tc.trend_lookbacks, "target_vol": tc.trend_target_vol,
+                  "vol_window": tc.trend_vol_window, "n_assets": tc.trend_n_assets,
+                  "leverage_cap": tc.trend_leverage_cap, "rebalance_threshold": tc.trend_rebalance_threshold,
+                  "execution_hour_utc": tc.trend_execution_hour_utc, "min_order_usd": tc.trend_min_order_usd}
+        desc = (f"Daily Donchian ensemble {tc.trend_lookbacks} · long-only · vol target "
+                f"{tc.trend_target_vol:.0%} ({tc.trend_vol_window}d) · top-{tc.trend_n_assets} by 30d volume · "
+                f"signal at close, executed at {tc.trend_execution_hour_utc:02d}:00 UTC open + "
+                f"{tc.trend_execution_delay_min} min")
+        return {"description": desc, "params": params, "symbols": ["universe (monthly)"], "group": "trend_daily"}
+    if st == StrategyType.MEAN_REVERSION:
+        ref = next((s for s in settings.symbols if s.symbol in symbols), settings.symbols[0])
+        params = {"zscore_entry": ref.mr_zscore_entry, "zscore_exit": ref.mr_zscore_exit,
+                  "lookback_bars": ref.mr_lookback, "stop_atr": ref.mr_atr_mult_sl,
+                  "take_profit_atr": ref.mr_atr_mult_tp, "regimes": "RANGING only"}
+        desc = (f"1m z-score reversion · entry |z| > {ref.mr_zscore_entry:g} · exit |z| < {ref.mr_zscore_exit:g} · "
+                f"stop {ref.mr_atr_mult_sl:g}×ATR · TP {ref.mr_atr_mult_tp:g}×ATR · RANGING regime only · "
+                f"{', '.join(symbols) or 'no symbol'}")
+        return {"description": desc, "params": params, "symbols": symbols, "group": "symbols"}
+    if st == StrategyType.FIBONACCI_RETRACEMENT:
+        desc = (f"15m impulse–retracement at the 50–61.8% zone · trending regimes only · "
+                f"{', '.join(symbols) or 'no symbol'}")
+        return {"description": desc, "params": {"regimes": "TRENDING_UP / TRENDING_DOWN"}, "symbols": symbols,
+                "group": "symbols"}
+    return {"description": "archived", "params": {}, "symbols": [], "group": "strategies"}
+
+
 @app.get("/api/strategies")
 async def get_strategies():
-    if not state.engine:
-        return {"error": "Engine not started"}
-
+    settings = _config_settings()
+    engine = state.engine
+    killed = {}
+    if engine is not None:
+        killed = {k.value: v for k, v in getattr(engine.portfolio_manager, "killed", {}).items()}
+        trend = getattr(engine, "trend_engine", None)
+        if trend is not None and getattr(trend, "killed", False):
+            killed.setdefault(StrategyType.TREND_DAILY.value, "edge monitor")
+    edge = (getattr(engine, "edge_stats", None) or {}).get("strategies", {}) if engine else {}
+    order = [StrategyType.TREND_DAILY, StrategyType.MEAN_REVERSION, StrategyType.FIBONACCI_RETRACEMENT]
     strategies = []
-    alloc_map = {
-        StrategyType.MEAN_REVERSION: state.engine.settings.trading.allocation_mean_reversion,
-        StrategyType.FIBONACCI_RETRACEMENT: state.engine.settings.trading.allocation_fibonacci_retracement,
-        StrategyType.TREND_FOLLOWING: state.engine.settings.trading.allocation_trend_following,
-        StrategyType.MARKET_MAKING: state.engine.settings.trading.allocation_market_making,
-        StrategyType.ORDER_FLOW_MOMENTUM: state.engine.settings.trading.allocation_order_flow_momentum,
-    }
-    for s in state.engine.strategies:
-        alloc_active = alloc_map.get(s.strategy_type, 0) > 0
-        # Kill switch from the research engine — ARCHIVED module (archive/analytics/
-        # research_engine.py): current engines have no .research and every strategy
-        # is research-active. The getattr keeps the endpoint working either way
-        # (referencing it directly 500'd this endpoint — found in CT journal 2026-08-31).
-        research = getattr(state.engine, "research", None)
-        if research is not None:
-            research_active, kill_reason = research.get_strategy_status(s.strategy_type)
-        else:
-            research_active, kill_reason = True, ""
+    for st in order:
+        alloc = strategy_allocation(settings.trading, st)
+        view = _strategy_view(settings, st)
+        is_killed = st.value in killed
         strategies.append({
-            "type": s.strategy_type.value,
-            "name": s.__class__.__name__,
-            "active": alloc_active and research_active,
-            "allocation": alloc_map.get(s.strategy_type, 0),
-            "killed": not research_active,
-            "kill_reason": kill_reason,
+            "type": st.value,
+            "name": _STRATEGY_NAMES.get(st, st.value),
+            "enabled": alloc > 0,
+            "active": alloc > 0 and not is_killed and engine is not None,
+            "allocation": alloc,
+            "killed": is_killed,
+            "kill_reason": killed.get(st.value, ""),
+            "description": view["description"],
+            "params": view["params"],
+            "symbols": view["symbols"],
+            "settings_group": view["group"],
+            "edge": edge.get(st.value),
         })
     return {"strategies": strategies}
 
@@ -1472,21 +1742,83 @@ async def get_data_catalog():
     data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "binance", "klines")
     if not os.path.exists(data_dir):
         data_dir = os.path.join(os.getcwd(), "data", "binance", "klines")
+    now = time.time()
+    if _catalog_cache["data"] is not None and now - _catalog_cache["ts"] < 300:
+        return _catalog_cache["data"]
+    datasets = await asyncio.to_thread(_scan_catalog, data_dir)
+    # Daily spot klines used by TREND_DAILY (data/binance_daily/<SYM>.parquet)
+    daily_dir = os.path.join(os.path.dirname(data_dir.rstrip("/\\")), "..", "binance_daily")
+    daily_dir = os.path.normpath(daily_dir)
+    if os.path.isdir(daily_dir):
+        datasets += await asyncio.to_thread(_scan_flat_catalog, daily_dir, "1d")
+    result = {"datasets": datasets}
+    _catalog_cache["ts"], _catalog_cache["data"] = now, result
+    return result
+
+
+_catalog_cache: Dict[str, object] = {"ts": 0.0, "data": None}
+
+
+def _parquet_meta(fpath: str) -> tuple:
+    """(records, date_range) read from the parquet itself — no more hardcoded zeros."""
+    records, date_range = 0, ""
+    try:
+        import pyarrow.parquet as pq
+        pf = pq.ParquetFile(fpath)
+        records = int(pf.metadata.num_rows)
+        names = pf.schema_arrow.names
+        col = next((c for c in ("timestamp", "open_time", "time", "date", "ts") if c in names), None)
+        if col is None and pf.schema_arrow.pandas_metadata:
+            idx = pf.schema_arrow.pandas_metadata.get("index_columns") or []
+            col = idx[0] if idx and isinstance(idx[0], str) and idx[0] in names else None
+        if col is not None and records > 0:
+            first = pf.read_row_group(0, columns=[col]).column(0)[0].as_py()
+            last = pf.read_row_group(pf.num_row_groups - 1, columns=[col]).column(0)[-1].as_py()
+            def _fmt(v):
+                try:
+                    if isinstance(v, (int, float)):
+                        v = float(v)
+                        v = v / 1000.0 if v > 1e11 else v
+                        import datetime as _dt
+                        return _dt.datetime.fromtimestamp(v, _dt.timezone.utc).strftime("%Y-%m-%d")
+                    return str(v)[:10]
+                except Exception:
+                    return str(v)[:10]
+            date_range = f"{_fmt(first)} → {_fmt(last)}"
+    except Exception as e:
+        logger.debug("catalog_meta_error", path=fpath, error=str(e))
+    return records, date_range
+
+
+def _scan_catalog(data_dir: str) -> list:
     datasets = []
     if os.path.exists(data_dir):
-        for sym_dir in os.listdir(data_dir):
+        for sym_dir in sorted(os.listdir(data_dir)):
             sym_path = os.path.join(data_dir, sym_dir)
             if os.path.isdir(sym_path):
-                for f in os.listdir(sym_path):
+                for f in sorted(os.listdir(sym_path)):
                     if f.endswith(".parquet"):
                         fpath = os.path.join(sym_path, f)
                         size_mb = os.path.getsize(fpath) / (1024 * 1024)
+                        records, date_range = _parquet_meta(fpath)
                         datasets.append({
                             "symbol": sym_dir, "type": f.replace(".parquet", ""),
-                            "records": 0, "size_mb": round(size_mb, 2),
-                            "date_range": "",
+                            "records": records, "size_mb": round(size_mb, 2),
+                            "date_range": date_range,
                         })
-    return {"datasets": datasets}
+    return datasets
+
+
+def _scan_flat_catalog(data_dir: str, kind: str) -> list:
+    datasets = []
+    for f in sorted(os.listdir(data_dir)):
+        if f.endswith(".parquet"):
+            fpath = os.path.join(data_dir, f)
+            records, date_range = _parquet_meta(fpath)
+            datasets.append({"symbol": f.replace(".parquet", ""), "type": kind, "records": records,
+                             "size_mb": round(os.path.getsize(fpath) / (1024 * 1024), 2),
+                             "date_range": date_range})
+    return datasets
 
 
 # ── Backtest ─────────────────────────────────────────────────────

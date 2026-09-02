@@ -2,11 +2,25 @@
 Detector de régimen de mercado.
 Clasifica el mercado en: RANGING, TRENDING_UP, TRENDING_DOWN, BREAKOUT.
 Usa volatilidad relativa, momentum y ADX con thresholds adaptativos.
+
+2026-09-02 — horizonte y permanencia (auditoría del ruido de régimen):
+  En el CT el detector cambió de régimen 885 veces en 48 h (4,6/h por símbolo, mediana
+  de 5 min por régimen, 320 idas y vueltas A→B→A en menos de 5 min) porque todo se
+  calculaba sobre velas de 1 minuto (ADX14 = 14 min, momentum20 = 20 min) con umbrales
+  que son percentiles móviles de 8 h y un "suavizado" de 2 detecciones a 3 s (6 s).
+  Ahora:
+    - `regime_timeframe_min` (por defecto 15): las velas de 1 min se agregan a velas de
+      N minutos COMPLETAS antes de calcular los indicadores (ADX14 = 3,5 h, momentum20 = 5 h).
+    - `regime_min_dwell_min` (por defecto 30): un régimen candidato debe mantenerse ese
+      tiempo antes de sustituir al confirmado (histéresis temporal).
+  Ambos se leen en vivo de Settings.trading (editables desde la UI). Sin settings el
+  detector conserva el comportamiento antiguo (1 min, 2 detecciones) para las pruebas.
 """
 from __future__ import annotations
 import math
+import time
 from collections import deque
-from typing import Dict
+from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd
@@ -22,16 +36,35 @@ logger = structlog.get_logger(__name__)
 class RegimeDetector:
     """Detecta el régimen de mercado usando múltiples señales."""
 
-    def __init__(self) -> None:
-        # Historial de regímenes por símbolo para suavizado
+    def __init__(self, settings: Any = None, timeframe_min: int = 1, min_dwell_min: int = 0) -> None:
+        self._settings = settings
+        self._timeframe_min = int(timeframe_min)
+        self._min_dwell_min = int(min_dwell_min)
+        # Historial de regímenes por símbolo para suavizado (modo legacy, dwell = 0)
         self._regime_history: Dict[str, list] = {}
-        # Régimen suavizado confirmado por símbolo
+        # Régimen suavizado/confirmado por símbolo
         self._current_regime: Dict[str, MarketRegime] = {}
+        # Histéresis temporal (dwell > 0)
+        self._candidate: Dict[str, MarketRegime] = {}
+        self._candidate_since: Dict[str, float] = {}
+        self._confirmed_since: Dict[str, float] = {}
+        self._last_raw: Dict[str, MarketRegime] = {}
+        self._last_inputs: Dict[str, Dict[str, float]] = {}
+        # Cache del remuestreo por símbolo: (último timestamp de 1 min, frame agregado)
+        self._resample_cache: Dict[str, tuple] = {}
         # Thresholds adaptativos por símbolo (cached)
         self._adaptive_thresholds: Dict[str, Dict[str, float]] = {}
         # Cache timer: recalcular thresholds cada 15s (60s was too stale for 1m bar regime transitions)
         self._threshold_last_update: Dict[str, float] = {}
         self._threshold_cache_sec: float = 15.0
+
+    # ── parámetros en vivo ─────────────────────────────────────────
+    def params(self) -> tuple:
+        tc = getattr(self._settings, "trading", None)
+        if tc is None:
+            return max(1, self._timeframe_min), max(0, self._min_dwell_min)
+        return (max(1, int(getattr(tc, "regime_timeframe_min", self._timeframe_min))),
+                max(0, int(getattr(tc, "regime_min_dwell_min", self._min_dwell_min))))
 
     def detect(
         self, df: pd.DataFrame, symbol: str, config: SymbolConfig
@@ -39,21 +72,23 @@ class RegimeDetector:
         """Detecta el régimen actual del mercado para un símbolo.
 
         Args:
-            df: DataFrame con indicadores ya calculados (close, atr, adx, momentum, vol_pct, etc.)
+            df: DataFrame de velas de 1 min con indicadores (close, atr, adx, momentum, vol_pct…)
             symbol: Nombre del símbolo
             config: Configuración del símbolo
 
         Returns:
-            MarketRegime detectado
+            MarketRegime detectado (confirmado)
         """
         if df.empty or len(df) < 5:
             return MarketRegime.UNKNOWN
 
-        if len(df) < config.regime_vol_lookback:
+        tf, dwell = self.params()
+        frame = self._resample(df, symbol, config, tf) if tf > 1 else df
+        if frame is None or frame.empty or len(frame) < config.regime_vol_lookback:
             return MarketRegime.UNKNOWN
 
         # Obtener métricas actuales
-        current = df.iloc[-1]
+        current = frame.iloc[-1]
         vol_pct = current.get("vol_pct", 0.5)
         adx = current.get("adx", 25)
         momentum = current.get("momentum_20", 0)
@@ -70,30 +105,112 @@ class RegimeDetector:
             ema_cross = 0.0
 
         # Actualizar thresholds adaptativos
-        thresholds = self._update_adaptive_thresholds(df, symbol, config)
+        thresholds = self._update_adaptive_thresholds(frame, symbol, config)
 
         # Lógica de clasificación multi-señal
-        regime = self._classify(
+        raw = self._classify(
             vol_pct=vol_pct,
             adx=adx,
             momentum=momentum,
             ema_cross=ema_cross,
             thresholds=thresholds,
         )
+        self._last_raw[symbol] = raw
+        self._last_inputs[symbol] = {
+            "vol_pct": round(float(vol_pct), 4), "adx": round(float(adx), 2),
+            "momentum": round(float(momentum), 5), "ema_cross": round(float(ema_cross), 5),
+            **{f"thr_{k}": round(float(v), 4) for k, v in thresholds.items()},
+        }
 
-        # Suavizado: evitar cambios bruscos de régimen (requiere 2 señales consecutivas)
-        regime = self._smooth_regime(symbol, regime)
+        # Confirmación: histéresis temporal (dwell) o suavizado legacy (2 detecciones)
+        bar_ts = self._frame_time(frame)
+        if dwell > 0:
+            regime = self._confirm(symbol, raw, bar_ts, dwell * 60.0)
+        else:
+            regime = self._smooth_regime(symbol, raw)
+            if self._current_regime.get(symbol) != regime:
+                self._confirmed_since[symbol] = bar_ts
         self._current_regime[symbol] = regime
 
         logger.debug(
             "regime_detected",
             symbol=symbol,
             regime=regime.value,
+            raw=raw.value,
             vol_pct=round(vol_pct, 3),
             adx=round(adx, 2),
             momentum=round(momentum, 5),
         )
         return regime
+
+    # ── remuestreo a velas de N minutos ────────────────────────────
+    @staticmethod
+    def _frame_time(frame: pd.DataFrame) -> float:
+        if "timestamp" in frame.columns:
+            try:
+                return float(frame["timestamp"].iloc[-1])
+            except Exception:
+                pass
+        return time.time()
+
+    def _resample(self, df: pd.DataFrame, symbol: str, config: SymbolConfig,
+                  tf: int) -> Optional[pd.DataFrame]:
+        """Agrega velas de 1 min (timestamp = cierre de vela) a velas COMPLETAS de `tf`
+        minutos y recalcula los indicadores sobre ellas. Cacheado hasta que llega una
+        vela de 1 min nueva (el loop de estrategia corre cada 3 s)."""
+        if "timestamp" not in df.columns or not {"open", "high", "low", "close"}.issubset(df.columns):
+            return df
+        last_ts = float(df["timestamp"].iloc[-1])
+        cached = self._resample_cache.get(symbol)
+        if cached and cached[0] == last_ts and cached[1] == tf:
+            return cached[2]
+        secs = tf * 60
+        ts = df["timestamp"].astype(float).to_numpy()
+        open_ts = ts - 60.0                       # 1-min bar close → its open time
+        bucket = np.floor(open_ts / secs) * secs  # open time of the tf-minute bucket
+        g = df.assign(_b=bucket).groupby("_b", sort=True)
+        agg = g.agg(open=("open", "first"), high=("high", "max"), low=("low", "min"),
+                    close=("close", "last"), n=("close", "size"))
+        if "volume" in df.columns:
+            agg["volume"] = g["volume"].sum()
+        else:
+            agg["volume"] = 0.0
+        agg = agg[agg["n"] >= tf].drop(columns=["n"])   # only complete buckets
+        if agg.empty:
+            out = agg
+        else:
+            agg["timestamp"] = agg.index.to_numpy(dtype=float) + secs   # close time
+            agg = agg.reset_index(drop=True)
+            try:
+                out = Indicators.compute_all(
+                    agg, {"ema_fast": config.tf_ema_fast, "ema_slow": config.tf_ema_slow})
+            except Exception as e:
+                logger.warning("regime_resample_indicators_failed", symbol=symbol, error=str(e))
+                out = agg
+        self._resample_cache[symbol] = (last_ts, tf, out)
+        return out
+
+    # ── histéresis temporal ────────────────────────────────────────
+    def _confirm(self, symbol: str, raw: MarketRegime, now_ts: float, dwell_sec: float) -> MarketRegime:
+        """Un régimen candidato sustituye al confirmado solo tras `dwell_sec` segundos
+        (tiempo de vela) de detecciones consecutivas. El primer régimen se acepta directo."""
+        confirmed = self._current_regime.get(symbol)
+        if confirmed is None or confirmed == MarketRegime.UNKNOWN:
+            self._candidate.pop(symbol, None)
+            self._confirmed_since[symbol] = now_ts
+            return raw
+        if raw == confirmed:
+            self._candidate.pop(symbol, None)
+            return confirmed
+        if self._candidate.get(symbol) != raw:
+            self._candidate[symbol] = raw
+            self._candidate_since[symbol] = now_ts
+            return confirmed
+        if now_ts - self._candidate_since.get(symbol, now_ts) >= dwell_sec:
+            self._candidate.pop(symbol, None)
+            self._confirmed_since[symbol] = now_ts
+            return raw
+        return confirmed
 
     def _classify(
         self,
@@ -136,7 +253,7 @@ class RegimeDetector:
     def _update_adaptive_thresholds(
         self, df: pd.DataFrame, symbol: str, config: SymbolConfig
     ) -> Dict[str, float]:
-        """Actualiza thresholds adaptativos. Cached por 60s para evitar recalcular."""
+        """Actualiza thresholds adaptativos. Cached por 15s para evitar recalcular."""
         import time as _time
         now = _time.monotonic()
         last = self._threshold_last_update.get(symbol, 0)
@@ -183,7 +300,7 @@ class RegimeDetector:
         return thresholds
 
     def _smooth_regime(self, symbol: str, regime: MarketRegime) -> MarketRegime:
-        """Suaviza transiciones de régimen para evitar whipsaws.
+        """Suaviza transiciones de régimen para evitar whipsaws (modo legacy, dwell = 0).
         Requiere 2 detecciones consecutivas del mismo régimen para cambiar."""
         if symbol not in self._regime_history:
             self._regime_history[symbol] = deque(maxlen=5)
@@ -218,3 +335,17 @@ class RegimeDetector:
     def get_current_regime(self, symbol: str) -> MarketRegime:
         """Obtiene el último régimen suavizado/confirmado para un símbolo."""
         return self._current_regime.get(symbol, MarketRegime.UNKNOWN)
+
+    def status(self, symbol: str) -> Dict[str, Any]:
+        """Estado observable para la API/UI: confirmado, candidato, desde cuándo, inputs."""
+        tf, dwell = self.params()
+        cand = self._candidate.get(symbol)
+        return {
+            "regime": self._current_regime.get(symbol, MarketRegime.UNKNOWN).value,
+            "raw": self._last_raw.get(symbol, MarketRegime.UNKNOWN).value,
+            "candidate": cand.value if cand else "",
+            "candidate_since": self._candidate_since.get(symbol, 0.0) if cand else 0.0,
+            "confirmed_since": self._confirmed_since.get(symbol, 0.0),
+            "timeframe_min": tf, "min_dwell_min": dwell,
+            "inputs": self._last_inputs.get(symbol, {}),
+        }

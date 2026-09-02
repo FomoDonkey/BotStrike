@@ -25,6 +25,11 @@ class SymbolConfig:
     symbol: str
     leverage: int = 2   # Safe default (was 10 — exceeded max_leverage=5)
     max_position_usd: float = 200.0  # Safe default for small accounts (was 10k)
+    # Intraday strategies allowed on this symbol (comma-separated StrategyType values).
+    # Replaces the hardcoded SYMBOL_STRATEGY_MAP so it can be edited from the UI.
+    # Whether a strategy actually trades is still gated by its allocation (> 0) and
+    # by the edge monitor; this list only says "eligible here".
+    strategies: str = "MEAN_REVERSION,FIBONACCI_RETRACEMENT"
     # Mean Reversion
     mr_zscore_entry: float = 2.0
     mr_zscore_exit: float = 0.5
@@ -78,9 +83,19 @@ class TradingConfig:
     exchange_venue: str = "binance"      # "binance" or "strike"
     # Capital
     initial_capital: float = 1000.0
-    # Riesgo global — calibrado para $1,000 account
-    max_drawdown_pct: float = 0.10      # $100 max loss before circuit break
-    max_daily_loss_pct: float = 0.05    # $50 max daily loss
+    # Compounding (2026-09-02): when True the engine sizes every position on the
+    # ALL-TIME equity (initial_capital + realized PnL from the trade DB) instead of
+    # the fixed initial_capital, so gains are reinvested across restarts. In paper
+    # mode this also makes the risk manager start from the historical equity/peak.
+    compounding_enabled: bool = True
+    # Riesgo global — escalera de drawdown (research_sota_2026 §8.2, item 8):
+    # -2% día / -5% semana / -10% desde el máximo histórico. Los tres se miden sobre
+    # el histórico persistido en la trade DB, no sobre la sesión (audit 2026-09-02:
+    # el pico de equity se reiniciaba en cada restart y el circuit breaker del 10%
+    # nunca acumulaba entre reinicios).
+    max_drawdown_pct: float = 0.10      # 10% from the all-time peak → halt + flatten
+    max_daily_loss_pct: float = 0.02    # 2% of equity per UTC day → no new entries
+    max_weekly_loss_pct: float = 0.05   # 5% of equity per ISO week → no new entries
     max_leverage: int = 5               # Safer for micro account (was 20)
     max_total_exposure_pct: float = 0.6  # 60% max exposure (was 0.8)
     max_open_positions: int = 4          # Max concurrent positions (one per symbol)
@@ -108,6 +123,61 @@ class TradingConfig:
     allocation_trend_following: float = 0.00   # archived
     allocation_market_making: float = 0.00     # archived
     allocation_order_flow_momentum: float = 0.00  # archived
+    # TREND_DAILY (2026-09-02): the only strategy that passed the §11.3 GO/NO-GO
+    # checklist (Sharpe 1.21 net, maxDD 12.6%, look-ahead audit stable). 1.0 = the
+    # vol-targeted weights are applied at 100%; 0 = disabled. It runs in its own
+    # daily engine and does NOT use the intraday allocation machinery.
+    allocation_trend_daily: float = 1.00
+    # ── Regime detection horizon (2026-09-02) ──
+    # Audit: on 1-minute bars the detector flipped 885 times in 48 h (median regime
+    # 5 min, 320 A→B→A round-trips under 5 min) and every flip went to Telegram.
+    # The intraday strategies hold ~30 min, so the regime is measured on 15-minute
+    # bars (ADX14 = 3.5 h, momentum20 = 5 h) and a new regime must persist
+    # `regime_min_dwell_min` minutes before it is confirmed.
+    regime_timeframe_min: int = 15
+    regime_min_dwell_min: int = 30
+    telegram_regime_min_interval_min: int = 60   # at most one regime message per symbol per hour
+    # ── Trend daily parameters (research_r2_trend_evidence §11.2 — validated set) ──
+    trend_lookbacks: str = "5,10,20,30,60,90"   # Donchian ensemble lookbacks (days)
+    trend_target_vol: float = 0.20               # annualized vol target per asset
+    trend_vol_window: int = 90                   # days for realized vol
+    trend_n_assets: int = 3                      # top-N by 30d median dollar volume
+    trend_leverage_cap: float = 2.0              # cap on the vol scalar (spec: 2.0)
+    trend_rebalance_threshold: float = 0.20      # only re-trade vol-induced size changes > 20%
+    trend_execution_hour_utc: int = 0            # execute at the daily open (00:00 UTC)...
+    trend_execution_delay_min: int = 5           # ...plus this delay (candle must exist)
+    trend_min_order_usd: float = 10.0            # skip rebalances smaller than this notional
+    trend_min_listing_days: int = 365
+    trend_liq_enter_usd: float = 2_000_000.0     # 30d median dollar volume to enter the universe
+    trend_liq_exit_usd: float = 1_000_000.0      # ... and to stay
+    trend_pool: str = ("BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,LTCUSDT,TRXUSDT,"
+                       "ETCUSDT,EOSUSDT,XLMUSDT,NEOUSDT,IOTAUSDT,ZECUSDT,DASHUSDT,SOLUSDT,"
+                       "AVAXUSDT,DOTUSDT,LINKUSDT,ATOMUSDT")
+    # ── Edge monitor (research §4.4 / audit 2026-09-02) ──
+    # Per-strategy statistics over the last `edge_window` closed trades. A strategy is
+    # killed (no new entries, Telegram alert) when n >= edge_kill_min_trades and either
+    # the t-stat of the gross return per trade is <= edge_kill_t_stat or fees eat more
+    # than edge_kill_fee_share of the gross profit of the winners.
+    edge_monitor_enabled: bool = True
+    edge_window: int = 200
+    edge_kill_min_trades: int = 100
+    edge_kill_t_stat: float = -2.0
+    edge_kill_fee_share: float = 0.50
+    edge_check_interval_sec: int = 600
+    # ── Microstructure (VPIN / Hawkes / Kyle λ / OBI / microprice) ──
+    # Audit R2: zero measured predictive power and 16.5% CPU. Off by default; the
+    # intraday strategies still run (regime detection is cheap) and the Order Flow
+    # page shows "disabled" while this is False.
+    microstructure_enabled: bool = False
+    # ── Telegram notification switches (the notifier reads these live) ──
+    telegram_enabled: bool = True
+    telegram_notify_trades: bool = True
+    telegram_notify_signals: bool = True
+    telegram_notify_regime: bool = False
+    telegram_notify_portfolio: bool = True
+    telegram_portfolio_every_min: int = 60
+    telegram_notify_daily_digest: bool = True
+    telegram_digest_hour_utc: int = 7
     # Fees — Binance Futures defaults (VIP 0)
     maker_fee: float = 0.0002           # 2 bps — Binance Futures maker
     taker_fee: float = 0.0004           # 4 bps — Binance Futures taker (was 5 bps Strike)
@@ -195,29 +265,35 @@ class Settings:
 
     # Símbolos a operar (4 assets, $1,000 account, max 4 concurrent positions)
     # SL/TP calibrated per-symbol from backtest analysis
+    # Per-symbol eligibility mirrors the pre-freeze research: Fibonacci on BTC only,
+    # Mean Reversion on ETH/SOL/ADA only (editable from the UI).
     symbols: List[SymbolConfig] = field(default_factory=lambda: [
         SymbolConfig(
             symbol="BTC-USD", leverage=2, max_position_usd=500,
             vpin_bucket_size=50_000.0,
             mr_atr_mult_sl=1.5, mr_atr_mult_tp=4.0,
+            strategies="FIBONACCI_RETRACEMENT",
         ),
         SymbolConfig(
             symbol="ETH-USD", leverage=2, max_position_usd=400,
             vpin_bucket_size=30_000.0,
             kyle_lambda_window=150, kyle_lambda_ema_span=40,
             mr_atr_mult_sl=1.5, mr_atr_mult_tp=4.0,
+            strategies="MEAN_REVERSION",
         ),
         SymbolConfig(
             symbol="SOL-USD", leverage=2, max_position_usd=250,
             vpin_bucket_size=15_000.0,
             kyle_lambda_window=150, kyle_lambda_ema_span=40,
             mr_atr_mult_sl=1.8, mr_atr_mult_tp=4.0,
+            strategies="MEAN_REVERSION",
         ),
         SymbolConfig(
             symbol="ADA-USD", leverage=2, max_position_usd=150,
             vpin_bucket_size=5_000.0,
             kyle_lambda_window=100, kyle_lambda_ema_span=30,
             mr_atr_mult_sl=2.0, mr_atr_mult_tp=4.0,
+            strategies="MEAN_REVERSION",
         ),
     ])
 
@@ -237,7 +313,20 @@ class Settings:
     )
 
     def __post_init__(self) -> None:
-        """Validate configuration coherence at startup."""
+        """Validate configuration coherence at startup, then apply the user's
+        runtime overrides (data/config_overrides.json — edited from the UI) and
+        validate again so an invalid override can never boot the engine."""
+        self.validate()
+        try:
+            from config.overrides import apply_saved_overrides
+            apply_saved_overrides(self)
+        except Exception as e:  # pragma: no cover — defensive: never block startup
+            import structlog
+            structlog.get_logger(__name__).warning("config_overrides_skipped", error=str(e),
+                                                   error_type=type(e).__name__)
+
+    def validate(self) -> None:
+        """Coherence checks shared by startup and by PUT /api/config."""
         max_exposure_usd = self.trading.initial_capital * self.trading.max_total_exposure_pct
         for sym in self.symbols:
             if sym.max_position_usd > max_exposure_usd:
@@ -257,6 +346,24 @@ class Settings:
                     f"= ${self.trading.initial_capital * self.trading.max_leverage:.0f}). "
                     f"Reduce max_position_usd or leverage."
                 )
+        t = self.trading
+        if not (0 < t.max_daily_loss_pct <= t.max_weekly_loss_pct <= t.max_drawdown_pct <= 0.9):
+            raise ValueError(
+                "Config incoherence: the drawdown ladder must satisfy "
+                f"0 < daily ({t.max_daily_loss_pct}) <= weekly ({t.max_weekly_loss_pct}) "
+                f"<= max drawdown ({t.max_drawdown_pct}) <= 0.9")
+        for name in ("allocation_mean_reversion", "allocation_fibonacci_retracement",
+                     "allocation_trend_daily", "allocation_trend_following",
+                     "allocation_market_making", "allocation_order_flow_momentum"):
+            v = getattr(t, name)
+            if not (0.0 <= v <= 1.0):
+                raise ValueError(f"Config incoherence: {name}={v} must be within [0, 1]")
+        try:
+            lbs = [int(x) for x in str(t.trend_lookbacks).split(",") if x.strip()]
+        except ValueError:
+            raise ValueError("Config incoherence: trend_lookbacks must be comma-separated integers")
+        if not lbs or min(lbs) < 2 or max(lbs) > 400:
+            raise ValueError("Config incoherence: trend_lookbacks must contain 1+ integers in [2, 400]")
 
     def get_symbol_config(self, symbol: str) -> SymbolConfig:
         """Obtiene configuración de un símbolo específico."""

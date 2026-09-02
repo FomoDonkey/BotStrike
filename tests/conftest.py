@@ -1,3 +1,14 @@
+import os
+
+# Runtime overrides (data/config_overrides.json, edited from the UI) must never leak
+# into test assertions: every Settings() built by the suite uses code defaults.
+os.environ.setdefault("BOTSTRIKE_NO_OVERRIDES", "1")
+# The TREND_DAILY engine must never read/write the developer's real book or cache.
+import tempfile as _tempfile
+_tmp = _tempfile.mkdtemp(prefix="botstrike_tests_")
+os.environ.setdefault("BOTSTRIKE_TREND_STATE", os.path.join(_tmp, "trend_state.json"))
+os.environ.setdefault("BOTSTRIKE_TREND_DATA_DIR", os.path.join(_tmp, "binance_daily"))
+
 # Script-style test files: they run assertions at import time via a `check(name, cond)`
 # helper instead of pytest functions, so collecting them would execute side effects.
 #

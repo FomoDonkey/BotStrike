@@ -17,67 +17,79 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-# Mapeo de régimen → pesos ideales para cada estrategia
-# Fibonacci thrives in trending (impulse→retrace pattern).
-# MR thrives in ranging (pullback→reversion pattern).
-# EVERY strategy is frozen at 0.00 as of 2026-08-31 (audit R2 batch 1).
+# Regime multiplier per strategy (2026-09-02). The base weight of a strategy is
+#     config.allocation_<strategy>  ×  REGIME_MULTIPLIER[regime][strategy]
+# so the ON/OFF switch and the size live in the config (editable from the UI) and
+# this table only says WHEN a strategy is allowed to open positions.
+#
+# Every allocation is 0.00 by default since the 2026-08-31 audit (R2 batch 1):
 #   FIBONACCI_RETRACEMENT: no published evidence (research_sota_2026 §2.7), 20% WR live.
 #   MEAN_REVERSION: no GROSS edge over 2,284 trades on 150 days of real data
-#     (t-stat -5 to -8.7 net; INVERTING every signal does not improve it, so there is
-#     no directional information to exploit) — tasks/audit/r2_batch1_report.md §3.1.
-# The bot therefore holds no capital in any strategy: it keeps collecting market data
-# and exercising the live pipeline, but takes no positions. That is the correct state —
-# running a measured null edge burns 6-13%/month of the account in pure friction.
-# Unfreezing requires, per strategy: OOS gross edge > 3x its standard error, the
-# side-inversion control FAILING (inverted signals must lose clearly more), the cost
-# gates passing, and a backtest engine with demonstrated live parity (backtest_parity-01/02).
-REGIME_WEIGHTS: Dict[MarketRegime, Dict[StrategyType, float]] = {
+#     (t-stat -5 to -8.7 net; INVERTING every signal does not improve it) —
+#     tasks/audit/r2_batch1_report.md §3.1.
+# Paper audit 2026-09-02 (24 trades): 98% of the gross loss came from MR trades
+# opened OUTSIDE the ranging regime (11 trades, all losers) while the 13 ranging
+# trades were flat gross. Hence MR is now ranging-only and Fibonacci trending-only.
+# If the owner re-enables a strategy from the UI, the edge monitor (analytics/edge.py)
+# re-kills it as soon as its own statistics turn negative.
+REGIME_MULTIPLIER: Dict[MarketRegime, Dict[StrategyType, float]] = {
     MarketRegime.RANGING: {
-        StrategyType.MEAN_REVERSION: 0.00,
-        StrategyType.FIBONACCI_RETRACEMENT: 0.00,
-        StrategyType.TREND_FOLLOWING: 0.00,
-        StrategyType.MARKET_MAKING: 0.00,
-        StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
+        StrategyType.MEAN_REVERSION: 1.00,
+        StrategyType.FIBONACCI_RETRACEMENT: 0.50,
     },
     MarketRegime.TRENDING_UP: {
         StrategyType.MEAN_REVERSION: 0.00,
-        StrategyType.FIBONACCI_RETRACEMENT: 0.00,
-        StrategyType.TREND_FOLLOWING: 0.00,
-        StrategyType.MARKET_MAKING: 0.00,
-        StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
+        StrategyType.FIBONACCI_RETRACEMENT: 1.00,
     },
     MarketRegime.TRENDING_DOWN: {
         StrategyType.MEAN_REVERSION: 0.00,
-        StrategyType.FIBONACCI_RETRACEMENT: 0.00,
-        StrategyType.TREND_FOLLOWING: 0.00,
-        StrategyType.MARKET_MAKING: 0.00,
-        StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
+        StrategyType.FIBONACCI_RETRACEMENT: 1.00,
     },
     MarketRegime.BREAKOUT: {
         StrategyType.MEAN_REVERSION: 0.00,
         StrategyType.FIBONACCI_RETRACEMENT: 0.00,
-        StrategyType.TREND_FOLLOWING: 0.00,
-        StrategyType.MARKET_MAKING: 0.00,
-        StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
     },
     MarketRegime.UNKNOWN: {
         StrategyType.MEAN_REVERSION: 0.00,
         StrategyType.FIBONACCI_RETRACEMENT: 0.00,
-        StrategyType.TREND_FOLLOWING: 0.00,
-        StrategyType.MARKET_MAKING: 0.00,
-        StrategyType.ORDER_FLOW_MOMENTUM: 0.00,
     },
 }
 
-# Per-symbol strategy eligibility — based on backtest PF results.
-# Only allow profitable or near-breakeven combinations.
-# Key: symbol → set of allowed StrategyTypes
-SYMBOL_STRATEGY_MAP: Dict[str, set] = {
-    "BTC-USD": set(),   # FIB frozen 2026-08-31
-    "ETH-USD": set(),   # MR frozen 2026-08-31 — gross edge -0.90 bps, SE 1.2 → zero
-    "ADA-USD": set(),   # MR frozen 2026-08-31 — gross edge -2.05 bps
-    "SOL-USD": set(),   # MR frozen 2026-08-31 — gross edge -0.63 bps, SE 2.6 → zero
+# Kept for backward compatibility with older tests/tools: derived view of the
+# multipliers (all zero allocations → all zero weights).
+REGIME_WEIGHTS = REGIME_MULTIPLIER
+
+ALLOCATION_FIELD: Dict[StrategyType, str] = {
+    StrategyType.MEAN_REVERSION: "allocation_mean_reversion",
+    StrategyType.FIBONACCI_RETRACEMENT: "allocation_fibonacci_retracement",
+    StrategyType.TREND_FOLLOWING: "allocation_trend_following",
+    StrategyType.MARKET_MAKING: "allocation_market_making",
+    StrategyType.ORDER_FLOW_MOMENTUM: "allocation_order_flow_momentum",
+    StrategyType.TREND_DAILY: "allocation_trend_daily",
 }
+
+
+def strategy_allocation(config: TradingConfig, strategy: StrategyType) -> float:
+    """The user's ON/OFF + size switch for a strategy (0 = disabled)."""
+    return float(getattr(config, ALLOCATION_FIELD.get(strategy, ""), 0.0) or 0.0)
+
+
+def eligible_strategies(settings: Settings, symbol: str) -> set:
+    """Per-symbol eligibility from SymbolConfig.strategies (UI-editable)."""
+    try:
+        raw = settings.get_symbol_config(symbol).strategies
+    except ValueError:
+        return set()
+    out = set()
+    for name in str(raw or "").split(","):
+        name = name.strip().upper()
+        if not name:
+            continue
+        try:
+            out.add(StrategyType(name))
+        except ValueError:
+            continue
+    return out
 
 # Performance factor (audit F03) — evaluated on CLOSED trades only, normalized
 # in R-multiples (avg PnL / risk budget per trade), never permanent.
@@ -121,14 +133,13 @@ class PortfolioManager:
         self._perf_blocked_since: Dict[StrategyType, float] = {}
         self._perf_last_logged: Dict[StrategyType, float] = {}
         self._now = time.time  # injectable clock (tests)
+        # Edge-monitor kills (analytics/edge.py): strategy -> reason. A killed
+        # strategy opens no new positions; exits are never blocked.
+        self.killed: Dict[StrategyType, str] = {}
 
         # Pesos actuales (se ajustan dinámicamente)
         self._current_weights: Dict[StrategyType, float] = {
-            StrategyType.MEAN_REVERSION: self.config.allocation_mean_reversion,
-            StrategyType.FIBONACCI_RETRACEMENT: self.config.allocation_fibonacci_retracement,
-            StrategyType.TREND_FOLLOWING: self.config.allocation_trend_following,
-            StrategyType.MARKET_MAKING: self.config.allocation_market_making,
-            StrategyType.ORDER_FLOW_MOMENTUM: self.config.allocation_order_flow_momentum,
+            st: strategy_allocation(self.config, st) for st in StrategyType
         }
 
         # Covariance Tracker para Risk Parity
@@ -184,9 +195,8 @@ class PortfolioManager:
         """
         equity = self.risk_manager.current_equity
 
-        # 1. Peso base por régimen de mercado
-        regime_weight = REGIME_WEIGHTS.get(regime, REGIME_WEIGHTS[MarketRegime.UNKNOWN])
-        base_weight = regime_weight.get(strategy, 0.33)
+        # 1. Peso base = asignación configurada (UI) × multiplicador de régimen
+        base_weight = self.base_weight(strategy, regime)
 
         # 2. Ajuste por performance de la estrategia
         perf_factor = self._performance_factor(strategy)
@@ -222,6 +232,31 @@ class PortfolioManager:
         self._current_weights[strategy] = base_weight * perf_factor * dd_factor
 
         return max(allocation, 0.0)
+
+    def base_weight(self, strategy: StrategyType, regime: MarketRegime) -> float:
+        """allocation (config, live) × regime multiplier. 0 when disabled."""
+        alloc = strategy_allocation(self.config, strategy)
+        if alloc <= 0:
+            return 0.0
+        mult = REGIME_MULTIPLIER.get(regime, REGIME_MULTIPLIER[MarketRegime.UNKNOWN])
+        return alloc * float(mult.get(strategy, 0.0))
+
+    # ── Edge-monitor kill switch ─────────────────────────────────────
+    def kill_strategy(self, strategy: StrategyType, reason: str) -> bool:
+        """Block new entries for `strategy`. Returns True on a state change."""
+        if strategy in self.killed:
+            return False
+        self.killed[strategy] = reason
+        logger.error("strategy_killed_by_edge_monitor", strategy=strategy.value, reason=reason,
+                     hint="no new entries; open positions are still managed to exit")
+        return True
+
+    def unkill_strategy(self, strategy: StrategyType) -> bool:
+        if strategy not in self.killed:
+            return False
+        self.killed.pop(strategy, None)
+        logger.warning("strategy_kill_lifted", strategy=strategy.value)
+        return True
 
     def _risk_budget_per_trade(self) -> float:
         """USD risked per trade at current equity (normalizer for the factor)."""
@@ -300,14 +335,15 @@ class PortfolioManager:
         symbol: str = "",
     ) -> bool:
         """Determina si una estrategia debería operar dado el régimen, símbolo y performance."""
-        # Per-symbol eligibility check — only allow proven combinations
-        if symbol and symbol in SYMBOL_STRATEGY_MAP:
-            if strategy not in SYMBOL_STRATEGY_MAP[symbol]:
-                return False
+        # Edge monitor kill (never permanent: cleared when the statistics recover)
+        if strategy in self.killed:
+            return False
 
-        regime_weight = REGIME_WEIGHTS.get(regime, REGIME_WEIGHTS[MarketRegime.UNKNOWN])
-        base_weight = regime_weight.get(strategy, 0.0)
+        # Per-symbol eligibility (SymbolConfig.strategies, UI-editable)
+        if symbol and strategy not in eligible_strategies(self.settings, symbol):
+            return False
 
+        base_weight = self.base_weight(strategy, regime)
         if base_weight < 0.08:
             return False
 
