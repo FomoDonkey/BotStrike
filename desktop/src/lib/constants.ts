@@ -47,6 +47,7 @@ export const STRATEGY_COLORS: Record<string, string> = {
   TREND_FOLLOWING: "#00B894",
   MARKET_MAKING: "#FDCB6E",
   TREND_DAILY: "#38BDF8",
+  DIVERGENCE: "#F472B6",
 };
 
 export const STRATEGY_LABELS: Record<string, string> = {
@@ -56,6 +57,7 @@ export const STRATEGY_LABELS: Record<string, string> = {
   TREND_FOLLOWING: "Trend Following",
   MARKET_MAKING: "Market Making",
   TREND_DAILY: "Trend daily",
+  DIVERGENCE: "Divergence",
 };
 
 // Store write batching — high-frequency WS channels (trades/signals/positions/logs) are
@@ -73,7 +75,32 @@ export const EXCHANGE_LABELS: Record<string, string> = {
 export const REGIME_COLORS: Record<string, string> = {
   RANGING: "#74B9FF",
   TRENDING_UP: "#00D4AA",
-  TRENDING_DOWN: "#FF4757",
+  TRENDING_DOWN: "#F43F5E",
   BREAKOUT: "#E84393",
-  UNKNOWN: "#4A5568",
+  UNKNOWN: "#6B7280",
 };
+
+// Direction colours — the ONLY place green/rose is defined for charts and chips.
+export const COLOR_UP = "#00D4AA";
+export const COLOR_DOWN = "#F43F5E";
+
+/** Exit reasons reported on closed trades (contract §2) → chip label + tone. */
+export const EXIT_REASON_LABELS: Record<string, { label: string; tone: "profit" | "loss" | "neutral" | "warning" }> = {
+  SL: { label: "SL", tone: "loss" },
+  stop_loss: { label: "SL", tone: "loss" },
+  TP: { label: "TP", tone: "profit" },
+  take_profit: { label: "TP", tone: "profit" },
+  signal: { label: "Signal", tone: "neutral" },
+  time: { label: "Time", tone: "warning" },
+  max_hold: { label: "Time", tone: "warning" },
+  rebalance: { label: "Rebal", tone: "neutral" },
+  trend_exit: { label: "Trend exit", tone: "neutral" },
+  close: { label: "Close", tone: "neutral" },
+  circuit_breaker: { label: "Breaker", tone: "loss" },
+  kill: { label: "Killed", tone: "loss" },
+};
+
+/** Market tape depth kept per symbol (marketStore) */
+export const TAPE_SIZE = 60;
+/** Bridge candle history is 16 h of 1m bars — 24h stats computed client-side are labelled by span. */
+export const FUNDING_INTERVAL_SEC = 8 * 3600;

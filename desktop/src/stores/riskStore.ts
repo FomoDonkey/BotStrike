@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { RiskResponse } from "@/lib/api";
+import type { AccountResponse, RiskResponse } from "@/lib/api";
 
 export type KilledStrategies = RiskResponse["killed_strategies"];
 
@@ -11,6 +11,8 @@ interface RiskState {
   regime: string;
   // Per-symbol regimes to avoid oscillation when multiple symbols broadcast
   regimes: Record<string, string>;
+  /** Per-symbol epoch seconds the current regime started (WS `regime_since`, bridge ≥ 2.14) */
+  regimeSince: Record<string, number>;
 
   // Bridge ≥ 2.14 — /api/risk + the same fields on the WS `risk_update` broadcast
   peak_equity: number;
@@ -26,6 +28,8 @@ interface RiskState {
   equity_basis: number;
   /** Date.now() of the last /api/risk snapshot (0 = never) */
   restLoadedAt: number;
+  /** Bridge ≥ 2.15 — account overview riding on the WS risk_update (contract §3) */
+  account: AccountResponse | null;
 
   onUpdate: (data: Record<string, unknown>) => void;
   onRiskSnapshot: (data: RiskResponse) => void;
@@ -75,6 +79,10 @@ function extendedFields(data: Record<string, unknown>, s: RiskState): Partial<Ri
   if (data.killed_strategies && typeof data.killed_strategies === "object") {
     out.killed_strategies = data.killed_strategies as KilledStrategies;
   }
+  const acct = data.account;
+  if (acct && typeof acct === "object" && typeof (acct as AccountResponse).equity === "number") {
+    out.account = acct as AccountResponse;
+  }
   return out;
 }
 
@@ -85,6 +93,7 @@ export const useRiskStore = create<RiskState>((set) => ({
   circuit_breaker_active: false,
   regime: "UNKNOWN",
   regimes: {},
+  regimeSince: {},
 
   peak_equity: 0,
   daily_pnl: 0,
@@ -98,6 +107,7 @@ export const useRiskStore = create<RiskState>((set) => ({
   compounding_enabled: null,
   equity_basis: 0,
   restLoadedAt: 0,
+  account: null,
 
   onUpdate: (data) =>
     set((s) => {
@@ -113,6 +123,11 @@ export const useRiskStore = create<RiskState>((set) => ({
       const updatedRegimes = symbol && newRegime
         ? { ...s.regimes, [symbol]: newRegime }
         : s.regimes;
+
+      const since = safeNum(data.regime_since, 0);
+      const regimeSince = symbol && since > 0 && s.regimeSince[symbol] !== since
+        ? { ...s.regimeSince, [symbol]: since }
+        : s.regimeSince;
 
       // Display regime: prefer BTC, then first available
       const displayRegime = updatedRegimes["BTC-USD"]
@@ -133,6 +148,7 @@ export const useRiskStore = create<RiskState>((set) => ({
         circuit_breaker_active: cb,
         regime: displayRegime,
         regimes: updatedRegimes,
+        regimeSince,
         ...extendedFields(data, s),
       };
     }),

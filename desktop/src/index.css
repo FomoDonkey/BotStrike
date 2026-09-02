@@ -1,28 +1,37 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 
+/*
+ * Visual system (v2.15) — terminal density, hairline panels, one accent.
+ * Values 100 % white, labels 60 %, secondary #B8B8B8; green/rose ONLY for direction/sign.
+ * Backgrounds are neutral near-black (no navy tint); panels are separated by 1 px hairlines,
+ * never by shadows or blur. See tasks/ui_live_trading_contract.md §0.
+ */
 @theme {
-  /* Core backgrounds */
-  --color-bg-base: #050810;
-  --color-bg-surface: #0B1120;
-  --color-bg-elevated: #111B2E;
+  /* Core backgrounds (overridden per theme variant by stores/themeStore.ts) */
+  --color-bg-base: #0A0A0A;
+  --color-bg-surface: #0F0F0F;
+  --color-bg-elevated: #171717;
 
   /* Borders */
-  --color-border-subtle: #1A2540;
-  --color-border-default: #243050;
+  --color-border-subtle: #1F1F1F;
+  --color-border-default: #2A2A2A;
+  --color-hairline: rgba(255, 255, 255, 0.12);
+  --color-hairline-soft: rgba(255, 255, 255, 0.06);
 
   /* Text */
-  --color-text-primary: #F0F4FA;
-  --color-text-secondary: #8898AA;
-  --color-text-muted: #4A5568;
+  --color-text-primary: #FFFFFF;
+  --color-text-secondary: #B8B8B8;
+  --color-text-muted: rgba(255, 255, 255, 0.6);
+  --color-text-faint: rgba(255, 255, 255, 0.38);
 
-  /* Accent */
+  /* Accent — BotStrike mint, the only accent */
   --color-accent: #00D4AA;
   --color-accent-dim: #00A88A;
 
   /* Semantic */
   --color-profit: #00D4AA;
-  --color-loss: #FF4757;
+  --color-loss: #F43F5E;
   --color-warning: #FFA502;
   --color-info: #3B82F6;
 
@@ -31,11 +40,12 @@
   --color-strategy-ofm: #00CEC9;
   --color-strategy-tf: #00B894;
   --color-strategy-mm: #FDCB6E;
+  --color-strategy-div: #F472B6;
 
   /* Regime colors */
   --color-regime-ranging: #74B9FF;
   --color-regime-up: #00D4AA;
-  --color-regime-down: #FF4757;
+  --color-regime-down: #F43F5E;
   --color-regime-breakout: #E84393;
 
   /* Micro colors */
@@ -44,8 +54,8 @@
   --color-as-spread: #00CEC9;
 
   /* Fonts */
-  --font-display: "Inter", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", monospace;
+  --font-display: "IBM Plex Sans", "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
 /* Base styles */
@@ -57,9 +67,11 @@ html, body, #root {
   background: var(--color-bg-base);
   color: var(--color-text-primary);
   font-family: var(--font-display);
+  font-size: 13px;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Scrollbar styling */
@@ -78,7 +90,7 @@ html, body, #root {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-muted);
+  background: var(--color-text-faint);
 }
 
 /* Selection */
@@ -95,6 +107,61 @@ html, body, #root {
 .scrollbar-none::-webkit-scrollbar {
   display: none;
 }
+
+/* ── Terminal primitives ─────────────────────────────────────────── */
+
+/* Label with an explanatory tooltip (dotted underline = "hover me"), as in the reference. */
+.hint {
+  text-decoration: underline dotted rgba(255, 255, 255, 0.35);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
+/* Dense data table: 28 px uppercase header, 32 px rows, tabular numbers, right-aligned by default. */
+.term-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12.5px;
+  line-height: 1;
+}
+.term-table th {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: right;
+  white-space: nowrap;
+  color: var(--color-text-muted);
+  background: var(--color-bg-surface);
+  border-bottom: 1px solid var(--color-hairline);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.term-table td {
+  height: 32px;
+  padding: 0 8px;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--color-hairline-soft);
+  color: var(--color-text-primary);
+}
+.term-table th.l, .term-table td.l { text-align: left; }
+.term-table th.c, .term-table td.c { text-align: center; }
+.term-table tbody tr:hover > td { background: rgba(255, 255, 255, 0.025); }
+.term-table tbody tr.is-open > td { background: rgba(255, 255, 255, 0.035); }
+.term-table tr.detail > td { height: auto; padding: 8px; white-space: normal; background: rgba(255, 255, 255, 0.02); }
+.term-table .num { font-family: var(--font-mono); font-size: 12px; }
+
+/* Key/value list used by Account overview / Details */
+.kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; row-gap: 0; font-size: 12.5px; }
+.kv > dt { color: var(--color-text-muted); height: 24px; display: flex; align-items: center; min-width: 0; white-space: nowrap; }
+.kv > dd { margin: 0; height: 24px; display: flex; align-items: center; justify-content: flex-end; font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 /* Native range input styled to the theme (Strategies allocation slider) */
 input[type="range"].bs-range {

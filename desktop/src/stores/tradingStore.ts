@@ -1,20 +1,9 @@
 import { create } from "zustand";
 import { STORE_FLUSH_MS } from "@/lib/constants";
+import type { PositionData } from "@/lib/api";
 
-export interface PositionData {
-  symbol: string;
-  side: string;
-  size: number;
-  entry_price: number;
-  mark_price: number;
-  unrealized_pnl: number;
-  realized_pnl: number;
-  leverage: number;
-  liquidation_price: number;
-  strategy: string | null;
-  notional: number;
-  pnl_pct: number;
-}
+// PositionData lives in lib/api.ts (contract §2) — re-exported so existing imports keep working.
+export type { PositionData };
 
 export interface TradeData {
   symbol: string;
@@ -43,6 +32,44 @@ export interface TradeData {
   };
 }
 
+/** One price/RSI pivot of a divergence signal (contract §2 / §5). */
+export interface DivergencePivot {
+  ts: number;
+  price: number;
+  rsi?: number;
+}
+
+/**
+ * Signal metadata as the strategies emit it (`Signal.metadata`, serialised as-is). Only the keys
+ * the UI knows how to render are typed; everything else is shown generically in the feed.
+ */
+export interface SignalMetadata {
+  action?: string;
+  exit_reason?: string;
+  trigger?: string;
+  confirmations?: string[] | Record<string, boolean | number | string>;
+  rsi?: number;
+  adx?: number;
+  zscore?: number;
+  z_score?: number;
+  atr?: number;
+  atr_bps?: number;
+  regime?: string;
+  timeframe_min?: number;
+  /** DIVERGENCE */
+  divergence_type?: string; // regular | hidden
+  type?: string;
+  pivots?: DivergencePivot[] | { p1?: DivergencePivot; p2?: DivergencePivot; first?: DivergencePivot; second?: DivergencePivot };
+  rsi_gap?: number;
+  trigger_level?: number;
+  trigger_price?: number;
+  macd_hist?: number;
+  macd?: number | string | { hist?: number; state?: string; signal?: number; macd?: number };
+  macd_state?: string;
+  volume_ok?: boolean;
+  [key: string]: unknown;
+}
+
 export interface SignalData {
   strategy: string;
   symbol: string;
@@ -53,6 +80,7 @@ export interface SignalData {
   take_profit: number;
   size_usd: number;
   timestamp: number;
+  metadata?: SignalMetadata | null;
 }
 
 export interface MetricsData {

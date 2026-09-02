@@ -63,10 +63,10 @@ function NavList({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: (
           onClick={onNavigate}
           className={({ isActive }) =>
             cn(
-              "group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-150",
+              "group flex items-center gap-3 px-3 py-2 rounded-md text-[13px] transition-colors duration-150",
               isActive
-                ? "bg-accent/10 text-accent shadow-[0_0_12px_rgba(0,212,170,0.08)]"
-                : "text-text-secondary hover:text-text-primary hover:bg-white/[0.03]"
+                ? "bg-accent/10 text-accent"
+                : "text-text-secondary hover:text-text-primary hover:bg-white/[0.04]"
             )
           }
         >
@@ -121,17 +121,17 @@ export function Sidebar({ open, onClose }: SidebarProps) {
       {/* Desktop column (≥ lg) */}
       <aside
         className={cn(
-          "relative hidden lg:flex flex-col h-full shrink-0 bg-bg-surface/50 backdrop-blur-xl border-r border-white/5 transition-all duration-300",
+          "relative hidden lg:flex flex-col h-full shrink-0 bg-bg-surface border-r border-hairline transition-all duration-300",
           collapsed ? "w-16" : "w-56"
         )}
       >
-        <div className="flex items-center gap-3 px-4 h-14 border-b border-white/5">
+        <div className="flex items-center gap-3 px-4 h-11 border-b border-hairline">
           <Logo collapsed={collapsed} />
         </div>
         <NavList collapsed={collapsed} />
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className="flex items-center justify-center h-10 border-t border-white/5 text-text-muted hover:text-text-secondary transition-colors"
+          className="flex items-center justify-center h-9 border-t border-hairline text-text-muted hover:text-text-secondary transition-colors"
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
@@ -154,7 +154,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
             />
             <motion.aside
               key="drawer"
-              className="fixed inset-y-0 left-0 z-50 flex w-64 max-w-[85vw] flex-col bg-bg-surface border-r border-white/10 shadow-2xl lg:hidden"
+              className="fixed inset-y-0 left-0 z-50 flex w-64 max-w-[85vw] flex-col bg-bg-surface border-r border-hairline lg:hidden"
               initial={{ x: -280 }}
               animate={{ x: 0 }}
               exit={{ x: -280 }}
@@ -162,7 +162,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
               role="dialog"
               aria-label="Navigation"
             >
-              <div className="flex items-center gap-3 px-4 h-14 border-b border-white/5">
+              <div className="flex items-center gap-3 px-4 h-11 border-b border-hairline">
                 <Logo collapsed={false} />
                 <button
                   onClick={onClose}

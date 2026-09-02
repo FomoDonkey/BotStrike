@@ -5,8 +5,8 @@ import { useThemeStore, type ThemeVariant } from "@/stores/themeStore";
 import { useAlertStore } from "@/stores/alertStore";
 
 const THEMES: { id: ThemeVariant; name: string; desc: string; bg: string }[] = [
-  { id: "dark", name: "Dark", desc: "Default cyberpunk", bg: "#050810" },
-  { id: "darker", name: "Darker", desc: "Deep space", bg: "#020408" },
+  { id: "dark", name: "Dark", desc: "Neutral near-black (default)", bg: "#0A0A0A" },
+  { id: "darker", name: "Darker", desc: "Deeper panels", bg: "#050505" },
   { id: "oled", name: "OLED", desc: "Pure black", bg: "#000000" },
 ];
 
@@ -28,10 +28,10 @@ export function AppearanceSettings() {
               key={t.id}
               onClick={() => setTheme(t.id)}
               className={cn(
-                "p-4 rounded-xl border text-left transition-all",
+                "p-4 rounded-lg border text-left transition-all",
                 themeVariant === t.id
-                  ? "border-accent/50 shadow-[0_0_12px_rgba(0,212,170,0.1)]"
-                  : "border-white/5 hover:border-white/10"
+                  ? "border-accent/60"
+                  : "border-hairline hover:border-white/20"
               )}
             >
               <div

@@ -2,27 +2,28 @@ import { create } from "zustand";
 
 export type ThemeVariant = "dark" | "darker" | "oled";
 
+// Neutral near-black palettes (v2.15 visual system) — no navy tint, hairline borders.
 const THEMES: Record<ThemeVariant, Record<string, string>> = {
   dark: {
-    "--color-bg-base": "#050810",
-    "--color-bg-surface": "#0B1120",
-    "--color-bg-elevated": "#111B2E",
-    "--color-border-subtle": "#1A2540",
-    "--color-border-default": "#243050",
+    "--color-bg-base": "#0A0A0A",
+    "--color-bg-surface": "#0F0F0F",
+    "--color-bg-elevated": "#171717",
+    "--color-border-subtle": "#1F1F1F",
+    "--color-border-default": "#2A2A2A",
   },
   darker: {
-    "--color-bg-base": "#020408",
-    "--color-bg-surface": "#060B15",
-    "--color-bg-elevated": "#0A1020",
-    "--color-border-subtle": "#121C30",
-    "--color-border-default": "#1A2540",
+    "--color-bg-base": "#050505",
+    "--color-bg-surface": "#0A0A0A",
+    "--color-bg-elevated": "#111111",
+    "--color-border-subtle": "#1A1A1A",
+    "--color-border-default": "#242424",
   },
   oled: {
     "--color-bg-base": "#000000",
-    "--color-bg-surface": "#050508",
-    "--color-bg-elevated": "#0A0A10",
-    "--color-border-subtle": "#101018",
-    "--color-border-default": "#181828",
+    "--color-bg-surface": "#050505",
+    "--color-bg-elevated": "#0C0C0C",
+    "--color-border-subtle": "#161616",
+    "--color-border-default": "#202020",
   },
 };
 

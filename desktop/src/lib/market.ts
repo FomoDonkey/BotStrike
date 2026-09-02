@@ -1,0 +1,187 @@
+// Derived market / position maths shared by the terminal, Dashboard and Performance.
+// Everything here is a pure function of bridge payloads; when a ≥ 2.15 field is present it
+// wins, otherwise the value is derived and the caller labels it as such.
+import type { PositionData, TradeRecord } from "@/lib/api";
+import type { Candle } from "@/stores/marketStore";
+import { FUNDING_INTERVAL_SEC } from "@/lib/constants";
+
+/** Maintenance margin used by the paper liquidation estimate (contract §2). */
+export const PAPER_MAINTENANCE_MARGIN = 0.005;
+
+export interface Stats24h {
+  /** open of the first candle inside the window (reference for the change) */
+  ref_open: number | null;
+  high: number | null;
+  low: number | null;
+  /** seconds actually covered by the candle window (bridge keeps ~16 h of 1m bars) */
+  span_sec: number;
+  volume_base: number;
+}
+
+/**
+ * 24h reference open / high / low from the 1m candles in memory. The bridge keeps ~16 h, so the
+ * result is labelled by the real span (a 16 h window is NOT a 24 h window and the UI says so).
+ * Fold the live price in with `change24h()` so this memo only recomputes when candles change.
+ */
+export function stats24h(candles: Candle[] | undefined, nowSec: number): Stats24h {
+  if (!candles?.length) return { ref_open: null, high: null, low: null, span_sec: 0, volume_base: 0 };
+  const cutoff = nowSec - 24 * 3600;
+  let first: Candle | null = null;
+  let high = -Infinity;
+  let low = Infinity;
+  let vol = 0;
+  for (const c of candles) {
+    if (c.time < cutoff) continue;
+    if (!first) first = c;
+    if (c.high > high) high = c.high;
+    if (c.low < low) low = c.low;
+    vol += c.volume || 0;
+  }
+  if (!first) return { ref_open: null, high: null, low: null, span_sec: 0, volume_base: 0 };
+  const last = candles[candles.length - 1];
+  return {
+    ref_open: first.open > 0 ? first.open : first.close,
+    high: Number.isFinite(high) ? high : null,
+    low: Number.isFinite(low) ? low : null,
+    span_sec: Math.max(0, last.time + 60 - first.time),
+    volume_base: vol,
+  };
+}
+
+/** Change ratio vs the window's reference open, with the live price folded in. */
+export function change24h(stats: Stats24h, price: number): number | null {
+  if (!stats.ref_open || !(price > 0)) return null;
+  return (price - stats.ref_open) / stats.ref_open;
+}
+
+/** Human span label for a client-side window: 86400 → "24h", 57600 → "16h". */
+export function spanLabel(spanSec: number): string {
+  if (spanSec >= 23.5 * 3600) return "24h";
+  const h = spanSec / 3600;
+  return h >= 1 ? `${Math.round(h)}h` : `${Math.max(1, Math.round(spanSec / 60))}m`;
+}
+
+/** Seconds until the next 8 h UTC funding mark (00:00 / 08:00 / 16:00 UTC). */
+export function fundingCountdownSec(nowMs: number): number {
+  const sec = Math.floor(nowMs / 1000);
+  return FUNDING_INTERVAL_SEC - (sec % FUNDING_INTERVAL_SEC);
+}
+
+/** "HH:MM:SS" countdown. */
+export function formatCountdown(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return "--:--:--";
+  const s = Math.floor(sec);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
+}
+
+export function isLong(side: string | undefined): boolean {
+  const s = (side ?? "").toUpperCase();
+  return s === "BUY" || s === "LONG";
+}
+
+/** Notional at mark (falls back to entry) — never negative. */
+export function positionNotional(p: PositionData): number {
+  if (typeof p.notional === "number" && Number.isFinite(p.notional) && p.notional > 0) return p.notional;
+  const px = p.mark_price > 0 ? p.mark_price : p.entry_price;
+  return Math.abs((p.size || 0) * (px || 0));
+}
+
+export function positionLeverage(p: PositionData): number {
+  return typeof p.leverage === "number" && Number.isFinite(p.leverage) && p.leverage > 0 ? p.leverage : 1;
+}
+
+/** Margin = notional / leverage unless the bridge reports it. */
+export function positionMargin(p: PositionData): number {
+  if (typeof p.margin === "number" && Number.isFinite(p.margin) && p.margin > 0) return p.margin;
+  const lev = positionLeverage(p);
+  const entryNotional = Math.abs((p.size || 0) * (p.entry_price || 0));
+  return (entryNotional > 0 ? entryNotional : positionNotional(p)) / lev;
+}
+
+/** ROE = unrealized / margin (bridge `roe_pct` wins). Ratio, not percent. */
+export function positionRoe(p: PositionData): number | null {
+  if (typeof p.roe_pct === "number" && Number.isFinite(p.roe_pct)) return p.roe_pct;
+  const m = positionMargin(p);
+  if (m <= 0) return null;
+  return (p.unrealized_pnl || 0) / m;
+}
+
+export interface LiqEstimate {
+  price: number | null;
+  /** true when computed here from the contract formula rather than reported by the bridge */
+  estimated: boolean;
+}
+
+/**
+ * Liquidation price: bridge value when > 0; otherwise the paper formula (contract §2) for
+ * leveraged positions; null for leverage ≤ 1 (spot-like, e.g. trend daily).
+ */
+export function positionLiquidation(p: PositionData): LiqEstimate {
+  if (typeof p.liquidation_price === "number" && Number.isFinite(p.liquidation_price) && p.liquidation_price > 0) {
+    return { price: p.liquidation_price, estimated: false };
+  }
+  const lev = positionLeverage(p);
+  if (lev <= 1 || !(p.entry_price > 0)) return { price: null, estimated: false };
+  const mm = PAPER_MAINTENANCE_MARGIN;
+  const px = isLong(p.side) ? p.entry_price * (1 - 1 / lev + mm) : p.entry_price * (1 + 1 / lev - mm);
+  return { price: px, estimated: true };
+}
+
+/** Signed distance of a level from the mark, as a ratio (negative = below mark). */
+export function distancePct(level: number | null | undefined, mark: number): number | null {
+  if (typeof level !== "number" || !Number.isFinite(level) || level <= 0 || !(mark > 0)) return null;
+  return (level - mark) / mark;
+}
+
+/**
+ * Distance in PnL direction — the bridge's convention for SL/TP on positions: negative =
+ * adverse (towards the stop) for BOTH sides. long: level/mark − 1; short: 1 − level/mark.
+ */
+export function pnlDistancePct(level: number | null | undefined, mark: number, side: string): number | null {
+  const d = distancePct(level, mark);
+  if (d === null) return null;
+  return isLong(side) ? d : -d;
+}
+
+/** Epoch seconds the position was opened (≥ 2.15 `opened_ts`, 2.14 `timestamp`). */
+export function positionOpenedTs(p: PositionData): number {
+  const v = p.opened_ts ?? p.timestamp ?? 0;
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? (v > 1e11 ? v / 1000 : v) : 0;
+}
+
+/** Live hold time in seconds (bridge `hold_sec` is a snapshot; the clock keeps running). */
+export function positionHoldSec(p: PositionData, nowMs: number): number | null {
+  const opened = positionOpenedTs(p);
+  if (opened > 0) return Math.max(0, nowMs / 1000 - opened);
+  if (typeof p.hold_sec === "number" && Number.isFinite(p.hold_sec)) return p.hold_sec;
+  return null;
+}
+
+/** Position side of a closed trade: an EXIT row's side is the fill side (SELL closed a long). */
+export function tradePositionSide(t: TradeRecord): "LONG" | "SHORT" {
+  if (t.trade_type === "EXIT") return t.side === "SELL" ? "LONG" : "SHORT";
+  return t.side === "BUY" ? "LONG" : "SHORT";
+}
+
+export function tradeNotional(t: TradeRecord): number {
+  return Math.abs((t.entry_price || 0) * (t.quantity || 0));
+}
+
+/** ROE of a closed trade: bridge `roe_pct`, else pnl / (notional / leverage). Ratio. */
+export function tradeRoe(t: TradeRecord): number | null {
+  if (typeof t.roe_pct === "number" && Number.isFinite(t.roe_pct)) return t.roe_pct;
+  const n = tradeNotional(t);
+  if (n <= 0) return null;
+  const lev = typeof t.leverage === "number" && t.leverage > 0 ? t.leverage : 1;
+  return (t.pnl || 0) / (n / lev);
+}
+
+export function tradeHoldSec(t: TradeRecord): number | null {
+  if (typeof t.hold_sec === "number" && Number.isFinite(t.hold_sec) && t.hold_sec > 0) return t.hold_sec;
+  if (typeof t.duration_sec === "number" && t.duration_sec > 0) return t.duration_sec;
+  if (t.entry_ts && t.exit_ts && t.exit_ts > t.entry_ts) return t.exit_ts - t.entry_ts;
+  return null;
+}

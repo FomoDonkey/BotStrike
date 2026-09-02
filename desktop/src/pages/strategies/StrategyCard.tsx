@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ChevronDown, ChevronUp, Loader2, SlidersHorizontal } from "lucide-react";
 import { GlassPanel } from "@/components/shared/GlassPanel";
 import { VerdictChip } from "@/components/shared/VerdictChip";
-import type { ConfigField, ConfigScalar, StrategyInfo } from "@/lib/api";
+import type { ConfigField, ConfigScalar, StrategyInfo, StrategyResearch } from "@/lib/api";
 import { STRATEGY_COLORS, STRATEGY_LABELS } from "@/lib/constants";
 import { cn, formatPct, formatUSD } from "@/lib/utils";
 import { trimNumber } from "@/components/settings/schemaUtils";
@@ -34,7 +34,7 @@ function paramText(v: ConfigScalar | undefined): string {
 
 export function StrategyCard({ s, allocField, busy, expandable, expanded, onToggleExpand, onAllocation, onEditParams }: StrategyCardProps) {
   const enabled = s.enabled ?? s.allocation > 0;
-  const color = STRATEGY_COLORS[s.type] ?? "#4A5568";
+  const color = STRATEGY_COLORS[s.type] ?? "#6B7280";
   const label = STRATEGY_LABELS[s.type] ?? s.name ?? s.type;
   const max = allocField?.max ?? 1;
   const step = allocField?.step ?? 0.05;
@@ -68,11 +68,13 @@ export function StrategyCard({ s, allocField, busy, expandable, expanded, onTogg
             )}>
               {s.killed ? "KILLED" : s.active ? "ACTIVE" : enabled ? "ENABLED" : "DISABLED"}
             </span>
+            {s.research && <ResearchChip r={s.research} />}
             {s.symbols && s.symbols.length > 0 && (
               <span className="text-[10px] font-mono text-text-muted truncate">{s.symbols.join(" · ")}</span>
             )}
           </div>
           <p className="text-xs text-text-secondary mt-1 leading-snug">{s.description || s.name}</p>
+          {s.research && <ResearchLine r={s.research} />}
         </div>
         <button
           type="button"
@@ -177,6 +179,59 @@ export function StrategyCard({ s, allocField, busy, expandable, expanded, onTogg
         </button>
       )}
     </GlassPanel>
+  );
+}
+
+function researchTone(verdict: string): "profit" | "loss" | "warning" | "muted" {
+  const v = verdict.toUpperCase();
+  if (v === "GO" || v === "PASS") return "profit";
+  if (v.includes("NO") || v === "FAIL" || v === "KILL") return "loss";
+  if (v) return "warning";
+  return "muted";
+}
+
+function researchChecks(r: StrategyResearch): string {
+  if (Array.isArray(r.checks)) return `${r.checks.length} checks`;
+  if (typeof r.checks === "string" && r.checks) return `${r.checks} checks`;
+  return "";
+}
+
+/** Offline research verdict next to the switch (bridge ≥ 2.15 `research` block). */
+function ResearchChip({ r }: { r: StrategyResearch }) {
+  const tone = researchTone(r.verdict ?? "");
+  const title = [r.summary, r.note, researchChecks(r)].filter(Boolean).join(" · ") || "Offline research verdict";
+  return (
+    <span
+      title={title}
+      className={cn(
+        "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider whitespace-nowrap",
+        tone === "profit" && "bg-profit/10 text-profit",
+        tone === "loss" && "bg-loss/10 text-loss",
+        tone === "warning" && "bg-warning/10 text-warning",
+        tone === "muted" && "bg-white/5 text-text-muted",
+      )}
+    >
+      research {r.verdict || "n/a"}
+    </span>
+  );
+}
+
+function ResearchLine({ r }: { r: StrategyResearch }) {
+  const parts: string[] = [];
+  const checks = researchChecks(r);
+  if (checks) parts.push(checks);
+  if (typeof r.trades === "number") parts.push(`${r.trades} trades`);
+  if (typeof r.profit_factor === "number") parts.push(`PF ${r.profit_factor.toFixed(2)}`);
+  if (typeof r.t_stat === "number") parts.push(`t ${r.t_stat.toFixed(2)}`);
+  const text = r.summary || r.note;
+  if (!parts.length && !text) return null;
+  return (
+    <p className="text-[10.5px] text-text-muted mt-1 font-mono leading-snug break-words">
+      {parts.join(" · ")}{parts.length && text ? " · " : ""}{text}
+      {Array.isArray(r.checks) && r.checks.length > 0 && (
+        <span className="block text-text-faint font-sans mt-0.5">{r.checks.map(String).join(" · ")}</span>
+      )}
+    </p>
   );
 }
 

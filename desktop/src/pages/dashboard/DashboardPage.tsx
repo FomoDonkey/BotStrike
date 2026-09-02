@@ -7,6 +7,8 @@ import { GlassPanel } from "@/components/shared/GlassPanel";
 import { MetricCard } from "@/components/shared/MetricCard";
 import { AnimatedNumber } from "@/components/shared/AnimatedNumber";
 import { VerdictChip } from "@/components/shared/VerdictChip";
+import { HoldTime, PnlCell, SideChip, StrategyTag } from "@/components/shared/TradeChips";
+import { positionHoldSec, positionRoe } from "@/lib/market";
 import { useMarketStore } from "@/stores/marketStore";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useRiskStore } from "@/stores/riskStore";
@@ -71,7 +73,7 @@ export function DashboardPage() {
       type: s.type,
       name: STRATEGY_LABELS[s.type] ?? s.name ?? s.type,
       value: Math.round((s.allocation / total) * 1000) / 10,
-      color: STRATEGY_COLORS[s.type] ?? "#4A5568",
+      color: STRATEGY_COLORS[s.type] ?? "#6B7280",
     }));
   }, [strategies]);
 
@@ -227,7 +229,7 @@ export function DashboardPage() {
             <div className="space-y-1.5">
               {edgeRows.map(([type, e]) => (
                 <div key={type} className="flex items-center gap-2 text-xs">
-                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: STRATEGY_COLORS[type] || "#4A5568" }} />
+                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: STRATEGY_COLORS[type] || "#6B7280" }} />
                   <span className="text-text-secondary truncate flex-1 min-w-0">{STRATEGY_LABELS[type] || type}</span>
                   <span className="font-mono text-text-muted hidden sm:inline">n {e.n} · t {typeof e.t_stat === "number" ? e.t_stat.toFixed(2) : "---"} · PF {typeof e.profit_factor === "number" ? e.profit_factor.toFixed(2) : "---"}</span>
                   <VerdictChip verdict={e.verdict} title={e.reason} />
@@ -301,26 +303,20 @@ export function DashboardPage() {
               <p className="text-xs">No open positions</p>
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="-mx-1">
               {allPositions.map((p, i) => (
-                <div key={`${p.symbol}-${p.strategy ?? ""}-${i}`} className="flex items-center justify-between text-sm p-2 rounded-lg bg-white/[0.02]">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className={cn(
-                      "text-[10px] font-bold px-1.5 py-0.5 rounded",
-                      p.side === "BUY" ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss"
-                    )}>
-                      {p.side}
-                    </span>
-                    <span className="font-mono text-text-primary text-xs truncate">{p.symbol}</span>
-                    {p.strategy && <span className="text-[9px] text-text-muted truncate hidden xl:inline">{STRATEGY_LABELS[p.strategy] ?? p.strategy}</span>}
-                  </div>
-                  <AnimatedNumber
-                    value={p.unrealized_pnl}
-                    format={formatUSD}
-                    colorize
-                    className="font-mono text-xs"
-                  />
-                </div>
+                <Link
+                  to="/trading"
+                  key={`${p.symbol}-${p.strategy ?? ""}-${i}`}
+                  className="flex items-center gap-2 h-8 px-1 border-b border-hairline-soft last:border-b-0 hover:bg-white/[0.03] text-xs"
+                  title={`${p.symbol} · ${STRATEGY_LABELS[p.strategy ?? ""] ?? p.strategy ?? ""} — open Live Trading`}
+                >
+                  <SideChip side={p.side} compact />
+                  <span className="font-medium text-text-primary truncate">{p.symbol}</span>
+                  <StrategyTag strategy={p.strategy} dotOnly />
+                  <HoldTime seconds={positionHoldSec(p, now)} className="text-[10.5px] ml-auto hidden sm:inline" />
+                  <PnlCell pnl={p.unrealized_pnl ?? 0} roe={positionRoe(p)} inline className="text-xs shrink-0" />
+                </Link>
               ))}
             </div>
           )}
@@ -346,7 +342,7 @@ export function DashboardPage() {
                   <div className="flex items-center gap-2 min-w-0">
                     <span
                       className="w-1.5 h-1.5 rounded-full shrink-0"
-                      style={{ backgroundColor: STRATEGY_COLORS[s.strategy] || "#4A5568" }}
+                      style={{ backgroundColor: STRATEGY_COLORS[s.strategy] || "#6B7280" }}
                     />
                     <span className="text-text-secondary truncate">
                       {STRATEGY_LABELS[s.strategy] || s.strategy}
@@ -386,7 +382,7 @@ export function DashboardPage() {
                       <div className="w-full h-1.5 rounded-full bg-white/5 overflow-hidden">
                         <motion.div
                           className="h-full rounded-full"
-                          style={{ backgroundColor: data.vpin.is_toxic ? "#FF4757" : "#E84393" }}
+                          style={{ backgroundColor: data.vpin.is_toxic ? "#F43F5E" : "#E84393" }}
                           initial={{ width: 0 }}
                           animate={{ width: `${data.vpin.vpin * 100}%` }}
                           transition={{ duration: 0.5, ease: "easeOut" }}
@@ -417,7 +413,7 @@ export function DashboardPage() {
                         className="h-full rounded-full"
                         style={{
                           background: (data.risk_score || 0) > 0.6
-                            ? "linear-gradient(90deg, #FFA502, #FF4757)"
+                            ? "linear-gradient(90deg, #FFA502, #F43F5E)"
                             : "linear-gradient(90deg, #00D4AA, #00D4AAaa)",
                         }}
                         initial={{ width: 0 }}

@@ -49,6 +49,7 @@ export function StrategiesPage() {
 
   /** Settings tab holding this strategy's params (matched by field name), with a sane fallback. */
   const paramGroupFor = useCallback((s: StrategyInfo): string => {
+    if (s.settings_group) return s.settings_group; // bridge ≥ 2.15 says which Settings tab
     const keys = new Set(Object.keys(s.params ?? {}));
     for (const g of schema?.groups ?? []) {
       if (g.per_symbol) continue;

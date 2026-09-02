@@ -81,3 +81,82 @@ export function toMs(ts: number | undefined | null): number {
 export function finiteOr(v: unknown, fallback: number): number {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
 }
+
+/** Signed percent from a ratio: 0.0123 → "+1.23%". */
+export function formatSignedPct(value: number, decimals = 2): string {
+  if (!Number.isFinite(value)) return "---";
+  const s = (value * 100).toFixed(decimals);
+  return `${value > 0 ? "+" : ""}${s}%`;
+}
+
+/** Signed money: 1.5 → "+$1.50", -0.2 → "-$0.20". */
+export function formatSignedUSD(value: number, decimals = 2): string {
+  if (!Number.isFinite(value)) return "---";
+  return `${value > 0 ? "+" : ""}${formatUSD(value, decimals)}`;
+}
+
+/** Compact USD for volumes / OI: 12_595_740_564 → "$12.60B". */
+export function formatCompactUSD(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "---";
+  const abs = Math.abs(value);
+  if (abs >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `$${(value / 1e3).toFixed(1)}K`;
+  return `$${value.toFixed(0)}`;
+}
+
+/** Compact plain number (contracts / coins): 108103.4 → "108.1K". */
+export function formatCompact(value: number, decimals = 1): string {
+  if (!Number.isFinite(value)) return "---";
+  const abs = Math.abs(value);
+  if (abs >= 1e9) return `${(value / 1e9).toFixed(decimals)}B`;
+  if (abs >= 1e6) return `${(value / 1e6).toFixed(decimals)}M`;
+  if (abs >= 1e3) return `${(value / 1e3).toFixed(decimals)}K`;
+  return value.toFixed(abs >= 100 ? 0 : 2);
+}
+
+/** Position size with sensible precision by magnitude: 0.00152 BTC / 12.5 SOL / 1500 ADA. */
+export function formatSize(value: number): string {
+  if (!Number.isFinite(value)) return "---";
+  const abs = Math.abs(value);
+  if (abs === 0) return "0";
+  if (abs < 0.01) return value.toFixed(6);
+  if (abs < 1) return value.toFixed(4);
+  if (abs < 100) return value.toFixed(3);
+  return value.toFixed(1);
+}
+
+/** Basis points with sign: 12.34 → "+12.3", -5 → "-5.0"; null/undefined → "---". */
+export function formatSignedBps(value: number | null | undefined, decimals = 1): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "---";
+  return `${value > 0 ? "+" : ""}${value.toFixed(decimals)}`;
+}
+
+/** "1h 05m 12s"-style clock for live hold times (compact, always 2-digit minutes/seconds). */
+export function formatClock(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "---";
+  const s = Math.floor(seconds);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const mm = String(m).padStart(2, "0");
+  const ss = String(sec).padStart(2, "0");
+  if (d > 0) return `${d}d ${String(h).padStart(2, "0")}:${mm}:${ss}`;
+  return `${String(h).padStart(2, "0")}:${mm}:${ss}`;
+}
+
+/** "HH:MM:SS" (24 h) from epoch seconds or milliseconds. */
+export function formatTimeShort(timestamp: number): string {
+  const ms = toMs(timestamp);
+  if (!ms) return "---";
+  return new Date(ms).toLocaleTimeString("en-US", { hour12: false });
+}
+
+/** "Sep 2, 11:06" from epoch seconds/milliseconds or an ISO string. */
+export function formatDateTime(ts: number | string | null | undefined): string {
+  if (typeof ts === "string") return formatLocalDateTime(ts);
+  const ms = toMs(ts);
+  if (!ms) return "---";
+  return new Date(ms).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}

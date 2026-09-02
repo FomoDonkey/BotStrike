@@ -1,62 +1,52 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { IChartApi, ISeriesApi, SeriesMarker, Time, UTCTimestamp } from "lightweight-charts";
+import type { IChartApi, IPriceLine, ISeriesApi, SeriesMarker, Time, UTCTimestamp } from "lightweight-charts";
 import { useMarketStore, type Candle } from "@/stores/marketStore";
 import { type TradeData } from "@/stores/tradingStore";
+import { resampleCandles } from "@/lib/indicators";
+import { COLOR_DOWN, COLOR_UP } from "@/lib/constants";
+import { applyOverlays, applyPriceLines, type DivergenceOverlay, type OverlayRefs, type PriceLineSpec } from "./chartOverlays";
+import { CHART_THEME, TF_SECONDS, type Timeframe } from "./chartConfig";
 
-export type Timeframe = "1m" | "5m" | "15m" | "1h" | "4h";
-
-const TF_SECONDS: Record<Timeframe, number> = {
-  "1m": 60,
-  "5m": 300,
-  "15m": 900,
-  "1h": 3600,
-  "4h": 14400,
-};
+export type { Timeframe };
 
 interface CandlestickChartProps {
   symbol: string;
   className?: string;
   trades?: TradeData[];
   timeframe?: Timeframe;
+  /** Live levels of open positions (entry / SL / TP / liq) */
+  priceLines?: PriceLineSpec[];
+  /** DIVERGENCE signals with pivots (contract §5) */
+  overlays?: DivergenceOverlay[];
+  /** Exposes the chart API (time-scale / crosshair sync with the indicator pane) */
+  onChart?: (chart: IChartApi | null) => void;
 }
 
-/** Resample 1m candles to a higher timeframe client-side. */
-function resampleCandles(candles: Candle[], tfSeconds: number): Candle[] {
-  if (tfSeconds <= 60 || !candles.length) return candles;
-
-  const buckets = new Map<number, Candle>();
-  for (const c of candles) {
-    const key = Math.floor(c.time / tfSeconds) * tfSeconds;
-    const existing = buckets.get(key);
-    if (!existing) {
-      buckets.set(key, { time: key, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume });
-    } else {
-      existing.high = Math.max(existing.high, c.high);
-      existing.low = Math.min(existing.low, c.low);
-      existing.close = c.close;
-      existing.volume += c.volume;
-    }
-  }
-
-  return Array.from(buckets.values()).sort((a, b) => a.time - b.time);
-}
-
-export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }: CandlestickChartProps) {
+export function CandlestickChart({ symbol, className, trades, timeframe = "1m", priceLines, overlays, onChart }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const priceLineRefs = useRef<Map<string, IPriceLine>>(new Map());
+  const overlayRefs = useRef<OverlayRefs>({ series: [] });
+  const firstTimeRef = useRef(0);
   const lastCandleHash = useRef("");
   const lastMarkersHash = useRef("");
+  const lastLinesHash = useRef("");
+  const lastOverlayHash = useRef("");
   const lastCandleCount = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [chartReady, setChartReady] = useState(false);
+  const onChartRef = useRef(onChart);
+  useEffect(() => { onChartRef.current = onChart; });
 
   // Step 1: Initialize chart (async)
   useEffect(() => {
     if (!containerRef.current) return;
     let destroyed = false;
     let resizeObs: ResizeObserver | null = null;
+    const lineRefs = priceLineRefs.current;
+    const ovRefs = overlayRefs.current;
 
     (async () => {
       try {
@@ -66,25 +56,26 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
         const chart = lc.createChart(containerRef.current, {
           layout: {
             background: { type: lc.ColorType.Solid, color: "transparent" },
-            textColor: "#8898AA",
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize: 11,
+            textColor: CHART_THEME.textColor,
+            fontFamily: CHART_THEME.fontFamily,
+            fontSize: CHART_THEME.fontSize,
           },
           grid: {
-            vertLines: { color: "rgba(255,255,255,0.03)" },
-            horzLines: { color: "rgba(255,255,255,0.03)" },
+            vertLines: { color: CHART_THEME.grid },
+            horzLines: { color: CHART_THEME.grid },
           },
           crosshair: {
             mode: lc.CrosshairMode.Normal,
-            vertLine: { color: "rgba(0,212,170,0.3)", width: 1, style: 2, labelBackgroundColor: "#0B1120" },
-            horzLine: { color: "rgba(0,212,170,0.3)", width: 1, style: 2, labelBackgroundColor: "#0B1120" },
+            vertLine: { color: CHART_THEME.crosshair, width: 1, style: 2, labelBackgroundColor: CHART_THEME.labelBg },
+            horzLine: { color: CHART_THEME.crosshair, width: 1, style: 2, labelBackgroundColor: CHART_THEME.labelBg },
           },
           rightPriceScale: {
-            borderColor: "rgba(255,255,255,0.05)",
-            scaleMargins: { top: 0.1, bottom: 0.25 },
+            borderColor: CHART_THEME.border,
+            scaleMargins: { top: 0.08, bottom: 0.24 },
+            minimumWidth: CHART_THEME.priceScaleWidth,
           },
           timeScale: {
-            borderColor: "rgba(255,255,255,0.05)",
+            borderColor: CHART_THEME.border,
             timeVisible: true,
             secondsVisible: false,
             rightOffset: 5,         // Space after last candle
@@ -96,12 +87,12 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
         });
 
         const candleSeries = chart.addCandlestickSeries({
-          upColor: "#00D4AA",
-          downColor: "#FF4757",
-          borderUpColor: "#00D4AA",
-          borderDownColor: "#FF4757",
-          wickUpColor: "#00D4AA",
-          wickDownColor: "#FF4757",
+          upColor: COLOR_UP,
+          downColor: COLOR_DOWN,
+          borderUpColor: COLOR_UP,
+          borderDownColor: COLOR_DOWN,
+          wickUpColor: COLOR_UP,
+          wickDownColor: COLOR_DOWN,
         });
 
         const volumeSeries = chart.addHistogramSeries({
@@ -125,6 +116,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
         resizeObs.observe(containerRef.current);
 
         setChartReady(true);
+        onChartRef.current?.(chart);
       } catch (e) {
         console.error("[Chart] init error:", e);
         setError(e instanceof Error && e.message ? e.message : "Chart failed to load");
@@ -134,11 +126,14 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
     return () => {
       destroyed = true;
       resizeObs?.disconnect();
+      onChartRef.current?.(null);
       if (chartRef.current) {
         chartRef.current.remove();
         chartRef.current = null;
         seriesRef.current = null;
         volumeSeriesRef.current = null;
+        lineRefs.clear();
+        ovRefs.series = [];
       }
     };
   }, []);
@@ -153,6 +148,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
     // Resample if timeframe > 1m
     const candles = tfSeconds > 60 ? resampleCandles(rawCandles, tfSeconds) : rawCandles;
     if (!candles.length) return;
+    firstTimeRef.current = candles[0].time;
 
     const last = candles[candles.length - 1];
     const hash = `${candles.length}_${last.time}_${last.open}_${last.close}_${last.high}_${last.low}_${last.volume}`;
@@ -164,18 +160,17 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
       const isIncremental = candles.length === lastCandleCount.current || candles.length === lastCandleCount.current + 1;
 
       if (isIncremental && lastCandleCount.current > 0) {
-        const lastCandle = {
+        seriesRef.current.update({
           time: last.time as UTCTimestamp,
           open: last.open,
           high: last.high,
           low: last.low,
           close: last.close,
-        };
-        seriesRef.current.update(lastCandle);
+        });
         volumeSeriesRef.current.update({
           time: last.time as UTCTimestamp,
           value: last.volume,
-          color: last.close >= last.open ? "rgba(0,212,170,0.2)" : "rgba(255,71,87,0.2)",
+          color: last.close >= last.open ? "rgba(0,212,170,0.25)" : "rgba(244,63,94,0.25)",
         });
       } else {
         // Full redraw: initial load, timeframe change, or large data change
@@ -192,13 +187,15 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
           candles.map((c: Candle) => ({
             time: c.time as UTCTimestamp,
             value: c.volume,
-            color: c.close >= c.open ? "rgba(0,212,170,0.2)" : "rgba(255,71,87,0.2)",
+            color: c.close >= c.open ? "rgba(0,212,170,0.25)" : "rgba(244,63,94,0.25)",
           }))
         );
         // Scroll to show latest candles on initial load
         if (chartRef.current) {
           chartRef.current.timeScale().scrollToRealTime();
         }
+        // overlays depend on the first candle time → re-apply after a full redraw
+        lastOverlayHash.current = "";
       }
       lastCandleCount.current = candles.length;
     } catch (e) {
@@ -252,7 +249,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
           markers.push({
             time,
             position: isBuy ? "belowBar" : "aboveBar",
-            color: isBuy ? "#00D4AA" : "#FF4757",
+            color: isBuy ? COLOR_UP : COLOR_DOWN,
             shape: isBuy ? "arrowUp" : "arrowDown",
             text: `${isBuy ? "L" : "S"} $${t.price.toFixed(0)}`,
           });
@@ -264,7 +261,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
           markers.push({
             time,
             position: wasLong ? "aboveBar" : "belowBar",
-            color: isWin ? "#00D4AA" : "#FF4757",
+            color: isWin ? COLOR_UP : COLOR_DOWN,
             shape: "circle",
             text: `$${pnlStr}`,
           });
@@ -278,9 +275,37 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m" }
     }
   }, [trades, chartReady, timeframe, tfSeconds]);
 
+  // Step 4: live price lines (entry / SL / TP / liq of open positions)
+  useEffect(() => {
+    if (!chartReady || !seriesRef.current) return;
+    const specs = priceLines ?? [];
+    const hash = specs.map((s) => `${s.id}:${s.price.toFixed(4)}:${s.title}`).join("|");
+    if (hash === lastLinesHash.current) return;
+    lastLinesHash.current = hash;
+    try {
+      applyPriceLines(seriesRef.current, priceLineRefs.current, specs);
+    } catch (e) {
+      console.error("[Chart] price lines error:", e);
+    }
+  }, [priceLines, chartReady]);
+
+  // Step 5: divergence overlays (pivot line + trigger level)
+  useEffect(() => {
+    if (!chartReady || !chartRef.current) return;
+    const list = overlays ?? [];
+    const hash = `${timeframe}_${firstTimeRef.current}_` + list.map((o) => `${o.id}:${o.triggerLevel ?? ""}`).join("|");
+    if (hash === lastOverlayHash.current) return;
+    lastOverlayHash.current = hash;
+    try {
+      applyOverlays(chartRef.current, overlayRefs.current, list, tfSeconds, firstTimeRef.current);
+    } catch (e) {
+      console.error("[Chart] overlays error:", e);
+    }
+  }, [overlays, chartReady, timeframe, tfSeconds]);
+
   if (error) {
     return (
-      <div className={className} style={{ display: "flex", alignItems: "center", justifyContent: "center", color: "#FF4757", fontSize: 12 }}>
+      <div className={className} style={{ display: "flex", alignItems: "center", justifyContent: "center", color: COLOR_DOWN, fontSize: 12 }}>
         Chart error: {error}
       </div>
     );

@@ -22,7 +22,7 @@ interface LadderRow {
 }
 
 function usedColor(ratio: number): string {
-  if (ratio >= 0.7) return "linear-gradient(90deg, #FFA502, #FF4757)";
+  if (ratio >= 0.7) return "linear-gradient(90deg, #FFA502, #F43F5E)";
   if (ratio >= 0.3) return "linear-gradient(90deg, #00D4AA, #FFA502)";
   return "linear-gradient(90deg, #00D4AA, #00D4AAaa)";
 }
@@ -217,7 +217,7 @@ export function RiskPage() {
           <ul className="space-y-2">
             {killed.map(([type, v]) => (
               <li key={type} className="flex items-start gap-2 text-xs">
-                <span className="w-2 h-2 mt-1 rounded-full shrink-0" style={{ backgroundColor: STRATEGY_COLORS[type] || "#4A5568" }} />
+                <span className="w-2 h-2 mt-1 rounded-full shrink-0" style={{ backgroundColor: STRATEGY_COLORS[type] || "#6B7280" }} />
                 <span className="text-text-primary font-medium">{STRATEGY_LABELS[type] || type}</span>
                 <span className="text-text-muted font-mono break-words min-w-0">{killReason(v)}</span>
               </li>

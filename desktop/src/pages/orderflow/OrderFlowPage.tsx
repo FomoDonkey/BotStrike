@@ -41,7 +41,7 @@ export function OrderFlowPage() {
                     style={{
                       width: `${(data.vpin?.vpin || 0) * 100}%`,
                       background: data.vpin?.is_toxic
-                        ? "linear-gradient(90deg, #E84393, #FF4757)"
+                        ? "linear-gradient(90deg, #E84393, #F43F5E)"
                         : "linear-gradient(90deg, #E84393, #E84393aa)",
                     }}
                   />
@@ -121,7 +121,7 @@ export function OrderFlowPage() {
                   style={{
                     width: `${(data.risk_score || 0) * 100}%`,
                     background: data.risk_score > 0.7
-                      ? "linear-gradient(90deg, #FFA502, #FF4757)"
+                      ? "linear-gradient(90deg, #FFA502, #F43F5E)"
                       : data.risk_score > 0.4
                         ? "linear-gradient(90deg, #00D4AA, #FFA502)"
                         : "linear-gradient(90deg, #00D4AA, #00D4AAaa)",

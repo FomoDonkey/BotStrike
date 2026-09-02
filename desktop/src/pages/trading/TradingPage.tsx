@@ -1,90 +1,57 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useShallow } from "zustand/shallow";
-import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
-import { CandlestickChart, type Timeframe } from "@/components/charts/CandlestickChart";
-import { useMarketStore } from "@/stores/marketStore";
 import { useTradingStore, type TradeData } from "@/stores/tradingStore";
-import { useMicroStore } from "@/stores/microStore";
-import { formatUSD, formatPrice, formatBps, cn } from "@/lib/utils";
-import { STRATEGY_COLORS, STRATEGY_LABELS } from "@/lib/constants";
-import { ArrowUpRight, ArrowDownRight } from "lucide-react";
-import { SymbolSelector } from "@/components/shared/SymbolSelector";
-import { api } from "@/lib/api";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { TabBar } from "@/components/shared/TabBar";
+import type { Timeframe } from "@/components/charts/chartConfig";
+import { cn } from "@/lib/utils";
+import { MarketHeader } from "./MarketHeader";
+import { ChartArea } from "./ChartArea";
+import { OrderBookPanel } from "./OrderBookPanel";
+import { TradesTape } from "./TradesTape";
+import { PositionsTable } from "./PositionsTable";
+import { OrdersTable } from "./OrdersTable";
+import { TradeHistoryTable } from "./TradeHistoryTable";
+import { SignalsFeed } from "./SignalsFeed";
+import { AccountPanel } from "./AccountPanel";
+import { useTradeHistory } from "./useTradeHistory";
+
+type RightTab = "book" | "tape" | "account";
+type BottomTab = "positions" | "orders" | "history" | "signals" | "account";
+
+const SYMBOL_KEY = "botstrike.trading.symbol";
+
+function loadSymbol(): string {
+  try { return localStorage.getItem(SYMBOL_KEY) || "BTC-USD"; } catch { return "BTC-USD"; }
+}
+
+function Panel({ className, children }: { className?: string; children: React.ReactNode }) {
+  return <div className={cn("rounded-lg border border-hairline bg-bg-surface flex flex-col min-w-0 overflow-hidden", className)}>{children}</div>;
+}
 
 /**
- * Historical fills from the trade DB (/api/trades) mapped to chart-marker shape.
- * The WS feed only carries fills seen since the page loaded — without this, every
- * browser refresh wiped the markers off the chart.
+ * Live Trading terminal (contract §1): market header → chart + order book / tape → positions,
+ * orders, history, signals, account. Stacks below lg; nothing ever scrolls the body sideways.
  */
-function useHistoricalTrades(): TradeData[] {
-  const [dbTrades, setDbTrades] = useState<TradeData[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const res = await api.trades(300);
-        if (cancelled) return;
-        const mapped: TradeData[] = [];
-        for (const t of res.trades || []) {
-          const entryTs = t.entry_ts || (t.entry_time ? Date.parse(t.entry_time) / 1000 : 0);
-          const exitTs = t.exit_ts || (t.exit_time ? Date.parse(t.exit_time) / 1000 : 0);
-          if (entryTs > 0 && t.entry_price > 0) {
-            mapped.push({
-              symbol: t.symbol, side: t.side, trade_type: "ENTRY", price: t.entry_price,
-              quantity: t.quantity, fee: 0, strategy: t.strategy, timestamp: entryTs, pnl: 0,
-            });
-          }
-          if (exitTs > 0 && t.exit_price > 0) {
-            mapped.push({
-              symbol: t.symbol, side: t.side, trade_type: "EXIT", price: t.exit_price,
-              quantity: t.quantity, fee: t.fee || 0, strategy: t.strategy, timestamp: exitTs, pnl: t.pnl || 0,
-            });
-          }
-        }
-        setDbTrades(mapped);
-      } catch {
-        /* bridge unreachable — fall back to WS-only markers */
-      }
-    }
-    load();
-    const iv = setInterval(load, 30000);
-    return () => { cancelled = true; clearInterval(iv); };
-  }, []);
-  return dbTrades;
-}
-
-const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h"];
-
-// Static glass panel — no framer-motion to avoid animation issues
-function Panel({ className, children }: { className?: string; children: React.ReactNode }) {
-  return (
-    <div className={cn(
-      "rounded-2xl bg-bg-surface/70 backdrop-blur-xl border border-white/5 shadow-[0_4px_24px_rgba(0,0,0,0.4)]",
-      className
-    )}>
-      {children}
-    </div>
-  );
-}
-
 export function TradingPage() {
-  const [symbol, setSymbol] = useState("BTC-USD");
-  const [timeframe, setTimeframe] = useState<Timeframe>("1m");
-  const price = useMarketStore((s) => s.prices[symbol] || 0);
-  const prevPrice = useMarketStore((s) => s.prevPrices[symbol] || 0);
-  const orderbook = useMarketStore((s) => s.orderbooks[symbol]);
+  const [symbol, setSymbolState] = useState(loadSymbol);
+  const setSymbol = (s: string) => { setSymbolState(s); try { localStorage.setItem(SYMBOL_KEY, s); } catch { /* ignore */ } };
+  const [timeframe, setTimeframe] = useState<Timeframe>("5m");
+  const [rightTab, setRightTab] = useState<RightTab>("book");
+  const [bottomTab, setBottomTab] = useState<BottomTab>("positions");
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
+
   const positionsMap = useTradingStore(useShallow((s) => s.positions));
   const positions = useMemo(() => Object.values(positionsMap).flat(), [positionsMap]);
   const signals = useTradingStore(useShallow((s) => s.recentSignals));
-  const recentSignals = useMemo(() => [...signals].reverse().slice(0, 10), [signals]);
-  const micro = useMicroStore((s) => s.snapshots[symbol]);
-  const allTrades = useTradingStore(useShallow((s) => s.recentTrades));
-  const dbTrades = useHistoricalTrades();
+  const liveTrades = useTradingStore(useShallow((s) => s.recentTrades));
+  const history = useTradeHistory();
+
   // DB history + live WS fills, deduped (a live fill also lands in the DB within seconds)
-  const symbolTrades = useMemo(() => {
+  const markers = useMemo(() => {
     const seen = new Set<string>();
     const merged: TradeData[] = [];
-    for (const t of [...dbTrades, ...allTrades]) {
+    for (const t of [...history.markers, ...liveTrades]) {
       if (t.symbol !== symbol || !t.timestamp || !t.price) continue;
       const key = `${t.trade_type}_${Math.round(t.timestamp)}_${t.price.toFixed(4)}`;
       if (seen.has(key)) continue;
@@ -92,190 +59,64 @@ export function TradingPage() {
       merged.push(t);
     }
     return merged;
-  }, [dbTrades, allTrades, symbol]);
+  }, [history.markers, liveTrades, symbol]);
 
-  const priceUp = price > prevPrice;
+  const rightTabs = useMemo(() => {
+    const base = [{ id: "book" as const, label: "Order Book" }, { id: "tape" as const, label: "Trades" }];
+    return isDesktop ? base : [...base, { id: "account" as const, label: "Account" }];
+  }, [isDesktop]);
+  const effectiveRight: RightTab = isDesktop && rightTab === "account" ? "book" : rightTab;
+
+  const bottomTabs = [
+    { id: "positions" as const, label: "Positions", badge: positions.length || undefined },
+    { id: "orders" as const, label: "Orders" },
+    { id: "history" as const, label: "Trade History", badge: history.closed.length || undefined },
+    { id: "signals" as const, label: "Signals", badge: signals.length || undefined },
+    { id: "account" as const, label: "Account" },
+  ];
 
   return (
-    <div className="flex flex-col gap-3 lg:h-full min-w-0">
-      {/* Top Row: Chart + Order Book — stacks below lg; the chart keeps a real height on phones */}
-      <div className="flex flex-col lg:flex-row gap-3 lg:flex-1 lg:min-h-0">
-        {/* Main Chart */}
-        <Panel className="flex-1 flex flex-col overflow-hidden min-h-[320px] lg:min-h-0 min-w-0">
-          <div className="flex items-center justify-between gap-2 px-3 sm:px-4 py-2 border-b border-white/5 flex-wrap">
-            <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-              <SymbolSelector value={symbol} onChange={setSymbol} variant="tabs" />
-              <div className="flex items-center gap-0.5 bg-white/[0.03] rounded-lg p-0.5">
-                {TIMEFRAMES.map((tf) => (
-                  <button
-                    key={tf}
-                    onClick={() => setTimeframe(tf)}
-                    className={cn(
-                      "px-2 py-0.5 rounded text-[11px] font-mono font-medium transition-all",
-                      timeframe === tf
-                        ? "bg-accent text-bg-base"
-                        : "text-text-muted hover:text-text-secondary"
-                    )}
-                  >
-                    {tf}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className={cn(
-                "font-mono text-lg font-bold tabular-nums transition-colors duration-150",
-                priceUp ? "text-profit" : "text-loss"
-              )}>
-                {price > 0 ? `$${formatPrice(price)}` : "---"}
-              </span>
-              {priceUp ? (
-                <ArrowUpRight className="w-4 h-4 text-profit" />
-              ) : (
-                <ArrowDownRight className="w-4 h-4 text-loss" />
-              )}
-            </div>
-          </div>
-          {/* flex column: the chart container fills via flex-1, not via height:100% — a percentage
-              height resolves to 0 px when the chain is sized by min-height (the phone layout) */}
-          <div className="flex-1 min-h-[260px] lg:min-h-0 flex flex-col">
-            <ErrorBoundary
-              fallback={
-                <div className="flex flex-1 items-center justify-center text-text-muted text-sm">
-                  Chart unavailable
-                </div>
-              }
-            >
-              <CandlestickChart className="flex-1 min-h-0" symbol={symbol} trades={symbolTrades} timeframe={timeframe} />
-            </ErrorBoundary>
-          </div>
+    <div className="flex flex-col gap-2 lg:h-full min-w-0">
+      <MarketHeader symbol={symbol} onSymbolChange={setSymbol} />
+
+      {/* Middle: chart + right rail */}
+      <div className="flex flex-col lg:flex-row gap-2 lg:flex-1 lg:min-h-0 min-w-0">
+        <Panel className="flex-1 min-h-[480px] lg:min-h-0">
+          <ChartArea
+            symbol={symbol}
+            timeframe={timeframe}
+            onTimeframe={setTimeframe}
+            markers={markers}
+            positions={positions}
+            signals={signals}
+          />
         </Panel>
 
-        {/* Right Panel */}
-        <div className="w-full lg:w-72 flex flex-col sm:flex-row lg:flex-col gap-3 shrink-0">
-          {/* Order Book */}
-          <Panel className="flex-1 p-3 overflow-hidden min-w-0">
-            <h3 className="text-[10px] text-text-muted uppercase tracking-wider mb-2">Order Book</h3>
-            {orderbook && (orderbook.bids?.length > 0 || orderbook.asks?.length > 0) ? (
-              (() => {
-                const asks = [...(orderbook.asks || [])].reverse().slice(0, 8);
-                const bids = (orderbook.bids || []).slice(0, 8);
-                const allQty = [...asks, ...bids].map(l => l.quantity || 0);
-                const maxQty = Math.max(...allQty, 0.001); // normalize bars by max quantity
-                return (
-                  <div className="space-y-0.5 text-xs font-mono">
-                    {asks.map((lvl, i) => (
-                      <div key={`a${i}`} className="flex justify-between relative">
-                        <div
-                          className="absolute inset-y-0 right-0 bg-loss/10"
-                          style={{ width: `${Math.min((lvl.quantity || 0) / maxQty * 100, 100)}%` }}
-                        />
-                        <span className="text-loss relative z-10">{formatPrice(lvl.price)}</span>
-                        <span className="text-text-muted relative z-10">{(lvl.quantity || 0).toFixed(4)}</span>
-                      </div>
-                    ))}
-                    <div className="flex justify-center py-1 text-text-muted text-[10px]">
-                      {orderbook.spread_bps ? `${formatBps(orderbook.spread_bps)} spread` : "---"}
-                    </div>
-                    {bids.map((lvl, i) => (
-                      <div key={`b${i}`} className="flex justify-between relative">
-                        <div
-                          className="absolute inset-y-0 right-0 bg-profit/10"
-                          style={{ width: `${Math.min((lvl.quantity || 0) / maxQty * 100, 100)}%` }}
-                        />
-                        <span className="text-profit relative z-10">{formatPrice(lvl.price)}</span>
-                        <span className="text-text-muted relative z-10">{(lvl.quantity || 0).toFixed(4)}</span>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })()
-            ) : (
-              <p className="text-text-muted text-xs">Waiting for data...</p>
-            )}
+        <div className="w-full lg:w-[292px] xl:w-[316px] shrink-0 flex flex-col gap-2 lg:min-h-0">
+          <Panel className="flex-1 min-h-[380px] lg:min-h-0">
+            <TabBar tabs={rightTabs} value={effectiveRight} onChange={setRightTab} size="sm" />
+            {effectiveRight === "book" && <OrderBookPanel symbol={symbol} />}
+            {effectiveRight === "tape" && <TradesTape symbol={symbol} />}
+            {effectiveRight === "account" && <AccountPanel positions={positions} variant="compact" />}
           </Panel>
-
-          {/* Microstructure */}
-          <Panel className="p-3 sm:w-56 lg:w-auto shrink-0">
-            <h3 className="text-[10px] text-text-muted uppercase tracking-wider mb-2">Microstructure</h3>
-            <div className="space-y-1.5 text-xs">
-              <div className="flex justify-between">
-                <span className="text-[#E84393]">VPIN</span>
-                <span className="font-mono">
-                  {micro?.vpin ? `${(micro.vpin.vpin * 100).toFixed(0)}%` : "---"}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[#FF7675]">Hawkes</span>
-                <span className="font-mono text-text-secondary">
-                  {micro?.hawkes ? `${micro.hawkes.multiplier.toFixed(1)}x` : "---"}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-secondary">Risk Score</span>
-                <span className="font-mono">{micro?.risk_score?.toFixed(2) ?? "---"}</span>
-              </div>
-            </div>
-          </Panel>
+          {isDesktop && (
+            <Panel className="shrink-0">
+              <div className="h-8 px-3 flex items-center text-[11.5px] font-medium text-text-primary border-b border-hairline">Account Overview</div>
+              <AccountPanel positions={positions} variant="compact" />
+            </Panel>
+          )}
         </div>
       </div>
 
-      {/* Bottom Row */}
-      <div className="flex flex-col lg:flex-row gap-3 lg:h-44 shrink-0">
-        <Panel className="flex-1 p-3 overflow-auto min-w-0 max-h-60 lg:max-h-none">
-          <h3 className="text-[10px] text-text-muted uppercase tracking-wider mb-2">Open Positions</h3>
-          {positions.length === 0 ? (
-            <p className="text-text-muted text-xs">No open positions</p>
-          ) : (
-            <table className="w-full min-w-[420px] text-xs">
-              <thead>
-                <tr className="text-text-muted border-b border-white/5">
-                  <th className="text-left py-1">Symbol</th>
-                  <th className="text-left">Side</th>
-                  <th className="text-right">Entry</th>
-                  <th className="text-right">uPnL</th>
-                  <th className="text-left pl-2">Strategy</th>
-                </tr>
-              </thead>
-              <tbody>
-                {positions.map((p, i) => (
-                  <tr key={i} className="border-b border-white/[0.02]">
-                    <td className="py-1 font-mono">{p.symbol}</td>
-                    <td className={p.side === "BUY" ? "text-profit" : "text-loss"}>{p.side}</td>
-                    <td className="text-right font-mono">{formatPrice(p.entry_price)}</td>
-                    <td className={cn("text-right font-mono", (p.unrealized_pnl ?? 0) >= 0 ? "text-profit" : "text-loss")}>
-                      {formatUSD(p.unrealized_pnl ?? 0)}
-                    </td>
-                    <td className="pl-2 text-text-muted text-[10px]">
-                      {STRATEGY_LABELS[p.strategy || ""] || "---"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </Panel>
-
-        <Panel className="w-full lg:w-80 p-3 overflow-auto max-h-60 lg:max-h-none shrink-0">
-          <h3 className="text-[10px] text-text-muted uppercase tracking-wider mb-2">Signal Feed</h3>
-          {signals.length === 0 ? (
-            <p className="text-text-muted text-xs">No signals yet</p>
-          ) : (
-            <div className="space-y-1.5">
-              {recentSignals.map((s, i) => (
-                <div key={`${s.timestamp}-${i}`} className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: STRATEGY_COLORS[s.strategy] || "#4A5568" }} />
-                    <span className={s.side === "BUY" ? "text-profit" : "text-loss"}>{s.side}</span>
-                    <span className="text-text-muted">{s.symbol}</span>
-                  </div>
-                  <span className="font-mono text-text-secondary">{(s.strength * 100).toFixed(0)}%</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </Panel>
-      </div>
+      {/* Bottom: positions / orders / history / signals / account */}
+      <Panel className="lg:h-[min(300px,36vh)] lg:shrink-0 min-h-[260px] max-h-[70vh] lg:max-h-none">
+        <TabBar tabs={bottomTabs} value={bottomTab} onChange={setBottomTab} size="sm" />
+        {bottomTab === "positions" && <PositionsTable positions={positions} symbol={symbol} />}
+        {bottomTab === "orders" && <OrdersTable positions={positions} symbol={symbol} />}
+        {bottomTab === "history" && <TradeHistoryTable trades={history.closed} loading={history.loading} error={history.error} symbol={symbol} />}
+        {bottomTab === "signals" && <SignalsFeed signals={signals} />}
+        {bottomTab === "account" && <AccountPanel positions={positions} variant="full" />}
+      </Panel>
     </div>
   );
 }

@@ -223,6 +223,22 @@ export interface StrategyInfo {
   params?: Record<string, ConfigScalar>;
   symbols?: string[];
   edge?: EdgeStats;
+  /** Bridge ≥ 2.15 — Settings tab holding this strategy's params */
+  settings_group?: string;
+  /** Bridge ≥ 2.15 — offline research verdict (scripts/*_research.py) */
+  research?: StrategyResearch | null;
+}
+
+export interface StrategyResearch {
+  verdict: string; // GO | NO-GO | …
+  /** "2/7" or a list of check names */
+  checks?: string | string[];
+  trades?: number;
+  profit_factor?: number;
+  t_stat?: number;
+  summary?: string;
+  note?: string;
+  [key: string]: unknown;
 }
 
 export interface StrategiesResponse {
@@ -308,10 +324,151 @@ export interface TradeRecord {
   entry_ts?: number;
   exit_ts?: number;
   regime: string;
+  /** Bridge ≥ 2.15 (tasks/ui_live_trading_contract.md §2) — all optional for older bridges */
+  pnl_bps?: number;
+  mae_bps?: number;
+  mfe_bps?: number;
+  slippage_bps?: number;
+  order_type?: string;
+  /** SL / TP / signal / time / rebalance / trend_exit / close */
+  exit_reason?: string;
+  hold_sec?: number;
+  equity_after?: number;
+  trigger?: string;
+  /** pnl / margin */
+  roe_pct?: number;
+  leverage?: number;
+  trade_id?: string;
+  order_id?: string;
+  signal_strength?: number;
+  /** spread at entry, bps */
+  spread_bps?: number;
 }
 
 export interface TradesResponse {
   trades?: TradeRecord[];
+}
+
+/**
+ * WS `trading` → `positions` row (bridge 2.14 sends the first block; ≥ 2.15 adds the rest —
+ * contract §2). Everything past the 2.14 block is optional so an older bridge still renders.
+ */
+export interface PositionData {
+  symbol: string;
+  side: string;
+  size: number;
+  entry_price: number;
+  mark_price: number;
+  unrealized_pnl: number;
+  realized_pnl?: number;
+  leverage?: number;
+  liquidation_price?: number;
+  strategy: string | null;
+  notional?: number;
+  pnl_pct?: number;
+  /** 2.14: position open time (epoch s) */
+  timestamp?: number;
+  /** ≥ 2.15 */
+  roe_pct?: number;
+  margin?: number;
+  stop_loss?: number;
+  take_profit?: number;
+  sl_distance_pct?: number | null;
+  tp_distance_pct?: number | null;
+  opened_ts?: number;
+  hold_sec?: number;
+  mae_bps?: number;
+  mfe_bps?: number;
+  entry_fee_rate?: number;
+  fees_paid?: number;
+  funding_paid?: number;
+  order_id?: string;
+  trigger?: string;
+  regime_at_entry?: string;
+  spread_at_entry_bps?: number;
+  order_type?: string;
+  atr_at_entry?: number;
+  expected_cost_bps?: number;
+}
+
+/** GET /api/positions (bridge ≥ 2.15) — same rich rows as the WS broadcast. */
+export interface PositionsResponse {
+  positions?: PositionData[];
+}
+
+/** GET /api/orders — live protective orders of the paper book (SL/TP per position). */
+export interface ProtectiveOrder {
+  symbol: string;
+  /** STOP | TAKE_PROFIT | LIMIT … */
+  type: string;
+  side: string;
+  price: number;
+  size: number;
+  strategy?: string | null;
+  position_id?: string;
+  /** Signed distance from mark, as a ratio (−0.012 = 1.2 % below) */
+  distance_pct?: number | null;
+}
+
+export interface OrdersResponse {
+  orders?: ProtectiveOrder[];
+}
+
+/** GET /api/account (contract §3) — same fields ride on the WS `risk_update`. */
+export interface AccountResponse {
+  mode: string;
+  equity: number;
+  initial_capital: number;
+  realized_pnl: number;
+  unrealized_pnl: number;
+  position_value: number;
+  margin_used: number;
+  available: number;
+  margin_ratio: number;
+  exposure_pct: number;
+  leverage_effective: number;
+  open_positions: number;
+  fees_today: number;
+  daily_pnl: number;
+  weekly_pnl: number;
+  peak_equity: number;
+  drawdown_pct: number;
+  max_leverage?: number;
+  max_total_exposure_pct?: number;
+  /** false → engine not running: only mode / initial_capital are present */
+  engine?: boolean;
+}
+
+/**
+ * GET /api/market/{symbol} (contract §4). Numeric fields are null while the engine has no
+ * snapshot for the symbol; `engine: false` → nothing but the symbol is present.
+ */
+export interface MarketInfoResponse {
+  symbol?: string;
+  engine?: boolean;
+  price?: number | null;
+  mark_price?: number | null;
+  index_price?: number | null;
+  funding_rate?: number | null;
+  /** seconds to the next 8 h UTC funding mark */
+  funding_countdown_sec?: number | null;
+  change_24h_pct?: number | null;
+  high_24h?: number | null;
+  low_24h?: number | null;
+  volume_24h_usd?: number | null;
+  volume_24h_base?: number | null;
+  /** minutes of 1m bars behind the 24h block (< 1440 right after a start) */
+  window_min?: number;
+  open_interest?: number | null;
+  spread_bps?: number | null;
+  best_bid?: number | null;
+  best_ask?: number | null;
+  regime?: string;
+  /** epoch seconds */
+  regime_since?: number;
+  regime_candidate?: string;
+  regime_timeframe_min?: number;
+  data_age_sec?: number;
 }
 
 export interface DatasetInfo {
@@ -491,6 +648,14 @@ export const api = {
   trend: () => request<TrendResponse>("/api/trend"),
   risk: () => request<RiskResponse>("/api/risk"),
   trades: (limit = 100) => request<TradesResponse>(`/api/trades?limit=${limit}`),
+  /** Bridge ≥ 2.15 — rich open positions (404 on older bridges; the WS broadcast carries the same rows). */
+  positions: () => request<PositionsResponse>("/api/positions"),
+  /** Bridge ≥ 2.15 — live SL/TP orders of the paper book (404 on older bridges). */
+  orders: () => request<OrdersResponse>("/api/orders"),
+  /** Bridge ≥ 2.15 — account overview (404 on older bridges). */
+  account: () => request<AccountResponse>("/api/account"),
+  /** Bridge ≥ 2.15 — market header data for one symbol (404 on older bridges). */
+  market: (symbol: string) => request<MarketInfoResponse>(`/api/market/${encodeURIComponent(symbol)}`),
   dataCatalog: () => request<DataCatalogResponse>("/api/data/catalog"),
   backtestRun: (body: BacktestRequest) =>
     authed<BacktestResult>("/api/backtest/run", {

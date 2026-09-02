@@ -194,14 +194,14 @@ export function BacktestPage() {
                   <AreaChart data={curveData}>
                     <defs>
                       <linearGradient id="btGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={isProfitable ? "#00D4AA" : "#FF4757"} stopOpacity={0.3} />
-                        <stop offset="95%" stopColor={isProfitable ? "#00D4AA" : "#FF4757"} stopOpacity={0} />
+                        <stop offset="5%" stopColor={isProfitable ? "#00D4AA" : "#F43F5E"} stopOpacity={0.3} />
+                        <stop offset="95%" stopColor={isProfitable ? "#00D4AA" : "#F43F5E"} stopOpacity={0} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" />
                     <XAxis dataKey="idx" hide />
                     <YAxis
-                      tick={{ fill: "#8898AA", fontSize: 10, fontFamily: "JetBrains Mono" }}
+                      tick={{ fill: "rgba(255,255,255,0.6)", fontSize: 10, fontFamily: "JetBrains Mono" }}
                       axisLine={false}
                       tickLine={false}
                       width={55}
@@ -209,13 +209,13 @@ export function BacktestPage() {
                       domain={["dataMin - 5", "dataMax + 5"]}
                     />
                     <Tooltip
-                      contentStyle={{ background: "#0B1120", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 }}
+                      contentStyle={{ background: "#171717", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6, fontSize: 12 }}
                       formatter={(v: unknown) => [`$${Number(v).toFixed(2)}`, "Equity"]}
                     />
                     <Area
                       type="monotone"
                       dataKey="equity"
-                      stroke={isProfitable ? "#00D4AA" : "#FF4757"}
+                      stroke={isProfitable ? "#00D4AA" : "#F43F5E"}
                       fill="url(#btGrad)"
                       strokeWidth={2}
                       dot={false}

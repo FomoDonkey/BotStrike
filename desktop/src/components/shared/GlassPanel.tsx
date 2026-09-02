@@ -2,18 +2,21 @@ import { cn } from "@/lib/utils";
 import { motion, type HTMLMotionProps } from "framer-motion";
 
 interface GlassPanelProps extends HTMLMotionProps<"div"> {
+  /** Highlight the panel with the accent hairline (active/alert state). */
   glow?: boolean;
   noBorder?: boolean;
 }
 
+/**
+ * Hairline panel (v2.15 visual system): solid surface, 1 px border, no blur, no shadow.
+ * The name is kept so the rest of the app did not need to change.
+ */
 export function GlassPanel({ className, glow, noBorder, children, ...props }: GlassPanelProps) {
   return (
     <motion.div
       className={cn(
-        "rounded-2xl bg-bg-surface/70 backdrop-blur-xl",
-        !noBorder && "border border-white/5",
-        glow && "shadow-[0_0_0_1px_rgba(0,212,170,0.05),0_0_20px_rgba(0,212,170,0.05)]",
-        !glow && "shadow-[0_4px_24px_rgba(0,0,0,0.4)]",
+        "rounded-lg bg-bg-surface",
+        !noBorder && (glow ? "border border-accent/50" : "border border-hairline"),
         className
       )}
       {...props}

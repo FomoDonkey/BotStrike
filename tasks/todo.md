@@ -23,6 +23,13 @@ Edgar: "estrategia de divergencias con algo que sirva para verificarlas y puntos
 - [x] Tests `tests/test_divergence_and_terminal.py` (9) + expectativas actualizadas (grupo `divergence`, orden de
   estrategias, versión 2.15.0). Research script sin caracteres no-cp1252.
 - [x] Docs: `deploy/README.md` sección v2.15, `tasks/lessons.md`.
+- [x] Bug real visto en el CT antes del deploy (817edf0): 348 `RuntimeError: Set changed size during iteration` en
+  `ChannelManager.broadcast` (04:28Z) → un cliente se desconectaba mientras otro `send_text` esperaba y se perdía el
+  tick de mercado para todos. Ahora itera sobre una copia; test de regresión. Log `telegram_sent` para poder verificar
+  en el journal si los fills salen (antes solo se registraban errores).
+- [x] Pre-check CT (solo lectura): régimen 1-2 cambios/h desde el reinicio de 11:09Z (antes 4,6/h/símbolo) ✔;
+  trend run 11:09Z ok (3 posiciones, `last_run_late=true`); 4 `telegram_send_error` a las 01:12Z (blip de red, con
+  reintentos); 0 mensajes Telegram registrados desde 11:00Z (sin log de éxito hasta 817edf0).
 ### Frontend (agente, `desktop/src`) — EN CURSO
 - [ ] Terminal Live Trading estilo Strike: cabecera de mercado (mark/index/funding+countdown/24 h), chart con
   overlays (pivotes/SL/TP/trigger de la señal), tabla de posiciones (Size/Entry/Mark/Liq/Margin/PNL(ROE)/

@@ -156,7 +156,7 @@ export function TrendDailyPanel() {
                   <div className="w-full h-1.5 rounded-full bg-white/5 overflow-hidden">
                     <div
                       className="h-full rounded-full"
-                      style={{ width: `${Math.min(100, (Math.abs(w) / barScale) * 100)}%`, backgroundColor: w >= 0 ? MODEL_COLOR : "#FF4757" }}
+                      style={{ width: `${Math.min(100, (Math.abs(w) / barScale) * 100)}%`, backgroundColor: w >= 0 ? MODEL_COLOR : "#F43F5E" }}
                     />
                   </div>
                 </div>
@@ -216,11 +216,11 @@ export function TrendDailyPanel() {
           <ResponsiveContainer width="100%" height={200}>
             <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-              <XAxis dataKey="date" tick={{ fill: "#8898AA", fontSize: 10, fontFamily: "JetBrains Mono" }} axisLine={false} tickLine={false} minTickGap={40} />
-              <YAxis tick={{ fill: "#8898AA", fontSize: 10, fontFamily: "JetBrains Mono" }} axisLine={false} tickLine={false} width={48} tickFormatter={(v) => `${Number(v).toFixed(1)}%`} />
+              <XAxis dataKey="date" tick={{ fill: "rgba(255,255,255,0.6)", fontSize: 10, fontFamily: "JetBrains Mono" }} axisLine={false} tickLine={false} minTickGap={40} />
+              <YAxis tick={{ fill: "rgba(255,255,255,0.6)", fontSize: 10, fontFamily: "JetBrains Mono" }} axisLine={false} tickLine={false} width={48} tickFormatter={(v) => `${Number(v).toFixed(1)}%`} />
               <Tooltip
-                contentStyle={{ background: "#0B1120", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12, fontFamily: "JetBrains Mono" }}
-                labelStyle={{ color: "#8898AA" }}
+                contentStyle={{ background: "#171717", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6, fontSize: 12, fontFamily: "JetBrains Mono" }}
+                labelStyle={{ color: "rgba(255,255,255,0.6)" }}
                 formatter={(v: unknown, name: unknown) => [`${Number(v).toFixed(2)}%`, String(name)]}
               />
               <Legend wrapperStyle={{ fontSize: 11 }} />

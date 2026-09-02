@@ -4,9 +4,11 @@ import { GlassPanel } from "@/components/shared/GlassPanel";
 import { MetricCard } from "@/components/shared/MetricCard";
 import { useTradingStore } from "@/stores/tradingStore";
 import { usePolling } from "@/hooks/usePolling";
-import { formatUSD, formatPct, formatDuration, pnlBps, cn } from "@/lib/utils";
+import { formatUSD, formatPct, cn } from "@/lib/utils";
 import { STRATEGY_COLORS, STRATEGY_LABELS } from "@/lib/constants";
 import { api, type PerformanceResponse, type TradeRecord } from "@/lib/api";
+import { TradeHistoryTable } from "@/pages/trading/TradeHistoryTable";
+import { isClosedTrade } from "@/pages/trading/useTradeHistory";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -15,27 +17,6 @@ import { TrendingUp, Target, BarChart3, DollarSign, Timer, Percent } from "lucid
 const POLL_MS = 30_000;
 const TRADE_FETCH_LIMIT = 400; // ENTRY + EXIT rows → ~200 closed trades
 const HISTORY_ROWS = 100;
-
-/**
- * /api/trades returns one row per FILL (ENTRY and EXIT). A closed trade is the EXIT row: it
- * carries the round-trip PnL, fee and duration. ENTRY rows always have pnl 0 and used to be
- * listed as trades ("48 rows" for 24 trades).
- */
-function isClosedTrade(t: TradeRecord): boolean {
-  if (t.trade_type) return t.trade_type === "EXIT";
-  return !!t.exit_time && (t.pnl || 0) !== 0; // legacy rows without trade_type
-}
-
-/** Position side from the fill that closed it: selling closes a LONG, buying closes a SHORT. */
-function positionSide(t: TradeRecord): "LONG" | "SHORT" {
-  if (t.trade_type === "EXIT") return t.side === "SELL" ? "LONG" : "SHORT";
-  return t.side === "BUY" ? "LONG" : "SHORT";
-}
-
-function fmtDate(iso: string | undefined): string {
-  if (!iso) return "---";
-  return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-}
 
 function Chip({ label, value, tone }: { label: string; value: string; tone?: "profit" | "loss" | "muted" }) {
   return (
@@ -105,7 +86,7 @@ export function PerformancePage() {
     }
     return Object.entries(map).map(([name, d]) => ({
       name: STRATEGY_LABELS[name] || name,
-      color: STRATEGY_COLORS[name] || "#4A5568",
+      color: STRATEGY_COLORS[name] || "#6B7280",
       ...d,
       wr: d.trades > 0 ? d.wins / d.trades : 0,
     }));
@@ -174,22 +155,22 @@ export function PerformancePage() {
                 scale="time"
                 ticks={xTicks}
                 minTickGap={80}
-                tick={{ fill: "#8898AA", fontSize: 10, fontFamily: "JetBrains Mono" }}
+                tick={{ fill: "rgba(255,255,255,0.6)", fontSize: 10, fontFamily: "JetBrains Mono" }}
                 axisLine={false}
                 tickLine={false}
                 tickFormatter={(v) => new Date(v).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
               />
               <YAxis
                 domain={["dataMin - 5", "dataMax + 5"]}
-                tick={{ fill: "#8898AA", fontSize: 10, fontFamily: "JetBrains Mono" }}
+                tick={{ fill: "rgba(255,255,255,0.6)", fontSize: 10, fontFamily: "JetBrains Mono" }}
                 axisLine={false}
                 tickLine={false}
                 width={60}
                 tickFormatter={(v) => `$${Number(v).toFixed(2)}`}
               />
               <Tooltip
-                contentStyle={{ background: "#0B1120", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12, fontFamily: "JetBrains Mono" }}
-                labelStyle={{ color: "#8898AA" }}
+                contentStyle={{ background: "#171717", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6, fontSize: 12, fontFamily: "JetBrains Mono" }}
+                labelStyle={{ color: "rgba(255,255,255,0.6)" }}
                 labelFormatter={(v) => hasTimeAxis
                   ? new Date(Number(v)).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
                   : String(v)}
@@ -232,71 +213,15 @@ export function PerformancePage() {
           )}
         </GlassPanel>
 
-        {/* Trade History — closed trades only, one row per round-trip */}
-        <GlassPanel className="lg:col-span-2 p-4 min-w-0">
-          <div className="flex items-baseline justify-between mb-3 gap-2">
+        {/* Trade History — closed trades only, one row per round-trip (shared terminal rows) */}
+        <GlassPanel className="lg:col-span-2 p-0 min-w-0 flex flex-col max-h-[480px]">
+          <div className="flex items-baseline justify-between px-4 h-10 shrink-0 border-b border-hairline gap-2">
             <h3 className="text-xs text-text-secondary uppercase tracking-wider">Trade History</h3>
             <span className="text-[11px] font-mono text-text-muted">
               {totalTrades} closed{closedTrades.length > HISTORY_ROWS ? ` · showing ${HISTORY_ROWS}` : ""}
             </span>
           </div>
-          {closedTrades.length === 0 ? (
-            <p className="text-text-muted text-sm">{loading ? "Loading..." : "No closed trades recorded"}</p>
-          ) : (
-            <div className="overflow-x-auto max-h-80 overflow-y-auto -mx-1 px-1">
-              <table className="w-full min-w-[880px] text-xs">
-                <thead className="sticky top-0 bg-bg-surface z-10">
-                  <tr className="text-text-muted border-b border-white/5">
-                    <th className="text-left py-1 font-normal">Open</th>
-                    <th className="text-left font-normal">Close</th>
-                    <th className="text-left font-normal">Symbol</th>
-                    <th className="text-left font-normal">Side</th>
-                    <th className="text-right font-normal">Entry</th>
-                    <th className="text-right font-normal">Exit</th>
-                    <th className="text-right font-normal">PnL</th>
-                    <th className="text-right font-normal">Fee</th>
-                    <th className="text-right font-normal">bps</th>
-                    <th className="text-right font-normal">Hold</th>
-                    <th className="text-left pl-2 font-normal">Strategy</th>
-                    <th className="text-left font-normal">Regime</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {closedTrades.slice(0, HISTORY_ROWS).map((t) => {
-                    const side = positionSide(t);
-                    const bps = pnlBps(t.pnl || 0, (t.entry_price || 0) * (t.quantity || 0));
-                    const pnlPos = (t.pnl || 0) >= 0;
-                    return (
-                      <tr key={t.id} className="border-b border-white/[0.02] hover:bg-white/[0.02]">
-                        <td className="py-1 text-text-muted whitespace-nowrap">{fmtDate(t.entry_time)}</td>
-                        <td className="py-1 text-text-muted whitespace-nowrap">{fmtDate(t.exit_time)}</td>
-                        <td className="font-mono">{t.symbol}</td>
-                        <td className={side === "LONG" ? "text-profit" : "text-loss"}>{side}</td>
-                        <td className="text-right font-mono">${(t.entry_price || 0).toFixed(2)}</td>
-                        <td className="text-right font-mono">${(t.exit_price || 0).toFixed(2)}</td>
-                        <td className={cn("text-right font-mono", pnlPos ? "text-profit" : "text-loss")}>
-                          {formatUSD(t.pnl || 0)}
-                        </td>
-                        <td className="text-right font-mono text-text-muted">{formatUSD(t.fee || 0)}</td>
-                        <td className={cn("text-right font-mono", bps === null ? "text-text-muted" : pnlPos ? "text-profit" : "text-loss")}>
-                          {bps === null ? "---" : bps.toFixed(1)}
-                        </td>
-                        <td className="text-right font-mono text-text-muted whitespace-nowrap">
-                          {t.duration_sec > 0 ? formatDuration(t.duration_sec) : "---"}
-                        </td>
-                        <td className="pl-2">
-                          <span className="text-[10px]" style={{ color: STRATEGY_COLORS[t.strategy] || "#4A5568" }}>
-                            {STRATEGY_LABELS[t.strategy] || t.strategy || "---"}
-                          </span>
-                        </td>
-                        <td className="text-text-muted text-[10px]">{t.regime || "---"}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <TradeHistoryTable trades={closedTrades} loading={loading} limit={HISTORY_ROWS} />
         </GlassPanel>
       </div>
     </motion.div>

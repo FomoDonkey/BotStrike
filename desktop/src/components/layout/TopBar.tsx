@@ -84,7 +84,7 @@ export function TopBar({ onMenu }: TopBarProps) {
       : `Bridge online (${bridgeUrl}) · engine stopped / no market feed`;
 
   return (
-    <header className="flex items-center gap-3 h-11 px-3 sm:px-4 bg-bg-surface/30 backdrop-blur-xl border-b border-white/5 text-xs select-none">
+    <header className="flex items-center gap-3 h-11 px-3 sm:px-4 bg-bg-surface border-b border-hairline text-xs select-none">
       {/* Hamburger (< lg) */}
       <button
         type="button"
