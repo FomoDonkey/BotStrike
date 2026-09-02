@@ -977,3 +977,31 @@
   closure, p.ej. acumuladores dentro de `.map`) son ERROR en `recommended`.
 - **LESSON: resincronizar inputs con `key` (remontar) en vez de effects que hacen setState; "ahora" vía
   `useSyncExternalStore` (`useNow`); acumular con `for` + `push` en vez de `.map` con `let` externo.**
+
+## v2.15 — divergencias + terminal (2026-09-02)
+
+### Un fixture sintético con `np.linspace` encadenado no tiene pivotes estrictos
+- Cada `linspace(a, b, n)` INCLUYE `a`, así que al encadenar tramos el punto de giro aparece dos veces
+  (mismo precio en dos barras) y un pivote definido como "estrictamente menor que k barras a cada lado"
+  nunca se confirma. El test decía "no hay candidata" y el código era correcto.
+- **LESSON: en fixtures de series, generar los tramos con `linspace(a, b, n+1)[1:]` y comprobar el fixture
+  (índices/valores de los pivotes) ANTES de culpar al detector. Y diseñar el test como el motor funciona:
+  la candidata nace en la barra de confirmación y el trigger se evalúa en la SIGUIENTE barra cerrada, así que
+  el test necesita dos evaluaciones, no una.**
+
+### Mutación primero, cobertura después
+- Con 7 tests "verdes" dos guardas críticas (ruptura de estructura obligatoria, caducidad de la ventana del
+  trigger) sobrevivían a la mutación: los tests solo cubrían el camino feliz. Dos tests más (barra que no
+  rompe → sin señal; ventana agotada → candidata descartada y ruptura tardía ignorada) y 6/6 mutantes mueren.
+- **LESSON: para cada `if` que impide una entrada, un test en el que ese `if` sea lo único que la impide.**
+
+### Salida de scripts de research redirigida a archivo en Windows
+- `print("→")` con stdout redirigido usa cp1252 y revienta al final del script (se perdió la línea del
+  veredicto, no las tablas). Igual con `§`.
+- **LESSON: en scripts CLI, solo ASCII en los prints (o `PYTHONIOENCODING=utf-8` en el runner).**
+
+### El veredicto honesto es parte del entregable
+- La estrategia de divergencias pierde en 1h (PF 0.77, t −2.15, 14 variantes) y es neutra en 4h. Se
+  entrega COMPLETA (motor, config, UI, research) pero DESACTIVADA, con el veredicto visible junto al switch.
+- **LESSON: "agregar una estrategia" = implementarla + medirla + decir la verdad sobre ella. Encenderla es una
+  decisión de research (GO/NO-GO), nunca un clic por defecto.**

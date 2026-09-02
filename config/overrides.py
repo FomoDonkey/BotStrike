@@ -105,6 +105,9 @@ GROUPS: List[Dict[str, Any]] = [
                 "will kill it again if its statistics stay negative."),
         _t("allocation_fibonacci_retracement", "Fibonacci allocation", "percent", min=0, max=1, step=0.05,
            help="0 = disabled. No published evidence (research §2.7)."),
+        _t("allocation_divergence", "Divergence allocation", "percent", min=0, max=1, step=0.05,
+           help="0 = disabled. Research 2026-09-02 (1,102 trades, 1h): NO edge - PF 0.77, t-stat -2.15. "
+                "Enable only to study it in paper; the edge monitor will kill it if it keeps losing."),
         _t("regime_timeframe_min", "Regime timeframe", "int", min=1, max=240, step=1, unit="min",
            help="Bar size used to classify the market regime (ADX/momentum/vol). 1-minute bars flip "
                 "every few minutes; 15 minutes matches the ~30 min holding time of the intraday strategies."),
@@ -131,6 +134,31 @@ GROUPS: List[Dict[str, Any]] = [
         _t("trend_liq_enter_usd", "Liquidity to enter", "number", min=0, max=1e10, step=100_000, unit="$/day"),
         _t("trend_liq_exit_usd", "Liquidity to stay", "number", min=0, max=1e10, step=100_000, unit="$/day"),
         _t("trend_pool", "Candidate pool", "list", help="Binance spot symbols, comma-separated."),
+    ]},
+    {"id": "divergence", "label": "Divergence", "fields": [
+        _t("div_timeframe_min", "Bar timeframe", "select", options=[
+            {"value": "15", "label": "15 min"}, {"value": "30", "label": "30 min"}, {"value": "60", "label": "1 h"},
+            {"value": "120", "label": "2 h"}, {"value": "240", "label": "4 h"}], restart=True),
+        _t("div_rsi_period", "RSI period", "int", min=5, max=50, step=1),
+        _t("div_pivot_k", "Pivot confirmation bars", "int", min=1, max=10, step=1,
+           help="Bars on each side a pivot needs; the divergence exists only after them (no look-ahead)."),
+        _t("div_rsi_os", "Bullish: first pivot RSI below", "number", min=10, max=60, step=1),
+        _t("div_rsi_ob", "Bearish: first pivot RSI above", "number", min=40, max=90, step=1),
+        _t("div_min_gap_bars", "Min bars between pivots", "int", min=2, max=100, step=1),
+        _t("div_max_gap_bars", "Max bars between pivots", "int", min=5, max=300, step=1),
+        _t("div_min_rsi_gap", "Min RSI gap", "number", min=0, max=30, step=0.5, unit="pts"),
+        _t("div_trigger_window", "Trigger window", "int", min=1, max=30, step=1, unit="bars",
+           help="Bars after confirmation in which the structure break (close beyond the pivot bar) must happen."),
+        _t("div_require_macd", "Require MACD histogram confirmation", "bool"),
+        _t("div_require_volume", "Require volume >= 20-bar average", "bool"),
+        _t("div_atr_buffer", "Stop buffer (x ATR)", "number", min=0, max=3, step=0.1),
+        _t("div_rr", "Take-profit (R multiple)", "number", min=0.5, max=6, step=0.25),
+        _t("div_max_hold", "Time stop", "int", min=2, max=500, step=1, unit="bars"),
+        _t("div_hidden", "Hidden (continuation) divergences", "bool"),
+        _t("div_with_trend", "Only in the EMA200 direction", "bool",
+           help="Regular divergences taken as pullbacks in the direction of the 200-bar EMA. Research: 13 trades "
+                "in 4.7 years on 4h — not enough evidence either way."),
+        _t("div_cooldown_min", "Cooldown after an exit", "int", min=0, max=1440, step=5, unit="min"),
     ]},
     {"id": "edge", "label": "Edge monitor", "fields": [
         _t("edge_monitor_enabled", "Auto-kill on negative edge", "bool"),
@@ -243,6 +271,8 @@ def coerce(spec: FieldSpec, value: Any, label: str) -> Any:
             allowed = [o["value"] for o in spec.options]
             if v not in allowed:
                 raise ValueError(f"must be one of {allowed}")
+            if spec.path.endswith("_min"):
+                v = int(v)                      # numeric selects are stored as int
         elif t == "list":
             if isinstance(value, (list, tuple)):
                 items = [str(x).strip() for x in value]

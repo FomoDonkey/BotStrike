@@ -79,3 +79,31 @@ el ufw y que el PC esté en la LAN o en la tailnet.
   pct exec 104 -- curl -s localhost:9420/api/risk        # peak_equity, daily/weekly limits
   pct exec 104 -- ls -la /opt/botstrike/app/data/        # config_overrides.json, trend_daily_state.json
   ```
+
+## v2.15 — terminal de trading (datos completos por trade) + estrategia DIVERGENCE (desactivada)
+
+- **Endpoints nuevos** (todos GET, sin token): `/api/account` (Account Value, Available, Position
+  Value, Unrealized PNL, Margin Ratio, Maintenance Margin, fees hoy, PnL día/semana, escalera de
+  riesgo), `/api/positions` (por posición: margen, **liquidación estimada** = entrada × (1 − 1/lev +
+  0,5 %), ROE %, distancias a SL/TP, MAE/MFE en bps, tiempo abierto, comisiones, trigger, régimen y
+  spread de entrada), `/api/orders` (SL/TP paper como órdenes protectoras con distancia al mark),
+  `/api/market/{símbolo}` (mark/index/funding + **cuenta atrás del funding**, spread, bid/ask, cambio/
+  máx/mín/volumen 24 h, régimen). `/api/trades` añade `trade_id, pnl_bps, roe_pct, leverage, mae_bps,
+  mfe_bps, slippage_bps, order_type, exit_reason, hold_sec, equity_after, signal_strength, spread_bps`.
+  El broadcast `positions` del WebSocket lleva las mismas filas ricas; `risk_update` incluye `account`.
+- **DIVERGENCE** (`strategies/divergence.py`): divergencias regulares/ocultas de RSI14 entre pivotes
+  confirmados (k=3, sin repintar), verificadas por zona extrema (35/65) y separación mínima de RSI,
+  con entrada SOLO al cierre que rompe el máximo/mínimo de la barra del segundo pivote (ventana de
+  6 barras) + histograma MACD a favor; stop = pivote ∓ 0,5 ATR, objetivo 2R, time stop 24 barras.
+  Se siembra desde klines 4h de Binance al arrancar (solo si tiene asignación > 0).
+  **Research (`tasks/research_divergence_2026-09-02.md`): NO-GO 2/7 en 1h (PF 0,77, t −2,15, 1.102
+  trades, 14 variantes) y neutra en 4h (PF 1,00). Se despliega con `allocation_divergence = 0`**;
+  la pestaña Strategies muestra el veredicto y la lista GO/NO-GO junto al interruptor.
+- Config: grupo `divergence` en `/api/config/schema` (timeframe requiere restart; el resto en caliente).
+- Comprobación rápida tras un deploy:
+  ```
+  pct exec 104 -- curl -s localhost:9420/api/health              # version 2.15.0
+  pct exec 104 -- curl -s localhost:9420/api/account              # equity, available, margin_ratio
+  pct exec 104 -- curl -s localhost:9420/api/market/BTC-USD       # funding_countdown_sec, high_24h
+  pct exec 104 -- curl -s localhost:9420/api/strategies           # DIVERGENCE enabled=false, research NO-GO
+  ```

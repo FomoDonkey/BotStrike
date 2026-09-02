@@ -36,22 +36,27 @@ REGIME_MULTIPLIER: Dict[MarketRegime, Dict[StrategyType, float]] = {
     MarketRegime.RANGING: {
         StrategyType.MEAN_REVERSION: 1.00,
         StrategyType.FIBONACCI_RETRACEMENT: 0.50,
+        StrategyType.DIVERGENCE: 1.00,
     },
     MarketRegime.TRENDING_UP: {
         StrategyType.MEAN_REVERSION: 0.00,
         StrategyType.FIBONACCI_RETRACEMENT: 1.00,
+        StrategyType.DIVERGENCE: 1.00,
     },
     MarketRegime.TRENDING_DOWN: {
         StrategyType.MEAN_REVERSION: 0.00,
         StrategyType.FIBONACCI_RETRACEMENT: 1.00,
+        StrategyType.DIVERGENCE: 1.00,
     },
     MarketRegime.BREAKOUT: {
         StrategyType.MEAN_REVERSION: 0.00,
         StrategyType.FIBONACCI_RETRACEMENT: 0.00,
+        StrategyType.DIVERGENCE: 0.00,
     },
     MarketRegime.UNKNOWN: {
         StrategyType.MEAN_REVERSION: 0.00,
         StrategyType.FIBONACCI_RETRACEMENT: 0.00,
+        StrategyType.DIVERGENCE: 0.00,
     },
 }
 
@@ -66,6 +71,7 @@ ALLOCATION_FIELD: Dict[StrategyType, str] = {
     StrategyType.MARKET_MAKING: "allocation_market_making",
     StrategyType.ORDER_FLOW_MOMENTUM: "allocation_order_flow_momentum",
     StrategyType.TREND_DAILY: "allocation_trend_daily",
+    StrategyType.DIVERGENCE: "allocation_divergence",
 }
 
 

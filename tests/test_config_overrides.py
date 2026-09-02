@@ -19,7 +19,7 @@ def test_every_schema_path_exists_on_the_dataclasses():
     s = Settings()
     sch = ov.schema(s.symbol_names)
     assert [g["id"] for g in sch["groups"]] == [
-        "capital", "strategies", "trend_daily", "edge", "execution", "notifications", "symbols"]
+        "capital", "strategies", "trend_daily", "divergence", "edge", "execution", "notifications", "symbols"]
     for g in sch["groups"]:
         for f in g["fields"]:
             path = f["path"]

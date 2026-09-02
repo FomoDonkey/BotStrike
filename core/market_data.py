@@ -416,6 +416,22 @@ class MarketDataCollector:
         """Obtiene DataFrame OHLCV con indicadores para un símbolo."""
         return self._dataframes.get(symbol, pd.DataFrame())
 
+    def get_24h_stats(self, symbol: str) -> Dict:
+        """24h change/high/low/volume from the last 1440 one-minute bars in memory
+        (the seed covers ≥ 16 h at start; the window grows to a full day live)."""
+        df = self._dataframes.get(symbol)
+        if df is None or df.empty or "close" not in df.columns:
+            return {"change_24h_pct": None, "high_24h": None, "low_24h": None, "volume_24h_base": None,
+                    "volume_24h_usd": None, "window_min": 0}
+        w = df.tail(1440)
+        first = float(w["open"].iloc[0]) if "open" in w.columns else float(w["close"].iloc[0])
+        last = float(w["close"].iloc[-1])
+        vol_base = float(w["volume"].sum()) if "volume" in w.columns else 0.0
+        vwap = float((w["close"] * w["volume"]).sum() / vol_base) if vol_base > 0 else last
+        return {"change_24h_pct": (last / first - 1.0) if first > 0 else None,
+                "high_24h": float(w["high"].max()), "low_24h": float(w["low"].min()),
+                "volume_24h_base": vol_base, "volume_24h_usd": vol_base * vwap, "window_min": int(len(w))}
+
     def get_snapshot(self, symbol: str) -> Optional[MarketSnapshot]:
         """Obtiene el último snapshot del mercado."""
         return self._snapshots.get(symbol)

@@ -44,7 +44,7 @@ from config import overrides as cfg_overrides
 from core.types import MarketRegime, StrategyType, Side
 
 # Single source of truth for the bridge version (reported by /api/health and the OpenAPI schema).
-BRIDGE_VERSION = "2.14.0"
+BRIDGE_VERSION = "2.15.0"
 
 # Auth token for mutating endpoints (live start / live stop).
 # Server deployments set BOTSTRIKE_AUTH_TOKEN in .env so the desktop can be configured with it;
@@ -659,17 +659,7 @@ async def _broadcast_symbol_state(engine, symbol: str):
 
     # Positions (paper mode and live mode)
     if engine.paper_sim:
-        positions = []
-        for strat in StrategyType:
-            pos = engine.paper_sim.get_position(symbol, strat)
-            if pos:
-                positions.append(serialize_position(pos))
-        # TREND_DAILY book positions on this symbol (held for days, separate book)
-        trend = getattr(engine, "trend_engine", None)
-        if trend is not None:
-            for pos in trend.positions_as_positions():
-                if pos.symbol == symbol:
-                    positions.append(serialize_position(pos))
+        positions = [p for p in _paper_position_rows(engine) if p["symbol"] == symbol]
         await state.channels.broadcast("trading", {
             "type": "positions",
             "symbol": symbol,
@@ -716,6 +706,8 @@ async def _broadcast_symbol_state(engine, symbol: str):
             risk_msg.update({k: snap[k] for k in (
                 "peak_equity", "daily_pnl", "daily_limit", "weekly_pnl", "weekly_limit",
                 "drawdown_halted", "compounding_enabled", "equity_basis") if k in snap})
+            acct = _account_overview(engine)
+            risk_msg["account"] = acct
         except Exception as e:
             logger.debug("risk_snapshot_error", error=str(e))
     await state.channels.broadcast("risk", risk_msg)
@@ -992,6 +984,53 @@ async def metrics_broadcast_loop():
 _trend_symbols_sent: Set[str] = set()
 
 
+def _leverage_of(engine):
+    def _f(symbol: str) -> int:
+        try:
+            return int(engine.settings.get_symbol_config(symbol).leverage)
+        except Exception:
+            return 1
+    return _f
+
+
+def _trend_position_rows(engine) -> list:
+    trend = getattr(engine, "trend_engine", None)
+    rows = []
+    if trend is None:
+        return rows
+    for p in trend.status().get("positions", []):
+        mark = p["mark_price"] or p["entry_price"]
+        pos_st = trend.state.positions.get(p["symbol"])
+        rows.append({
+            "symbol": p["ui_symbol"], "side": "BUY", "size": p["size"], "entry_price": p["entry_price"],
+            "mark_price": mark, "notional": p["notional"], "unrealized_pnl": p["unrealized_pnl"],
+            "pnl_pct": (mark / p["entry_price"] - 1.0) if p["entry_price"] else 0.0,
+            "roe_pct": (mark / p["entry_price"] - 1.0) if p["entry_price"] else 0.0,
+            "leverage": 1, "margin": p["notional"], "liquidation_price": 0.0,
+            "stop_loss": 0.0, "take_profit": 0.0, "sl_distance_pct": None, "tp_distance_pct": None,
+            "strategy": StrategyType.TREND_DAILY.value,
+            "opened_ts": getattr(pos_st, "opened_ts", 0.0), "hold_sec": max(0.0, time.time() - getattr(pos_st, "opened_ts", time.time())),
+            "mae_bps": None, "mfe_bps": None, "entry_fee_rate": getattr(pos_st, "entry_fee_rate", 0.0),
+            "fees_paid": p["entry_price"] * p["size"] * getattr(pos_st, "entry_fee_rate", 0.0), "funding_paid": 0.0,
+            "order_id": "", "order_type": "MARKET", "trigger": "donchian_ensemble", "weight": p["weight"],
+            "timestamp": getattr(pos_st, "opened_ts", 0.0),
+        })
+    return rows
+
+
+def _paper_position_rows(engine) -> list:
+    """Intraday paper positions (rich) + trend book positions, one list."""
+    rows = []
+    sim = getattr(engine, "paper_sim", None)
+    if sim is not None and hasattr(sim, "get_position_details"):
+        try:
+            rows += sim.get_position_details(leverage_of=_leverage_of(engine))
+        except Exception as e:
+            logger.debug("position_details_error", error=str(e))
+    rows += _trend_position_rows(engine)
+    return rows
+
+
 async def _broadcast_trend_positions() -> None:
     """TREND_DAILY positions on symbols the intraday loop does not stream (BNB-USD…):
     broadcast them here, and clear the ones that closed."""
@@ -1001,9 +1040,9 @@ async def _broadcast_trend_positions() -> None:
         return
     configured = set(engine.settings.symbol_names)
     by_symbol: Dict[str, list] = {}
-    for pos in trend.positions_as_positions():
-        if pos.symbol not in configured:
-            by_symbol.setdefault(pos.symbol, []).append(serialize_position(pos))
+    for row in _trend_position_rows(engine):
+        if row["symbol"] not in configured:
+            by_symbol.setdefault(row["symbol"], []).append(row)
     for sym, rows in by_symbol.items():
         await state.channels.broadcast("trading", {"type": "positions", "symbol": sym, "data": rows})
     for sym in list(_trend_symbols_sent - set(by_symbol)):
@@ -1488,6 +1527,100 @@ async def get_trend():
     return out
 
 
+@app.get("/api/orders")
+async def get_orders():
+    """Protective SL/TP of open paper positions as pseudo-orders (contract §2)."""
+    engine = state.engine
+    sim = getattr(engine, "paper_sim", None) if engine else None
+    if sim is None or not hasattr(sim, "get_protective_orders"):
+        return {"orders": []}
+    return {"orders": sim.get_protective_orders()}
+
+
+@app.get("/api/positions")
+async def get_positions():
+    engine = state.engine
+    if not engine:
+        return {"positions": []}
+    return {"positions": _paper_position_rows(engine)}
+
+
+def _account_overview(engine) -> dict:
+    tc = engine.settings.trading
+    rows = _paper_position_rows(engine)
+    position_value = float(sum(r.get("notional", 0.0) or 0.0 for r in rows))
+    margin_used = float(sum(r.get("margin", 0.0) or 0.0 for r in rows))
+    unrealized = float(sum(r.get("unrealized_pnl", 0.0) or 0.0 for r in rows))
+    perf = _merged_performance() or {}
+    equity = float(perf.get("equity", engine.risk_manager.current_equity))
+    realized = float(perf.get("realized_pnl", 0.0))
+    fees_today = 0.0
+    try:
+        import datetime as _dt
+        day0 = _dt.datetime.now(_dt.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        fees_today = float(sum((t.fee or 0.0) for t in engine.trade_repo.get_trades(
+            source="paper" if engine.paper else "live", start_time=day0)))
+    except Exception:
+        pass
+    rm = engine.risk_manager
+    return {
+        "mode": state.mode, "equity": round(equity, 4), "initial_capital": float(tc.initial_capital),
+        "realized_pnl": round(realized, 4), "unrealized_pnl": round(unrealized, 4),
+        "position_value": round(position_value, 4), "margin_used": round(margin_used, 4),
+        "available": round(max(0.0, equity - margin_used), 4),
+        "margin_ratio": round(margin_used / equity, 6) if equity > 0 else 0.0,
+        "exposure_pct": round(position_value / equity, 6) if equity > 0 else 0.0,
+        "leverage_effective": round(position_value / equity, 4) if equity > 0 else 0.0,
+        "open_positions": len(rows), "fees_today": round(fees_today, 4),
+        "daily_pnl": round(float(rm.daily_pnl), 4), "weekly_pnl": round(float(rm.weekly_pnl), 4),
+        "peak_equity": round(float(rm.equity_peak), 4), "drawdown_pct": round(float(rm.current_drawdown_pct), 6),
+        "max_leverage": int(tc.max_leverage), "max_total_exposure_pct": float(tc.max_total_exposure_pct),
+    }
+
+
+@app.get("/api/account")
+async def get_account():
+    engine = state.engine
+    if not engine:
+        s = _config_settings()
+        return {"engine": False, "mode": state.mode, "initial_capital": s.trading.initial_capital}
+    out = _account_overview(engine)
+    out["engine"] = True
+    return out
+
+
+def _funding_countdown_sec(now: float) -> int:
+    period = 8 * 3600
+    return int(period - (now % period))
+
+
+@app.get("/api/market/{symbol}")
+async def get_market(symbol: str):
+    engine = state.engine
+    if not engine:
+        return {"symbol": symbol, "engine": False}
+    snap = engine.market_data.get_snapshot(symbol)
+    stats = engine.market_data.get_24h_stats(symbol) if hasattr(engine.market_data, "get_24h_stats") else {}
+    det = engine.regime_detector
+    rs = det.status(symbol) if hasattr(det, "status") else {}
+    ob = snap.orderbook if snap else None
+    return {
+        "symbol": symbol, "engine": True,
+        "price": float(snap.price) if snap else None,
+        "mark_price": float(snap.mark_price) if snap else None,
+        "index_price": float(snap.index_price) if snap else None,
+        "funding_rate": float(snap.funding_rate) if snap else None,
+        "funding_countdown_sec": _funding_countdown_sec(time.time()),
+        "open_interest": float(snap.open_interest) if snap else None,
+        "spread_bps": float(ob.spread_bps) if ob else None,
+        "best_bid": ob.best_bid if ob else None, "best_ask": ob.best_ask if ob else None,
+        **stats,
+        "regime": rs.get("regime", "UNKNOWN"), "regime_since": rs.get("confirmed_since", 0.0),
+        "regime_candidate": rs.get("candidate", ""), "regime_timeframe_min": rs.get("timeframe_min", 1),
+        "data_age_sec": round(engine.market_data.get_data_age(symbol), 3),
+    }
+
+
 @app.post("/api/trend/run", dependencies=[Depends(require_token_when_remote)])
 async def trend_run_now():
     """Operator button: execute today's daily decision now (data refresh + rebalance).
@@ -1596,6 +1729,7 @@ _STRATEGY_NAMES = {
     StrategyType.MEAN_REVERSION: "Mean Reversion",
     StrategyType.FIBONACCI_RETRACEMENT: "Fibonacci retracement",
     StrategyType.TREND_DAILY: "Trend daily (Donchian ensemble)",
+    StrategyType.DIVERGENCE: "Divergence (RSI + structure break)",
     StrategyType.TREND_FOLLOWING: "Trend following (archived)",
     StrategyType.MARKET_MAKING: "Market making (archived)",
     StrategyType.ORDER_FLOW_MOMENTUM: "Order flow momentum (archived)",
@@ -1617,6 +1751,22 @@ def _strategy_view(settings: Settings, st: StrategyType) -> dict:
                 f"signal at close, executed at {tc.trend_execution_hour_utc:02d}:00 UTC open + "
                 f"{tc.trend_execution_delay_min} min")
         return {"description": desc, "params": params, "symbols": ["universe (monthly)"], "group": "trend_daily"}
+    if st == StrategyType.DIVERGENCE:
+        params = {"timeframe_min": tc.div_timeframe_min, "rsi_period": tc.div_rsi_period, "pivot_k": tc.div_pivot_k,
+                  "rsi_os": tc.div_rsi_os, "rsi_ob": tc.div_rsi_ob, "min_rsi_gap": tc.div_min_rsi_gap,
+                  "trigger_window": tc.div_trigger_window, "require_macd": tc.div_require_macd,
+                  "atr_buffer": tc.div_atr_buffer, "rr": tc.div_rr, "max_hold": tc.div_max_hold,
+                  "hidden": tc.div_hidden, "with_trend": tc.div_with_trend}
+        tf = int(tc.div_timeframe_min)
+        tf_label = f"{tf // 60}h" if tf >= 60 else f"{tf}m"
+        desc = (f"RSI{tc.div_rsi_period} {'hidden' if tc.div_hidden else 'regular'} divergence on {tf_label} bars · "
+                f"pivots ±{tc.div_pivot_k} · first pivot RSI <{tc.div_rsi_os:g}/>{tc.div_rsi_ob:g} · "
+                f"trigger = close beyond the pivot bar within {tc.div_trigger_window} bars"
+                f"{' + MACD' if tc.div_require_macd else ''} · stop pivot ∓{tc.div_atr_buffer:g}×ATR · TP {tc.div_rr:g}R · "
+                f"time stop {tc.div_max_hold} bars · RESEARCH 2026-09-02: NO-GO (1h: PF 0.77, t −2.15; 4h: PF 1.00)")
+        return {"description": desc, "params": params, "symbols": symbols, "group": "divergence",
+                "research": {"verdict": "NO-GO", "checks": "2/7", "trades": 1102, "profit_factor": 0.77,
+                             "t_stat": -2.15, "note": "4h variant neutral (PF 1.00, t 0.44); with-trend on 4h: 13 trades only"}}
     if st == StrategyType.MEAN_REVERSION:
         ref = next((s for s in settings.symbols if s.symbol in symbols), settings.symbols[0])
         params = {"zscore_entry": ref.mr_zscore_entry, "zscore_exit": ref.mr_zscore_exit,
@@ -1645,7 +1795,8 @@ async def get_strategies():
         if trend is not None and getattr(trend, "killed", False):
             killed.setdefault(StrategyType.TREND_DAILY.value, "edge monitor")
     edge = (getattr(engine, "edge_stats", None) or {}).get("strategies", {}) if engine else {}
-    order = [StrategyType.TREND_DAILY, StrategyType.MEAN_REVERSION, StrategyType.FIBONACCI_RETRACEMENT]
+    order = [StrategyType.TREND_DAILY, StrategyType.DIVERGENCE, StrategyType.MEAN_REVERSION,
+             StrategyType.FIBONACCI_RETRACEMENT]
     strategies = []
     for st in order:
         alloc = strategy_allocation(settings.trading, st)
@@ -1664,6 +1815,7 @@ async def get_strategies():
             "symbols": view["symbols"],
             "settings_group": view["group"],
             "edge": edge.get(st.value),
+            "research": view.get("research"),
         })
     return {"strategies": strategies}
 
@@ -1697,23 +1849,60 @@ async def get_trades(limit: int = 100):
                 exit_time = _iso(exit_ts)
                 entry_time = _iso(entry_ts)
 
+            oid = r.order_id or ""
+            if oid.startswith("paper_sl"):
+                exit_reason = "SL"
+            elif oid.startswith("paper_tp"):
+                exit_reason = "TP"
+            elif oid.startswith("paper_exit"):
+                exit_reason = "signal"
+            elif oid.startswith("paper_close"):
+                exit_reason = "close"
+            elif oid.startswith("trend_exit"):
+                exit_reason = "trend_exit"
+            elif oid.startswith("trend_rebalance"):
+                exit_reason = "rebalance"
+            else:
+                exit_reason = ""
+            entry_px = r.entry_price or r.price
+            notional = float(entry_px or 0) * float(r.quantity or 0)
+            lev = 1
+            try:
+                lev = int(state.engine.settings.get_symbol_config(r.symbol).leverage) if r.strategy != "TREND_DAILY" else 1
+            except Exception:
+                lev = 1
+            margin = notional / max(lev, 1)
             trades.append({
                 "id": r.id if hasattr(r, 'id') else 0,
+                "trade_id": getattr(r, "trade_id", ""),
                 "symbol": r.symbol,
                 "side": r.side,
                 "trade_type": r.trade_type or "",
                 "strategy": r.strategy,
-                "entry_price": r.entry_price or r.price,
+                "entry_price": entry_px,
                 "exit_price": r.exit_price or (r.price if r.trade_type == "EXIT" else 0),
                 "quantity": r.quantity,
                 "pnl": r.pnl,
                 "fee": r.fee,
+                "pnl_bps": (r.pnl / notional * 1e4) if notional > 0 else 0.0,
+                "roe_pct": (r.pnl / margin) if margin > 0 else 0.0,
+                "leverage": lev,
+                "mae_bps": r.mae_bps or 0.0,
+                "mfe_bps": r.mfe_bps or 0.0,
+                "slippage_bps": r.slippage_bps or 0.0,
+                "order_type": r.order_type or "",
+                "exit_reason": exit_reason,
                 "duration_sec": r.duration_sec or 0,
+                "hold_sec": r.duration_sec or 0,
                 "entry_time": entry_time,
                 "exit_time": exit_time,
                 "entry_ts": entry_ts,   # epoch seconds (UTC) — chart markers
                 "exit_ts": exit_ts,     # 0 when still open / ENTRY record
                 "regime": r.regime or "",
+                "equity_after": r.equity_after or 0.0,
+                "signal_strength": r.signal_strength or 0.0,
+                "spread_bps": r.spread_bps or 0.0,
+                "order_id": oid,
             })
         # Return most recent first
         trades.reverse()

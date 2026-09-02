@@ -1,5 +1,38 @@
 # BotStrike — Tasks
 
+## Sesión 2026-09-02 (4ª) — v2.15: estrategia de divergencias + terminal de trading premium — EN CURSO
+Edgar: "estrategia de divergencias con algo que sirva para verificarlas y puntos de entrada precisos" +
+"en live trading debería salir mucha más información de los trades" + UI al nivel de Strike Finance.
+### Research HECHO (`tasks/research_divergence_2026-09-02.md`, `scripts/divergence_research.py`)
+- [x] Datos: `scripts/download_1h.py` → 6 símbolos × 40.932 velas 1h (2022→2026-09), parquet en `data/binance_1h/`.
+- [x] Definición objetiva: pivote (k=3, confirmado k barras después, sin repintar) → divergencia verificada
+  (zona extrema 35/65, gap RSI ≥ 3, 5–60 barras) → trigger = cierre que rompe el extremo de la barra del 2º pivote
+  (ventana 6) + histograma MACD a favor → fill a la apertura siguiente; SL pivote ∓ 0,5 ATR, TP 2R, time stop.
+- [x] **Veredicto: NO-GO 2/7 en 1h** (n 1.102, PF 0,77, t −2,15, Sharpe −1,38, maxDD 78 %; bruto ya negativo
+  −25 bps; pierde en los 6 símbolos, los 5 años, largos y cortos; 14 variantes, ninguna la salva; sin artefacto
+  de look-ahead). **4h: neutra** (n 308, PF 1,00, t +0,44). "4h con tendencia" PF 3,28 con n=13 → ruido.
+### Backend HECHO (220/220 tests, 6/6 mutantes muertos, humo local aislado OK)
+- [x] `strategies/divergence.py` (candidata → verificador → trigger en la SIGUIENTE barra → señal con `pivots`,
+  `rsi_gap`, `trigger_level`, `macd_hist`, `bars_to_trigger`; caducidad de ventana; time stop; cooldown;
+  `prime_history` 4h desde Binance, probado en real: 499 barras). `core/bars.py` compartido con el régimen.
+- [x] Config: `allocation_divergence = 0` + grupo `divergence` (17 campos) en el esquema; `StrategyType.DIVERGENCE`;
+  multiplicadores de régimen; símbolos por defecto incluyen DIVERGENCE (inerte con asignación 0).
+- [x] Terminal (contrato `tasks/ui_live_trading_contract.md`): `GET /api/account`, `/api/positions` (margen,
+  liquidación paper, ROE, distancias SL/TP, MAE/MFE, hold, fees, trigger), `/api/orders` (SL/TP protectoras),
+  `/api/market/{sym}` (funding countdown, 24 h, régimen), `/api/trades` enriquecido; broadcast de posiciones rico.
+- [x] Tests `tests/test_divergence_and_terminal.py` (9) + expectativas actualizadas (grupo `divergence`, orden de
+  estrategias, versión 2.15.0). Research script sin caracteres no-cp1252.
+- [x] Docs: `deploy/README.md` sección v2.15, `tasks/lessons.md`.
+### Frontend (agente, `desktop/src`) — EN CURSO
+- [ ] Terminal Live Trading estilo Strike: cabecera de mercado (mark/index/funding+countdown/24 h), chart con
+  overlays (pivotes/SL/TP/trigger de la señal), tabla de posiciones (Size/Entry/Mark/Liq/Margin/PNL(ROE)/
+  SL-TP/MAE-MFE/hold), pestañas Positions/Orders/Trade History/Signals, resumen de cuenta; 1440 y 390 px.
+- [ ] `npx tsc -b && npm run lint && npm run build:web`; Playwright contra bridge local aislado (9421) y contra el CT.
+### Deploy
+- [ ] Commit + push + `deploy/host_deploy.sh`; verificar en el CT `/api/health` 2.15.0, `/api/account`,
+  `/api/orders`, `/api/market/BTC-USD`, `/api/strategies` (DIVERGENCE desactivada con research); Playwright CT.
+- [ ] Actualizar memoria (`project_current_state.md`).
+
 ## Sesión 2026-09-02 (3ª) — v2.14: "sí a todo" — EN CURSO
 Edgar: Fase 0 completa + fixes UI + TODO configurable desde el navegador + interés compuesto.
 ### Backend HECHO (commit local, 211/211 tests, 7 guardas verificadas por mutación)

@@ -164,23 +164,11 @@ class RegimeDetector:
         cached = self._resample_cache.get(symbol)
         if cached and cached[0] == last_ts and cached[1] == tf:
             return cached[2]
-        secs = tf * 60
-        ts = df["timestamp"].astype(float).to_numpy()
-        open_ts = ts - 60.0                       # 1-min bar close → its open time
-        bucket = np.floor(open_ts / secs) * secs  # open time of the tf-minute bucket
-        g = df.assign(_b=bucket).groupby("_b", sort=True)
-        agg = g.agg(open=("open", "first"), high=("high", "max"), low=("low", "min"),
-                    close=("close", "last"), n=("close", "size"))
-        if "volume" in df.columns:
-            agg["volume"] = g["volume"].sum()
+        from core.bars import aggregate_1m
+        agg = aggregate_1m(df, tf)
+        if agg is None or agg.empty:
+            out = agg if agg is not None else df
         else:
-            agg["volume"] = 0.0
-        agg = agg[agg["n"] >= tf].drop(columns=["n"])   # only complete buckets
-        if agg.empty:
-            out = agg
-        else:
-            agg["timestamp"] = agg.index.to_numpy(dtype=float) + secs   # close time
-            agg = agg.reset_index(drop=True)
             try:
                 out = Indicators.compute_all(
                     agg, {"ema_fast": config.tf_ema_fast, "ema_slow": config.tf_ema_slow})

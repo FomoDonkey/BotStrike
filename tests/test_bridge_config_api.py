@@ -42,7 +42,7 @@ def test_config_is_available_before_the_engine_starts(st, client):
     assert body["engine_running"] is False
     assert body["trading"]["allocation_trend_daily"] == 1.0
     assert body["trading"]["max_weekly_loss_pct"] == 0.05
-    assert body["symbols"][0]["strategies"] == "FIBONACCI_RETRACEMENT"
+    assert body["symbols"][0]["strategies"] == "FIBONACCI_RETRACEMENT,DIVERGENCE"
     assert body["overrides"] == {} and body["restart_required"] is False
     sch = client.get("/api/config/schema").json()
     assert [g["id"] for g in sch["groups"]][0] == "capital"
@@ -103,11 +103,11 @@ def test_reset_clears_overrides(st, client):
 def test_strategies_view_is_generated_from_config(st, client):
     r = client.get("/api/strategies").json()
     types = [s["type"] for s in r["strategies"]]
-    assert types == ["TREND_DAILY", "MEAN_REVERSION", "FIBONACCI_RETRACEMENT"]
+    assert types == ["TREND_DAILY", "DIVERGENCE", "MEAN_REVERSION", "FIBONACCI_RETRACEMENT"]
     trend = r["strategies"][0]
     assert trend["enabled"] is True and trend["active"] is False        # engine not running
     assert "Donchian" in trend["description"] and trend["params"]["lookbacks"] == "5,10,20,30,60,90"
-    mr = r["strategies"][1]
+    mr = next(x for x in r["strategies"] if x["type"] == "MEAN_REVERSION")
     assert mr["enabled"] is False and mr["symbols"] == ["ETH-USD", "SOL-USD", "ADA-USD"]
     assert "RANGING" in mr["description"]
     eng = _fake_engine()
@@ -115,7 +115,7 @@ def test_strategies_view_is_generated_from_config(st, client):
     eng.settings.trading.allocation_mean_reversion = 0.5
     eng.edge_stats = {"strategies": {"MEAN_REVERSION": {"n": 120, "verdict": "kill"}}}
     st.engine, st.running = eng, True
-    mr = client.get("/api/strategies").json()["strategies"][1]
+    mr = next(x for x in client.get("/api/strategies").json()["strategies"] if x["type"] == "MEAN_REVERSION")
     assert mr["killed"] is True and mr["active"] is False and mr["kill_reason"] == "t-stat -3"
     assert mr["edge"]["verdict"] == "kill"
 
@@ -150,5 +150,5 @@ def test_catalog_reads_parquet_metadata(tmp_path):
 
 def test_health_reports_new_flags(st, client):
     h = client.get("/api/health").json()
-    assert h["version"] == "2.14.0"
+    assert h["version"] == "2.15.0"
     assert "telegram_failures" in h and h["trend_daily_enabled"] is False

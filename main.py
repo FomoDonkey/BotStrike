@@ -28,6 +28,7 @@ from exchange.binance_client import BinanceClient
 from exchange.websocket_client import StrikeWebSocket
 from strategies.mean_reversion import MeanReversionStrategy
 from strategies.fibonacci_retracement import FibonacciRetracementStrategy
+from strategies.divergence import DivergenceStrategy
 from strategies.base import BaseStrategy
 from risk.risk_manager import RiskManager
 from risk.persistence import compute_historical_risk_state, restore_risk_state
@@ -126,6 +127,7 @@ class BotStrike:
         self.strategies: List[BaseStrategy] = [
             MeanReversionStrategy(settings.trading),
             FibonacciRetracementStrategy(settings.trading),
+            DivergenceStrategy(settings.trading),   # disabled by default (allocation 0)
         ]
 
         # Microprice calculator por símbolo
@@ -193,6 +195,14 @@ class BotStrike:
             seed_hours = self._seed_hours()
             for sym_config in self.settings.symbols:
                 await self.market_data.seed_from_binance(sym_config.symbol, sym_config, hours=seed_hours)
+            # Strategies working on higher timeframes seed their own closed-bar history
+            from exchange.binance_client import SYMBOL_MAP as _BSYM
+            for strategy in self.strategies:
+                if hasattr(strategy, "prime_history") and strategy_allocation(
+                        self.settings.trading, strategy.strategy_type) > 0:
+                    for sym_config in self.settings.symbols:
+                        await strategy.prime_history(
+                            sym_config.symbol, _BSYM.get(sym_config.symbol, sym_config.symbol.replace("-", "")))
 
         # Risk state that survives restarts + compounding (paper: the trade DB is the
         # ledger; live: the wallet is the equity truth, only the ladder is restored).

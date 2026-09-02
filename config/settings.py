@@ -128,6 +128,27 @@ class TradingConfig:
     # vol-targeted weights are applied at 100%; 0 = disabled. It runs in its own
     # daily engine and does NOT use the intraday allocation machinery.
     allocation_trend_daily: float = 1.00
+    # DIVERGENCE (2026-09-02): research NO-GO 2/7 (scripts/divergence_research.py: 1,102
+    # trades on 1h: WR 38%, PF 0.77, gross -25 bps/trade, t -2.15, negative every year and
+    # symbol). Implemented in full so it can be studied in paper; 0 = disabled.
+    allocation_divergence: float = 0.00
+    div_timeframe_min: int = 240
+    div_rsi_period: int = 14
+    div_pivot_k: int = 3
+    div_rsi_os: float = 35.0
+    div_rsi_ob: float = 65.0
+    div_min_gap_bars: int = 5
+    div_max_gap_bars: int = 60
+    div_min_rsi_gap: float = 3.0
+    div_trigger_window: int = 6
+    div_require_macd: bool = True
+    div_require_volume: bool = False
+    div_atr_buffer: float = 0.5
+    div_rr: float = 2.0
+    div_max_hold: int = 24
+    div_hidden: bool = False
+    div_with_trend: bool = False    # only in the EMA200 direction (research: too few trades to judge)
+    div_cooldown_min: int = 60
     # ── Regime detection horizon (2026-09-02) ──
     # Audit: on 1-minute bars the detector flipped 885 times in 48 h (median regime
     # 5 min, 320 A→B→A round-trips under 5 min) and every flip went to Telegram.
@@ -272,28 +293,28 @@ class Settings:
             symbol="BTC-USD", leverage=2, max_position_usd=500,
             vpin_bucket_size=50_000.0,
             mr_atr_mult_sl=1.5, mr_atr_mult_tp=4.0,
-            strategies="FIBONACCI_RETRACEMENT",
+            strategies="FIBONACCI_RETRACEMENT,DIVERGENCE",
         ),
         SymbolConfig(
             symbol="ETH-USD", leverage=2, max_position_usd=400,
             vpin_bucket_size=30_000.0,
             kyle_lambda_window=150, kyle_lambda_ema_span=40,
             mr_atr_mult_sl=1.5, mr_atr_mult_tp=4.0,
-            strategies="MEAN_REVERSION",
+            strategies="MEAN_REVERSION,DIVERGENCE",
         ),
         SymbolConfig(
             symbol="SOL-USD", leverage=2, max_position_usd=250,
             vpin_bucket_size=15_000.0,
             kyle_lambda_window=150, kyle_lambda_ema_span=40,
             mr_atr_mult_sl=1.8, mr_atr_mult_tp=4.0,
-            strategies="MEAN_REVERSION",
+            strategies="MEAN_REVERSION,DIVERGENCE",
         ),
         SymbolConfig(
             symbol="ADA-USD", leverage=2, max_position_usd=150,
             vpin_bucket_size=5_000.0,
             kyle_lambda_window=100, kyle_lambda_ema_span=30,
             mr_atr_mult_sl=2.0, mr_atr_mult_tp=4.0,
-            strategies="MEAN_REVERSION",
+            strategies="MEAN_REVERSION,DIVERGENCE",
         ),
     ])
 
@@ -353,7 +374,7 @@ class Settings:
                 f"0 < daily ({t.max_daily_loss_pct}) <= weekly ({t.max_weekly_loss_pct}) "
                 f"<= max drawdown ({t.max_drawdown_pct}) <= 0.9")
         for name in ("allocation_mean_reversion", "allocation_fibonacci_retracement",
-                     "allocation_trend_daily", "allocation_trend_following",
+                     "allocation_trend_daily", "allocation_divergence", "allocation_trend_following",
                      "allocation_market_making", "allocation_order_flow_momentum"):
             v = getattr(t, name)
             if not (0.0 <= v <= 1.0):

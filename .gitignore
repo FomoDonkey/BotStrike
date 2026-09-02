@@ -67,3 +67,4 @@ data/config_overrides.json.tmp
 data/trend_daily_state.json
 data/trend_daily_state.json.tmp
 data/binance_daily/
+data/binance_1h/

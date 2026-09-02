@@ -341,6 +341,66 @@ class PaperTradingSimulator:
         """Exposicion total en USD."""
         return sum(pos.entry_price * pos.size for pos in self._positions.values())
 
+    def get_position_details(self, leverage_of=None, maintenance_margin: float = 0.005) -> List[Dict]:
+        """Everything the terminal UI shows per open paper position (contract §2):
+        margin, paper liquidation estimate, SL/TP with distances, live MAE/MFE, hold time,
+        fees accrued so far (entry leg), strategy and order id."""
+        import time as _t
+        out: List[Dict] = []
+        for key, pos in self._positions.items():
+            mark = self._last_prices.get(pos.symbol, pos.entry_price) or pos.entry_price
+            pos.update_pnl(mark)
+            lev = int(leverage_of(pos.symbol)) if leverage_of else 1
+            lev = max(1, lev)
+            notional = pos.size * mark
+            margin = pos.entry_price * pos.size / lev
+            if pos.side == Side.BUY:
+                liq = pos.entry_price * (1.0 - 1.0 / lev + maintenance_margin) if lev > 1 else 0.0
+                mae_bps = (pos.mae_price / pos.entry_price - 1.0) * 1e4
+                mfe_bps = (pos.mfe_price / pos.entry_price - 1.0) * 1e4
+                sl_dist = (pos.stop_loss / mark - 1.0) if pos.stop_loss else None
+                tp_dist = (pos.take_profit / mark - 1.0) if pos.take_profit else None
+            else:
+                liq = pos.entry_price * (1.0 + 1.0 / lev - maintenance_margin) if lev > 1 else 0.0
+                mae_bps = (1.0 - pos.mae_price / pos.entry_price) * 1e4
+                mfe_bps = (1.0 - pos.mfe_price / pos.entry_price) * 1e4
+                sl_dist = (1.0 - pos.stop_loss / mark) if pos.stop_loss else None
+                tp_dist = (1.0 - pos.take_profit / mark) if pos.take_profit else None
+            entry_fee = pos.entry_price * pos.size * (pos.entry_fee_rate or self.config.taker_fee)
+            out.append({
+                "symbol": pos.symbol, "side": pos.side.value, "size": pos.size,
+                "entry_price": pos.entry_price, "mark_price": mark, "notional": notional,
+                "unrealized_pnl": pos.unrealized_pnl,
+                "pnl_pct": (pos.unrealized_pnl / (pos.entry_price * pos.size)) if pos.size and pos.entry_price else 0.0,
+                "roe_pct": (pos.unrealized_pnl / margin) if margin > 0 else 0.0,
+                "leverage": lev, "margin": margin, "liquidation_price": liq,
+                "stop_loss": pos.stop_loss or 0.0, "take_profit": pos.take_profit or 0.0,
+                "sl_distance_pct": sl_dist, "tp_distance_pct": tp_dist,
+                "strategy": pos.strategy.value if pos.strategy else None,
+                "opened_ts": pos.open_time, "hold_sec": max(0.0, _t.time() - pos.open_time),
+                "mae_bps": round(mae_bps, 2), "mfe_bps": round(mfe_bps, 2),
+                "entry_fee_rate": pos.entry_fee_rate or self.config.taker_fee, "fees_paid": entry_fee,
+                "funding_paid": 0.0, "order_id": pos.order_id, "order_type": pos.order_type,
+                "trigger": (getattr(pos, "trigger", "") or ""), "regime_at_entry": pos.regime_at_entry,
+                "spread_at_entry_bps": pos.spread_at_entry_bps, "atr_at_entry": pos.atr_at_entry,
+                "expected_cost_bps": pos.expected_cost_bps, "timestamp": pos.open_time,
+            })
+        return out
+
+    def get_protective_orders(self) -> List[Dict]:
+        """Paper SL/TP as pseudo-orders for the Orders tab (contract §2)."""
+        out: List[Dict] = []
+        for key, pos in self._positions.items():
+            mark = self._last_prices.get(pos.symbol, pos.entry_price) or pos.entry_price
+            close_side = "SELL" if pos.side == Side.BUY else "BUY"
+            for kind, px in (("STOP", pos.stop_loss), ("TAKE_PROFIT", pos.take_profit)):
+                if px and px > 0:
+                    out.append({"symbol": pos.symbol, "type": kind, "side": close_side, "price": px,
+                                "size": pos.size, "strategy": pos.strategy.value if pos.strategy else None,
+                                "position_id": pos.order_id,
+                                "distance_pct": (px / mark - 1.0) if mark > 0 else None})
+        return out
+
     def close_all_positions(self, reason: str = "shutdown") -> List[Trade]:
         """Cierra TODAS las posiciones paper a mercado (paridad con
         OrderExecutionEngine.close_all_positions, audit F01 / P0-03).
@@ -555,6 +615,7 @@ class PaperTradingSimulator:
         pos.spread_at_entry_bps = spread_bps
         pos.atr_at_entry = signal.metadata.get("atr", 0)
         pos.regime_at_entry = signal.metadata.get("regime", "")
+        pos.trigger = str(signal.metadata.get("trigger", "") or "")
         self._positions[pos_key] = pos
         self._trade_count += 1
 

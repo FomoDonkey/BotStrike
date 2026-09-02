@@ -47,6 +47,9 @@ class StrategyType(Enum):
     # 11/11 GO/NO-GO 2026-08-31). Runs in its own engine (strategies/trend_daily.py),
     # not in the 3-second intraday loop.
     TREND_DAILY = "TREND_DAILY"
+    # RSI divergence + structure-break trigger (strategies/divergence.py). Research
+    # 2026-09-02: NO edge on 1h (PF 0.77, t -2.15) -> ships disabled, configurable.
+    DIVERGENCE = "DIVERGENCE"
 
 
 @dataclass
