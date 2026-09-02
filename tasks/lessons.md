@@ -1005,3 +1005,23 @@
   entrega COMPLETA (motor, config, UI, research) pero DESACTIVADA, con el veredicto visible junto al switch.
 - **LESSON: "agregar una estrategia" = implementarla + medirla + decir la verdad sobre ella. Encenderla es una
   decisión de research (GO/NO-GO), nunca un clic por defecto.**
+
+### Nunca ejecutar pytest como root dentro del CT
+- Un `pct exec 104 -- python -m pytest` como root dejó `__pycache__` propiedad de root en `.venv` y en el
+  código; el siguiente `update.sh` (usuario `botstrike`) falló con "Permission denied" y el deploy abortó.
+- **LESSON: en el CT, ejecutar la suite como `su - botstrike -c ...` con `PYTHONDONTWRITEBYTECODE=1` (como hace
+  `update.sh`), o no ejecutarla a mano: el gate del deploy ya la corre.**
+
+### Paneles sincronizados por índice lógico necesitan el MISMO número de puntos
+- El panel RSI/MACD se sincroniza con el chart principal por `LogicalRange`; los indicadores descartan el
+  calentamiento (14 / 35 barras) → panel desplazado; a 390 px (pocas barras visibles) el MACD entero quedaba
+  fuera de la ventana. A 1440 el desplazamiento "parecía" correcto.
+- **LESSON: rellenar el calentamiento con puntos whitespace (`{ time }`) para que vela i ↔ punto i, o sincronizar
+  por tiempo. Y mirar el panel a 390 px, donde el error es evidente.**
+
+### Un `ref` leído dentro de un effect no dispara el effect
+- El filtro de marcadores leía `firstTimeRef.current` (0 hasta que llegan las velas) y el effect solo dependía de
+  `trades` → se construía una vez con 0 y nunca se reconstruía. Resultado: 24 trades viejos apilados en la primera
+  vela, que la primera captura "verificada" no detectó porque miré la tabla y no el chart.
+- **LESSON: lo que deba re-ejecutar un effect va en estado/deps, no en un ref. Y en las capturas mirar TODO el
+  viewport, no solo la zona del cambio.**

@@ -1,6 +1,6 @@
 # BotStrike — Tasks
 
-## Sesión 2026-09-02 (4ª) — v2.15: estrategia de divergencias + terminal de trading premium — EN CURSO
+## Sesión 2026-09-02 (4ª) — v2.15: estrategia de divergencias + terminal de trading premium — HECHO
 Edgar: "estrategia de divergencias con algo que sirva para verificarlas y puntos de entrada precisos" +
 "en live trading debería salir mucha más información de los trades" + UI al nivel de Strike Finance.
 ### Research HECHO (`tasks/research_divergence_2026-09-02.md`, `scripts/divergence_research.py`)
@@ -30,15 +30,30 @@ Edgar: "estrategia de divergencias con algo que sirva para verificarlas y puntos
 - [x] Pre-check CT (solo lectura): régimen 1-2 cambios/h desde el reinicio de 11:09Z (antes 4,6/h/símbolo) ✔;
   trend run 11:09Z ok (3 posiciones, `last_run_late=true`); 4 `telegram_send_error` a las 01:12Z (blip de red, con
   reintentos); 0 mensajes Telegram registrados desde 11:00Z (sin log de éxito hasta 817edf0).
-### Frontend (agente, `desktop/src`) — EN CURSO
-- [ ] Terminal Live Trading estilo Strike: cabecera de mercado (mark/index/funding+countdown/24 h), chart con
-  overlays (pivotes/SL/TP/trigger de la señal), tabla de posiciones (Size/Entry/Mark/Liq/Margin/PNL(ROE)/
-  SL-TP/MAE-MFE/hold), pestañas Positions/Orders/Trade History/Signals, resumen de cuenta; 1440 y 390 px.
-- [ ] `npx tsc -b && npm run lint && npm run build:web`; Playwright contra bridge local aislado (9421) y contra el CT.
-### Deploy
-- [ ] Commit + push + `deploy/host_deploy.sh`; verificar en el CT `/api/health` 2.15.0, `/api/account`,
-  `/api/orders`, `/api/market/BTC-USD`, `/api/strategies` (DIVERGENCE desactivada con research); Playwright CT.
-- [ ] Actualizar memoria (`project_current_state.md`).
+### Frontend (agente + verificación propia) — HECHO (commits e8cafd9, 6325d34, 46d8842)
+- [x] Terminal Live Trading estilo Strike (46 ficheros en `desktop/src`): cabecera de mercado (mark/index/funding
+  + cuenta atrás, ventana 24 h etiquetada con la duración REAL de datos, p.ej. "15h"), selector de símbolo con
+  24 h %, libro + cinta, chart con panel RSI/MACD y overlays de señal, pestañas Positions (Liq/Margin/Lev/
+  PnL(ROE)/SL/TP/MAE-MFE/Hold/Trigger/Regime/Fees) / Orders / Trade History (24, fila expandible) / Signals /
+  Account; chip "RESEARCH NO-GO" en Strategies. Gates: tsc 0, lint 0, build OK.
+- [x] Verificado por mí con Playwright: bridge local aislado (9421, sin Telegram) y CT real a 1440 y 390 px:
+  0 px de desborde, 0 errores de consola, cifras coherentes con la API (equity 992,03 / available 724,39 /
+  margin ratio 27,0 % / 3 posiciones = `/api/positions`, entrada 76.571,65 = API).
+- [x] Defectos que el agente NO vio y corregí mirando las capturas del CT: (1) 24 trades cerrados anteriores al
+  histórico cargado se apilaban en la primera vela (filtro por inicio del histórico, como ESTADO y dependencia
+  del effect — leer el ref valía 0); (2) panel MACD en blanco a 390 px (`height:100%` contra `min-height`,
+  la lección de siempre → `absolute inset-0`); (3) panel desplazado 14/35 barras respecto a las velas porque
+  RSI/MACD descartan el calentamiento y la sincronización es por índice lógico → relleno con puntos en blanco.
+### Deploy — HECHO (CT 104 en 46d8842, 224/224 tests en el CT, verify PASS, 0 errores)
+- [x] Tres deploys (e8cafd9 → 6325d34 → 46d8842). El 2º abortó: mi pytest como root en el CT dejó
+  `__pycache__` de root en el venv y `botstrike` no podía borrarlos (chown y relanzar).
+- [x] Verificado en el CT: `/api/health` 2.15.0, `/api/account`, `/api/positions` (3 trend), `/api/orders` ([]:
+  trend sin SL/TP), `/api/market/BTC-USD` (funding countdown, 24 h, régimen), `/api/strategies` DIVERGENCE
+  enabled=false research NO-GO 2/7, `telegram_sent` ya aparece en el journal (2 tras el deploy).
+- [x] Memoria actualizada (`project_current_state.md`).
+- [ ] Vigilar 24-48 h: régimen ≤ 2 cambios/h, run automático 00:05Z (con `telegram_sent` de los fills), tracking
+  modelo↔paper. No verificado en vivo: overlays de DIVERGENCE y filas de `/api/orders` con SL/TP (no hay
+  señal DIVERGENCE ni posición MR/Fib abierta en ningún bridge; solo compilado + tests).
 
 ## Sesión 2026-09-02 (3ª) — v2.14: "sí a todo" — EN CURSO
 Edgar: Fase 0 completa + fixes UI + TODO configurable desde el navegador + interés compuesto.
