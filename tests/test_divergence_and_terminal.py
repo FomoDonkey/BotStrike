@@ -294,3 +294,35 @@ def test_candidate_expires_after_trigger_window():
     strat._history["ETH-USD"] = pd.concat([hist, _hour_bars([px] * (window + 1) + [l2 * 1.02], start=last_ts)],
                                           ignore_index=True)
     assert evaluate(l2 * 1.02, last_ts + 3600.0 * (window + 2)) == []
+
+
+def test_market_endpoint_is_json_safe_before_first_tick(st):
+    """Startup: no snapshot yet, data age = inf, 24h stats NaN → 200 with nulls, never a 500."""
+    class _NoData:
+        def get_snapshot(self, symbol):
+            return None
+
+        def get_24h_stats(self, symbol):
+            return {"change_24h_pct": float("nan"), "high_24h": float("inf"), "low_24h": None,
+                    "volume_24h_base": 0.0, "volume_24h_usd": 0.0, "window_min": 0}
+
+        def get_data_age(self, symbol):
+            return float("inf")
+
+    s = Settings()
+    det = SimpleNamespace(status=lambda sym: {"regime": "UNKNOWN", "confirmed_since": 0.0, "candidate": "",
+                                              "timeframe_min": 15})
+    eng = SimpleNamespace(settings=s, paper_sim=PaperTradingSimulator(s), paper=True, risk_manager=RiskManager(s),
+                          trend_engine=None, market_data=_NoData(), regime_detector=det,
+                          portfolio_manager=SimpleNamespace(killed={}), edge_stats={},
+                          metrics=SimpleNamespace(get_metrics=lambda: {}), trade_repo=None, notifier=None,
+                          _unrealized_total=lambda: 0.0)
+    st.engine, st.running = eng, True
+    client = TestClient(bridge.app)
+    r = client.get("/api/market/BTC-USD")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine"] is True and body["price"] is None
+    assert body["data_age_sec"] is None and body["change_24h_pct"] is None and body["high_24h"] is None
+    assert client.get("/api/account").status_code == 200
+    assert client.get("/api/positions").json() == {"positions": []}

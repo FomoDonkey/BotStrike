@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import functools
 import json
+import math
 import logging
 import os
 import re
@@ -1537,7 +1538,7 @@ async def get_orders():
     sim = getattr(engine, "paper_sim", None) if engine else None
     if sim is None or not hasattr(sim, "get_protective_orders"):
         return {"orders": []}
-    return {"orders": sim.get_protective_orders()}
+    return _json_safe({"orders": sim.get_protective_orders()})
 
 
 @app.get("/api/positions")
@@ -1545,7 +1546,7 @@ async def get_positions():
     engine = state.engine
     if not engine:
         return {"positions": []}
-    return {"positions": _paper_position_rows(engine)}
+    return _json_safe({"positions": _paper_position_rows(engine)})
 
 
 def _account_overview(engine) -> dict:
@@ -1589,12 +1590,25 @@ async def get_account():
         return {"engine": False, "mode": state.mode, "initial_capital": s.trading.initial_capital}
     out = _account_overview(engine)
     out["engine"] = True
-    return out
+    return _json_safe(out)
 
 
 def _funding_countdown_sec(now: float) -> int:
     period = 8 * 3600
     return int(period - (now % period))
+
+
+def _json_safe(obj):
+    """Replace non-finite floats (inf/nan) with None, recursively. Starlette's JSON encoder
+    raises on them → 500. Seen on /api/market during startup: data_age_sec = inf before the
+    first tick (local smoke 2026-09-02, 8x 500 while the engine seeded)."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
 
 
 @app.get("/api/market/{symbol}")
@@ -1607,7 +1621,7 @@ async def get_market(symbol: str):
     det = engine.regime_detector
     rs = det.status(symbol) if hasattr(det, "status") else {}
     ob = snap.orderbook if snap else None
-    return {
+    return _json_safe({
         "symbol": symbol, "engine": True,
         "price": float(snap.price) if snap else None,
         "mark_price": float(snap.mark_price) if snap else None,
@@ -1621,7 +1635,7 @@ async def get_market(symbol: str):
         "regime": rs.get("regime", "UNKNOWN"), "regime_since": rs.get("confirmed_since", 0.0),
         "regime_candidate": rs.get("candidate", ""), "regime_timeframe_min": rs.get("timeframe_min", 1),
         "data_age_sec": round(engine.market_data.get_data_age(symbol), 3),
-    }
+    })
 
 
 @app.post("/api/trend/run", dependencies=[Depends(require_token_when_remote)])
