@@ -107,3 +107,25 @@ el ufw y que el PC esté en la LAN o en la tailnet.
   pct exec 104 -- curl -s localhost:9420/api/market/BTC-USD       # funding_countdown_sec, high_24h
   pct exec 104 -- curl -s localhost:9420/api/strategies           # DIVERGENCE enabled=false, research NO-GO
   ```
+
+## v2.16 — vigilancia automática, reset de histórico y API para la UI premium
+
+- **Ops monitor dentro del CT** (`scripts/ops_monitor.py`, `botstrike-monitor.timer` cada 15 min, usuario
+  `botstrike` en el grupo `systemd-journal`): comprueba bridge/engine/feed/edad del tick, el run diario del
+  trend (debe estar OK antes de las 00:20 UTC), halts de riesgo y estrategias killed, errores/tracebacks
+  del journal, bucles de reinicio (≥ 3 en 15 min) y avalanchas de régimen (> 8/h, sin contar arranques).
+  Avisa por Telegram (mismo bot), con deduplicación de 6 h y aviso de "Resuelto"; a las 00:33 UTC envía el
+  **resumen diario**. Estado en `data/ops_monitor_state.json`, última evaluación en
+  `data/ops_monitor_last.json` (→ `GET /api/ops`). Comprobar: `systemctl list-timers botstrike-monitor.timer`,
+  `journalctl -u botstrike-monitor --since -1h`.
+- **Reset de histórico (2026-09-02 19:14Z, a petición de Edgar):** se borraron las 48 filas de los 24 trades
+  cerrados de agosto y 25 sesiones antiguas; quedan solo las 3 entradas abiertas de hoy (trend). Copia previa
+  en `/opt/botstrike/backups/2026-09-02_pre_reset/` (CT), `/root/botstrike_trade_database_2026-09-02_pre_reset.db`
+  (host) y `data/ct104_trade_database_2026-09-02_pre_reset.db` (PC). Equity pasa a 1.000 + PnL abierto; pico,
+  día y semana se reconstruyen desde la DB vacía.
+- **API nueva para la UI premium** (`tasks/ui_premium_spec.md` §5): `GET /api/portfolio` (analítica
+  estilo Strike: rachas, estilo de trading, duración media/mediana, 30D DD/WR/Sharpe, puntos de días
+  ganadores, sesgo long/short, serie diaria para calendario, desglose por estrategia con curva),
+  `GET /api/activity` (timeline: fills, runs del trend, cambios de régimen, kills, riesgo, config, sistema;
+  persistida en `data/activity.json`), `GET /api/market/{sym}/funding_history` (Binance fapi, caché 5 min),
+  `GET /api/ops`, `GET /api/trades/export.csv`, `symbol_config` en `/api/market/{sym}`.

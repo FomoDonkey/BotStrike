@@ -150,5 +150,5 @@ def test_catalog_reads_parquet_metadata(tmp_path):
 
 def test_health_reports_new_flags(st, client):
     h = client.get("/api/health").json()
-    assert h["version"] == "2.15.0"
+    assert h["version"] == "2.16.0"
     assert "telegram_failures" in h and h["trend_daily_enabled"] is False

@@ -32,10 +32,12 @@ class TradingLogger:
 
         # Configurar structlog para escribir a stderr (no contaminar stdout)
         import sys
+        from analytics.activity import activity_processor   # UI activity feed (v2.16)
         structlog.configure(
             processors=[
                 structlog.processors.TimeStamper(fmt="iso"),
                 structlog.processors.add_log_level,
+                activity_processor,
                 structlog.dev.ConsoleRenderer(),
             ],
             wrapper_class=structlog.BoundLogger,

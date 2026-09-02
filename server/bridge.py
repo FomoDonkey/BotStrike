@@ -37,6 +37,8 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import secrets
 import structlog
+from analytics.activity import get_activity_log
+from analytics.portfolio import compute_portfolio
 
 logger = structlog.get_logger(__name__)
 
@@ -45,7 +47,7 @@ from config import overrides as cfg_overrides
 from core.types import MarketRegime, StrategyType, Side
 
 # Single source of truth for the bridge version (reported by /api/health and the OpenAPI schema).
-BRIDGE_VERSION = "2.15.0"
+BRIDGE_VERSION = "2.16.0"
 
 # Auth token for mutating endpoints (live start / live stop).
 # Server deployments set BOTSTRIKE_AUTH_TOKEN in .env so the desktop can be configured with it;
@@ -519,6 +521,7 @@ def _install_hooks(engine):
             try:
                 serialized = serialize_trade(trade)
                 state.recent_trades.append(serialized)
+                _activity_fill(trade, serialized)
                 state._pending_signals.append({
                     "type": "trade",
                     "data": serialized,
@@ -587,6 +590,7 @@ def _install_hooks(engine):
             if trade is not None:
                 serialized = serialize_trade(trade)
                 state.recent_trades.append(serialized)
+                _activity_fill(trade, serialized)
                 state._pending_signals.append({
                     "type": "trade",
                     "data": serialized,
@@ -1298,6 +1302,10 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_engine_watchdog_loop()),
     ]
 
+    try:
+        get_activity_log().add("system", "Bridge started", f"v{BRIDGE_VERSION} · mode {state.mode}")
+    except Exception:  # noqa: BLE001
+        pass
     logger.info("bridge_ready", version=BRIDGE_VERSION, port=int(os.getenv("BOTSTRIKE_PORT", "9420")),
                 token_exposed=_EXPOSE_TOKEN)
 
@@ -1459,6 +1467,11 @@ async def put_config(body: dict = {}):
     if state.engine is not None:
         _after_live_config_change(applied)
     logger.info("config_updated", applied=applied, restart_required=restart_now)
+    try:
+        get_activity_log().add("config", "Config changed", ", ".join(map(str, applied))[:240]
+                               + (" · restart required" if restart_now else ""))
+    except Exception:  # noqa: BLE001
+        pass
     payload = _config_payload()
     return {"status": "ok", "applied": applied,
             "restart_required": bool(restart_now or payload.get("restart_required")),
@@ -1611,6 +1624,159 @@ def _json_safe(obj):
     return obj
 
 
+def _activity_fill(trade, serialized: dict) -> None:
+    """Record a fill in the activity feed (never raises). Exits are detected like the live log:
+    the serialized trade may not carry trade_type."""
+    try:
+        ttype = getattr(trade, "trade_type", None)
+        ttype = getattr(ttype, "value", ttype)
+        if not ttype:
+            ttype = "EXIT" if (float(getattr(trade, "pnl", 0) or 0) != 0 or float(getattr(trade, "fee", 0) or 0) > 0) else "ENTRY"
+        row = dict(serialized)
+        row.setdefault("timestamp", getattr(trade, "timestamp", None))
+        row["trade_type"] = str(ttype)
+        get_activity_log().record_fill(row)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@app.get("/api/activity")
+async def get_activity(limit: int = 100, kind: Optional[str] = None):
+    """Operator timeline (spec v2.16 §5.2): fills, daily runs, regime changes, kills, risk, config, system."""
+    return {"events": get_activity_log().list(limit=limit, kind=kind)}
+
+
+@app.get("/api/portfolio")
+async def get_portfolio():
+    """Strike-style Portfolio page data (spec v2.16 §5.1). Same trade DB and account numbers as
+    /api/trades and /api/account, so the page cannot disagree with them."""
+    engine = state.engine
+    if not engine:
+        return {"engine": False, "mode": state.mode}
+    repo = getattr(engine, "trade_repo", None)
+    trades = []
+    if repo is not None:
+        try:
+            trades = await asyncio.to_thread(repo.get_trades, source="paper" if getattr(engine, "paper", True) else "live")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("portfolio_trades_unavailable", error=str(e))
+    positions = _paper_position_rows(engine) if getattr(engine, "paper_sim", None) else []
+    acct = _account_overview(engine)
+    tcfg = engine.settings.trading
+    out = compute_portfolio(
+        trades, float(tcfg.initial_capital), positions, time.time(),
+        equity=float(acct.get("equity") or 0.0), margin_used=float(acct.get("margin_used") or 0.0),
+        unrealized_pnl=float(acct.get("unrealized_pnl") or 0.0),
+        fees_taker=float(getattr(tcfg, "taker_fee", 0.0004)), fees_maker=float(getattr(tcfg, "maker_fee", 0.0002)),
+    )
+    out.update({"engine": True, "mode": state.mode})
+    return _json_safe(out)
+
+
+_FUNDING_CACHE: dict = {}
+FUNDING_CACHE_SEC = 300
+
+
+async def _fetch_funding_history(binance_symbol: str, limit: int) -> list:
+    """Binance USDⓈ-M public funding history (no key). Patched in tests."""
+    import httpx
+    url = "https://fapi.binance.com/fapi/v1/fundingRate"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.get(url, params={"symbol": binance_symbol, "limit": int(limit)})
+        r.raise_for_status()
+        return r.json()
+
+
+@app.get("/api/market/{symbol}/funding_history")
+async def get_funding_history(symbol: str, limit: int = 200):
+    """Funding-rate history for the Funding tab (spec v2.16 §5.3): every 8 h, positive = longs pay."""
+    from exchange.binance_client import SYMBOL_MAP as _BSYM
+    limit = max(10, min(int(limit), 1000))
+    bsym = _BSYM.get(symbol, symbol.replace("-", "").replace("USD", "USDT") if "USDT" not in symbol else symbol)
+    now = time.time()
+    cached = _FUNDING_CACHE.get((symbol, limit))
+    if cached and now - cached["cached_at"] < FUNDING_CACHE_SEC:
+        return cached
+    try:
+        raw = await _fetch_funding_history(bsym, limit)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("funding_history_unavailable", symbol=symbol, error=str(e))
+        if cached:
+            return cached
+        return {"symbol": symbol, "points": [], "cumulative": [], "source": "binance_fapi", "cached_at": now,
+                "error": f"{type(e).__name__}"}
+    points = []
+    for row in raw:
+        try:
+            points.append({"ts": float(row["fundingTime"]) / 1000.0, "rate": float(row["fundingRate"]),
+                           "mark_price": float(row.get("markPrice") or 0.0) or None})
+        except (KeyError, TypeError, ValueError):
+            continue
+    points.sort(key=lambda p: p["ts"])
+    cum, cumulative = 0.0, []
+    for p in points:
+        cum += p["rate"]
+        cumulative.append({"ts": p["ts"], "value": cum})
+    out = {"symbol": symbol, "binance_symbol": bsym, "points": points, "cumulative": cumulative,
+           "source": "binance_fapi", "cached_at": now}
+    _FUNDING_CACHE[(symbol, limit)] = out
+    return out
+
+
+@app.get("/api/ops")
+async def get_ops():
+    """Last ops-monitor evaluation (scripts/ops_monitor.py, CT timer) for the System page (spec §5.4)."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    last_path = os.getenv("BOTSTRIKE_OPS_LAST", os.path.join(root, "data", "ops_monitor_last.json"))
+    state_path = os.getenv("BOTSTRIKE_OPS_STATE", os.path.join(root, "data", "ops_monitor_state.json"))
+
+    def _read(p):
+        try:
+            with open(p, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:  # noqa: BLE001
+            return None
+
+    last = _read(last_path)
+    st = _read(state_path) or {}
+    if not last:
+        return {"available": False, "last_check": None, "alerts": [], "sent": [], "summary_sent": False, "facts": {},
+                "journal_15": {}, "state": st}
+    return {"available": True, "last_check": last.get("ts"), "alerts": last.get("alerts", []), "sent": last.get("sent", []),
+            "summary_sent": bool(last.get("summary_sent")), "facts": last.get("facts", {}),
+            "journal_15": last.get("journal_15", {}), "journal_60": last.get("journal_60", {}),
+            "state": {"last_summary_date": st.get("last_summary_date"), "last_alerts": st.get("last_alerts", {}),
+                      "last_run": st.get("last_run")}}
+
+
+@app.get("/api/trades/export.csv")
+async def export_trades_csv(symbol: Optional[str] = None, strategy: Optional[str] = None):
+    """All trades as CSV (spec §5.5) — same rows as /api/trades, oldest first."""
+    import csv
+    import io as _io
+    engine = state.engine
+    repo = getattr(engine, "trade_repo", None) if engine else None
+    rows = []
+    if repo is not None:
+        try:
+            trades = await asyncio.to_thread(repo.get_trades, source="paper" if getattr(engine, "paper", True) else "live",
+                                             symbol=symbol, strategy=strategy)
+            rows = [_trade_row(t) for t in sorted(trades, key=lambda t: float(t.timestamp or 0.0))]
+        except Exception as e:  # noqa: BLE001
+            logger.warning("trades_export_failed", error=str(e))
+    cols = ["trade_id", "timestamp", "entry_time", "exit_time", "symbol", "side", "trade_type", "strategy", "regime",
+            "entry_price", "exit_price", "quantity", "pnl", "pnl_bps", "roe_pct", "fee", "leverage", "hold_sec",
+            "mae_bps", "mfe_bps", "slippage_bps", "spread_bps", "order_type", "exit_reason", "equity_after",
+            "signal_strength", "order_id"]
+    buf = _io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
+    w.writeheader()
+    for r in rows:
+        w.writerow({c: r.get(c, "") for c in cols})
+    return Response(content=buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="botstrike_trades.csv"'})
+
+
 @app.get("/api/market/{symbol}")
 async def get_market(symbol: str):
     engine = state.engine
@@ -1635,7 +1801,21 @@ async def get_market(symbol: str):
         "regime": rs.get("regime", "UNKNOWN"), "regime_since": rs.get("confirmed_since", 0.0),
         "regime_candidate": rs.get("candidate", ""), "regime_timeframe_min": rs.get("timeframe_min", 1),
         "data_age_sec": round(engine.market_data.get_data_age(symbol), 3),
+        "symbol_config": _symbol_config_view(engine, symbol),
     })
+
+
+def _symbol_config_view(engine, symbol: str) -> dict:
+    try:
+        sc = engine.settings.get_symbol_config(symbol)
+        t = engine.settings.trading
+        return {"leverage": int(getattr(sc, "leverage", 1)), "max_position_usd": float(getattr(sc, "max_position_usd", 0.0)),
+                "min_notional_usd": 20.0, "strategies": [s for s in str(getattr(sc, "strategies", "")).split(",") if s],
+                "taker_fee": float(getattr(t, "taker_fee", 0.0004)), "maker_fee": float(getattr(t, "maker_fee", 0.0002)),
+                "maintenance_margin": 0.005, "max_leverage": int(getattr(t, "max_leverage", 5)),
+                "risk_per_trade_pct": float(getattr(t, "risk_per_trade_pct", 0.0))}
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 @app.post("/api/trend/run", dependencies=[Depends(require_token_when_remote)])
@@ -1837,6 +2017,82 @@ async def get_strategies():
     return {"strategies": strategies}
 
 
+def _iso_utc(ts: float) -> str:
+    """TZ-aware ISO (…+00:00) so browsers in any timezone render the correct local time."""
+    import datetime as _dt
+    return _dt.datetime.fromtimestamp(ts, _dt.timezone.utc).isoformat()
+
+
+def _trade_row(r) -> dict:
+    """One /api/trades row (also used by the CSV export). Exit rows carry entry/exit times derived
+    from duration_sec; exit_reason is derived from the order id prefix."""
+    entry_ts = float(r.timestamp) if r.timestamp else 0.0
+    exit_ts = 0.0
+    entry_time = _iso_utc(entry_ts) if entry_ts else None
+    exit_time = None
+    if getattr(r, "trade_type", None) == "EXIT" and getattr(r, "duration_sec", None) and getattr(r, "duration_sec", None) > 0:
+        exit_ts = entry_ts
+        entry_ts = exit_ts - getattr(r, "duration_sec", None)
+        exit_time = _iso_utc(exit_ts)
+        entry_time = _iso_utc(entry_ts)
+
+    oid = getattr(r, "order_id", None) or ""
+    if oid.startswith("paper_sl"):
+        exit_reason = "SL"
+    elif oid.startswith("paper_tp"):
+        exit_reason = "TP"
+    elif oid.startswith("paper_exit"):
+        exit_reason = "signal"
+    elif oid.startswith("paper_close"):
+        exit_reason = "close"
+    elif oid.startswith("trend_exit"):
+        exit_reason = "trend_exit"
+    elif oid.startswith("trend_rebalance"):
+        exit_reason = "rebalance"
+    else:
+        exit_reason = ""
+    entry_px = getattr(r, "entry_price", None) or r.price
+    notional = float(entry_px or 0) * float(r.quantity or 0)
+    lev = 1
+    try:
+        lev = int(state.engine.settings.get_symbol_config(r.symbol).leverage) if r.strategy != "TREND_DAILY" else 1
+    except Exception:
+        lev = 1
+    margin = notional / max(lev, 1)
+    return {
+        "id": getattr(r, "id", 0) or 0,
+        "trade_id": getattr(r, "trade_id", ""),
+        "symbol": r.symbol,
+        "side": r.side,
+        "trade_type": getattr(r, "trade_type", None) or "",
+        "strategy": r.strategy,
+        "entry_price": entry_px,
+        "exit_price": getattr(r, "exit_price", None) or (r.price if getattr(r, "trade_type", None) == "EXIT" else 0),
+        "quantity": r.quantity,
+        "pnl": r.pnl,
+        "fee": r.fee,
+        "pnl_bps": (r.pnl / notional * 1e4) if notional > 0 else 0.0,
+        "roe_pct": (r.pnl / margin) if margin > 0 else 0.0,
+        "leverage": lev,
+        "mae_bps": getattr(r, "mae_bps", None) or 0.0,
+        "mfe_bps": getattr(r, "mfe_bps", None) or 0.0,
+        "slippage_bps": getattr(r, "slippage_bps", None) or 0.0,
+        "order_type": getattr(r, "order_type", None) or "",
+        "exit_reason": exit_reason,
+        "duration_sec": getattr(r, "duration_sec", None) or 0,
+        "hold_sec": getattr(r, "duration_sec", None) or 0,
+        "entry_time": entry_time,
+        "exit_time": exit_time,
+        "entry_ts": entry_ts,   # epoch seconds (UTC) — chart markers
+        "exit_ts": exit_ts,     # 0 when still open / ENTRY record
+        "regime": getattr(r, "regime", None) or "",
+        "equity_after": getattr(r, "equity_after", None) or 0.0,
+        "signal_strength": getattr(r, "signal_strength", None) or 0.0,
+        "spread_bps": getattr(r, "spread_bps", None) or 0.0,
+        "order_id": oid,
+    }
+
+
 @app.get("/api/trades")
 async def get_trades(limit: int = 100):
     if not state.engine:
@@ -1848,79 +2104,8 @@ async def get_trades(limit: int = 100):
             source="paper", limit=limit, newest_first=True,
         )
         trades = []
-        import datetime
-        _utc = datetime.timezone.utc
-
-        def _iso(ts: float) -> str:
-            # TZ-aware ISO (…+00:00) so browsers in any timezone render the correct local time
-            return datetime.datetime.fromtimestamp(ts, _utc).isoformat()
-
         for r in records:
-            entry_ts = float(r.timestamp) if r.timestamp else 0.0
-            exit_ts = 0.0
-            entry_time = _iso(entry_ts) if entry_ts else None
-            exit_time = None
-            if r.trade_type == "EXIT" and r.duration_sec and r.duration_sec > 0:
-                exit_ts = entry_ts
-                entry_ts = exit_ts - r.duration_sec
-                exit_time = _iso(exit_ts)
-                entry_time = _iso(entry_ts)
-
-            oid = r.order_id or ""
-            if oid.startswith("paper_sl"):
-                exit_reason = "SL"
-            elif oid.startswith("paper_tp"):
-                exit_reason = "TP"
-            elif oid.startswith("paper_exit"):
-                exit_reason = "signal"
-            elif oid.startswith("paper_close"):
-                exit_reason = "close"
-            elif oid.startswith("trend_exit"):
-                exit_reason = "trend_exit"
-            elif oid.startswith("trend_rebalance"):
-                exit_reason = "rebalance"
-            else:
-                exit_reason = ""
-            entry_px = r.entry_price or r.price
-            notional = float(entry_px or 0) * float(r.quantity or 0)
-            lev = 1
-            try:
-                lev = int(state.engine.settings.get_symbol_config(r.symbol).leverage) if r.strategy != "TREND_DAILY" else 1
-            except Exception:
-                lev = 1
-            margin = notional / max(lev, 1)
-            trades.append({
-                "id": r.id if hasattr(r, 'id') else 0,
-                "trade_id": getattr(r, "trade_id", ""),
-                "symbol": r.symbol,
-                "side": r.side,
-                "trade_type": r.trade_type or "",
-                "strategy": r.strategy,
-                "entry_price": entry_px,
-                "exit_price": r.exit_price or (r.price if r.trade_type == "EXIT" else 0),
-                "quantity": r.quantity,
-                "pnl": r.pnl,
-                "fee": r.fee,
-                "pnl_bps": (r.pnl / notional * 1e4) if notional > 0 else 0.0,
-                "roe_pct": (r.pnl / margin) if margin > 0 else 0.0,
-                "leverage": lev,
-                "mae_bps": r.mae_bps or 0.0,
-                "mfe_bps": r.mfe_bps or 0.0,
-                "slippage_bps": r.slippage_bps or 0.0,
-                "order_type": r.order_type or "",
-                "exit_reason": exit_reason,
-                "duration_sec": r.duration_sec or 0,
-                "hold_sec": r.duration_sec or 0,
-                "entry_time": entry_time,
-                "exit_time": exit_time,
-                "entry_ts": entry_ts,   # epoch seconds (UTC) — chart markers
-                "exit_ts": exit_ts,     # 0 when still open / ENTRY record
-                "regime": r.regime or "",
-                "equity_after": r.equity_after or 0.0,
-                "signal_strength": r.signal_strength or 0.0,
-                "spread_bps": r.spread_bps or 0.0,
-                "order_id": oid,
-            })
+            trades.append(_trade_row(r))
         # Return most recent first
         trades.reverse()
         return {"trades": trades[:limit]}
