@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the BotStrike ops monitor every 15 minutes
+
+[Timer]
+OnBootSec=3min
+# :03 :18 :33 :48 UTC; the daily summary goes out at the first run after 00:20 UTC (00:33)
+OnCalendar=*:3/15
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

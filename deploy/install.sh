@@ -38,8 +38,13 @@ chown botstrike:botstrike $APP_DIR/.env && chmod 600 $APP_DIR/.env
 echo "[6/6] systemd + firewall + logrotate"
 cp $APP_DIR/deploy/logrotate-botstrike /etc/logrotate.d/botstrike && chmod 644 /etc/logrotate.d/botstrike
 cp $APP_DIR/deploy/botstrike-bridge.service /etc/systemd/system/botstrike-bridge.service
+# Ops monitor (scripts/ops_monitor.py): every 15 min, Telegram alerts + daily summary. Reads the journal.
+cp $APP_DIR/deploy/botstrike-monitor.service /etc/systemd/system/botstrike-monitor.service
+cp $APP_DIR/deploy/botstrike-monitor.timer /etc/systemd/system/botstrike-monitor.timer
+usermod -aG systemd-journal botstrike
 systemctl daemon-reload
 systemctl enable --now botstrike-bridge
+systemctl enable --now botstrike-monitor.timer
 # Firewall: bridge reachable ONLY from LAN + Tailscale. Nothing else inbound.
 ufw --force reset >/dev/null
 ufw default deny incoming >/dev/null
