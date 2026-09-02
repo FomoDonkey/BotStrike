@@ -1,5 +1,31 @@
 # BotStrike — Tasks
 
+## Sesión 2026-09-02 (5ª) — vigilancia automática, reset de histórico, UI premium (Strike) — EN CURSO
+Edgar: "déjalo todo listo para tú mismo vigilarlo", "borra el histórico y deja solo las abiertas de hoy",
+"UI/UX al nivel premium de Strike Finance, texto blanco brillante en todas partes".
+### Reset de histórico — HECHO (19:14Z)
+- [x] Backup (CT `/opt/botstrike/backups/2026-09-02_pre_reset/`, host `/root/botstrike_trade_database_2026-09-02_pre_reset.db`,
+  PC `data/ct104_trade_database_2026-09-02_pre_reset.db`) → 51 filas → 3 (entradas TREND_DAILY de hoy), 26 sesiones → 1,
+  equity 1.000 + PnL abierto, pico 1.000, día/semana 0, 3 posiciones restauradas, `total_trades` 0.
+### Vigilancia automática — HECHO (f7acb2b, 3070d9b; timer activo en el CT)
+- [x] `scripts/ops_monitor.py` + `botstrike-monitor.timer` (cada 15 min): health/engine/feed/tick, run diario del trend
+  (OK antes de 00:20Z), halts, killed, errores del journal, bucles de reinicio, avalancha de régimen; Telegram con
+  dedupe 6 h + "Resuelto" + resumen diario 00:33Z; `data/ops_monitor_last.json` → `GET /api/ops`. 5 tests.
+- [x] Primer run real: 2 falsos positivos por mis deploys → corregidos (excluir old=UNKNOWN, loop = ≥ 3 reinicios).
+- [x] Crons de sesión (solo mientras esta sesión viva): 00:17Z comprobar el run del trend; 07:12Z revisión matinal.
+### Backend v2.16 para la UI premium — HECHO (1903c6e + 26ff040, CT en 26ff040, 234/234)
+- [x] `analytics/portfolio.py` (`/api/portfolio`), `analytics/activity.py` (`/api/activity`, processor structlog +
+  hooks de fills), `/api/market/{sym}/funding_history` (Binance fapi, caché), `/api/ops`, `/api/trades/export.csv`,
+  `symbol_config` en `/api/market`; `_trade_row()` extraído y endurecido. Spec: `tasks/ui_premium_spec.md`.
+- [x] Estudio de Strike en Chrome pestaña por pestaña (Trade, Portfolio, Leaderboard, Vaults, Staking, Tools,
+  settings, market picker, order book/trades, chart tabs, footer) → tokens medidos (#0A0A0A, IBM Plex Sans
+  12.5/500, th 60 % blanco → nosotros ≥ 80 %, mint #4EFAB0, rose #F43F5E).
+### Frontend premium — EN CURSO (agente con `tasks/ui_premium_spec.md`)
+- [ ] Top nav + footer, Trade (Strike 1:1 con panel Bot), Portfolio (Dashboard+Performance), Strategies (vault cards +
+  leaderboard), Risk/Backtest/Data/Settings/System, gear popover, Ctrl+K, móvil. Criterio: `scripts/ui_contrast_audit.py`
+  0 offenders a 1440 y 390 en todas las rutas + tsc/lint/build + Playwright + 8 números = API.
+- [ ] Verificación propia (capturas completas), deploy, verificación en el CT, memoria.
+
 ## Sesión 2026-09-02 (4ª) — v2.15: estrategia de divergencias + terminal de trading premium — HECHO
 Edgar: "estrategia de divergencias con algo que sirva para verificarlas y puntos de entrada precisos" +
 "en live trading debería salir mucha más información de los trades" + UI al nivel de Strike Finance.

@@ -1025,3 +1025,14 @@
   vela, que la primera captura "verificada" no detectó porque miré la tabla y no el chart.
 - **LESSON: lo que deba re-ejecutar un effect va en estado/deps, no en un ref. Y en las capturas mirar TODO el
   viewport, no solo la zona del cambio.**
+
+### Encadenar el commit al `grep` y no al código de salida de pytest
+- `pytest | grep passed && git commit && deploy`: el grep "tuvo éxito" porque imprimió una línea, con 1 test en
+  rojo. Se subió un commit roto y el gate del CT (`update.sh`) abortó el reinicio (bien) → deploy extra.
+- **LESSON: capturar `rc=$?` de pytest (o `${PIPESTATUS[0]}`) y salir si no es 0 ANTES de commit/push/deploy.**
+
+### Los falsos positivos del monitor se descubren con el primer run real
+- Primer run en el CT: "restart_loop" (mis 2 reinicios de deploy) y "regime_flood" (5 arranques × 4 transiciones
+  UNKNOWN→X). Ninguno era un problema del bot.
+- **LESSON: un monitor nuevo se ejecuta a mano una vez y se leen sus alertas con lupa antes de dejarlo solo;
+  excluir los eventos que causan los propios deploys.**
