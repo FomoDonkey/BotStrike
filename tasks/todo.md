@@ -10,9 +10,19 @@ notificaciones de Telegram "no cuadran en nada" con lo que opera el bot (portfol
   el PC de Edgar es SU acceso: Proton VPN arranca con kill-switch y bloquea la LAN (lección ya
   conocida). No hay URL efímera ni nada que "recrear": ESA es la URL de marcadores.
 - [ ] Edgar: en Proton VPN activar "Allow LAN connections" (o no dejar que arranque con Windows)
-- [ ] Pendiente de verificar (necesita SSH): que la IP del CT es estática en `pct config 104`
-  (si fuera DHCP sin reserva la URL podría cambiar algún día)
-- [ ] Tailscale del host pide re-auth OTRA VEZ (bloquea deploy + journal). Enlace en la sesión.
+- [x] IP del CT verificada ESTÁTICA (2026-09-02): `pct config 104` → `ip=192.168.1.204/24,gw=192.168.1.1`,
+  `onboot: 1`. La URL de marcadores no puede cambiar sola.
+- [x] Tailscale re-auth (modo check) resuelta 2026-09-02 ~05:55 Madrid. Flujo que funcionó: mantener el
+  `ssh` abierto en background (el enlace muere si la sesión se cierra), extraer la URL del stderr y
+  abrirla con `Start-Process`; se aprueba desde cualquier dispositivo con sesión de Tailscale (móvil
+  vale). Hostname real del host: `pve` (en Tailscale se llama proxmox-mizu); verificado con `pct list`.
+- [ ] **Edgar — NUEVO culpable del "No se puede acceder a este sitio web" (2026-09-02):** Proton estaba
+  PARADA. El adaptador "VirtualBox Host-Only" (Ethernet 2, 172.25.2.29/27, config MANUAL) tiene una
+  puerta de enlace por defecto PERSISTENTE 172.25.2.1 (inalcanzable: ARP vacío) y DNS 1.1.1.1 por esa
+  interfaz → el resolver de Windows tarda 11 s en resolver google.com (`getaddrinfo` medido) y
+  Chrome/curl se rinden antes; `ping 8.8.8.8` y la LAN van bien, por eso engaña. Fix (config de sistema,
+  lo hace Edgar): en el adaptador VirtualBox Host-Only quitar puerta de enlace y DNS (o deshabilitarlo
+  cuando no use la VM) y borrar la ruta persistente: `route -p delete 0.0.0.0 mask 0.0.0.0 172.25.2.1`.
 ### Telegram — 4 causas raíz encontradas y ARREGLADAS (151/151 tests, 6 mutation-verified)
 - [x] **El snapshot de portfolio usaba estado de SESIÓN** (`portfolio_manager.get_portfolio_summary()`):
   con `Restart=always` + deploys, cada restart → "equity $1.000, 0 trades, sin posiciones". Es el
@@ -33,8 +43,24 @@ notificaciones de Telegram "no cuadran en nada" con lo que opera el bot (portfol
   (vista all-time SOLO en paper — en live el equity real es el wallet del exchange y ocultarlo
   habría sido el mismo bug al revés; provider perezoso; fallback legacy etiquetado "solo sesión"
   + warning en journal; test reforzado para el objeto ajustado), 4 refutados.
-- [ ] Deploy al CT 104 pendiente de la re-auth de Tailscale de Edgar; después verificar en el
-  journal los `telegram_send_failed` históricos (la prueba del descarte por HTML)
+- [x] **DESPLEGADO 2026-09-02 03:56 UTC** (`deploy/host_deploy.sh` por Tailscale SSH): commit a19bf4a en el
+  CT, test gate 151/151 en el entorno real (pandas 3.0.5), restart, `verify.sh` PASS, engine paper, WS 16
+  streams, 0 errores tras el restart, equity 989,04 $ / PnL -10,96 $ (all-time, coincide con la UI).
+- [x] Journal revisado — **la prueba del descarte por HTML NO aparece**: cero `telegram_send_failed`
+  (status≠200) desde el 2026-08-29. El fix del escapado queda verificado SOLO por tests (mutación). Lo que
+  sí hay: 9 `telegram_send_error error=''` (str vacío = `asyncio.TimeoutError`): 30-ago 01:14Z, 30-ago
+  23:46Z, y un racimo cada noche a las 01:12-01:14 UTC (03:12 Madrid) los días 31-ago, 1-sep y 2-sep (4
+  seguidos), más 1 el 1-sep 02:32Z coincidiendo con una caída de DNS que también tiró el WS de Binance
+  2,5 min. NO es el backup vzdump del host (02:30-02:31 local) ni el sync a Drive (03:32): es un
+  microcorte de salida del router/ISP. Los mensajes de esos minutos se PERDIERON (el sender no reintenta).
+- [ ] Mejora pequeña pendiente: reintento con backoff en `TelegramNotifier._send` ante timeout, loguear
+  `type(e).__name__`, y contador de fallos de envío visible en `/api/health`.
+- [ ] **CT 104 NO está en el backup diario del host** (`/etc/pve/jobs.cfg`: vmid 100,101,102,103,950 — el
+  job es del 2026-06-28, anterior al CT). `trade_database.db` y `.env` no tienen copia. Decisión de Edgar
+  (es config del host): añadir 104 al job (modo snapshot, ~20 s a las 02:30 local).
+- [ ] Edgar: confirmar en Telegram el "Bot encendido" de las ~05:56 (hora Madrid) con equity 989,04 $ y el
+  primer resumen de portfolio con vista histórica. No lo puedo ver desde aquí: el notifier solo loguea
+  fallos, y no hubo ninguno tras el restart.
 
 ## FASE 1 QUANT — trend diario VALIDADO (2026-08-31, commit 35faa9e) ✅ 11/11 GO/NO-GO
 `scripts/trend_daily_research.py` — primera estrategia del proyecto que pasa la validación

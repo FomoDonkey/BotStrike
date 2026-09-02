@@ -27,6 +27,27 @@
   respondiendo; lo que muere al reiniciar el PC es el ACCESO (Proton VPN kill-switch al arrancar
   Windows). Antes de tocar el servidor, probar la URL/puerto desde la máquina del usuario y
   revisar su VPN. La URL de marcadores es una sola: http://192.168.1.204:9420.
+- **Los journals mezclan zonas horarias: el host Proxmox loguea en local (CEST, +02:00) y la app en
+  UTC (`Z`).** Busqué un evento de las 01:12Z en el host con `--since 01:05` (local) y miré la ventana
+  equivocada en dos consultas seguidas. Antes de correlacionar dos logs, fijar la zona
+  (`journalctl --utc` o convertir a mano) y comprobar el sufijo del timestamp.
+- **Un adaptador virtual con puerta de enlace por defecto envenena el DNS de todo el PC.** VirtualBox
+  Host-Only con gw persistente 172.25.2.1 (inalcanzable) + DNS 1.1.1.1 por esa interfaz →
+  `getaddrinfo(google.com)` 11 s, Chrome "No se puede acceder", curl "Resolving timed out", mientras
+  `ping 8.8.8.8` y `Resolve-DnsName -Server` funcionan. Ante "internet roto pero LAN bien": listar
+  `Get-NetRoute 0.0.0.0/0` (TODAS las interfaces con default route) y medir `getaddrinfo`, no solo ping.
+- **Tailscale SSH en modo check: el enlace de aprobación vive lo que viva la sesión SSH.** Con
+  `BatchMode`/timeout corto el ssh muere en segundos, el enlace caduca y cada intento genera uno nuevo.
+  Lo que funciona: ssh en background con `ServerAliveInterval`, extraer la URL del stderr, abrirla en el
+  navegador del usuario (o que la apruebe desde el móvil) y esperar. El hostname real del host es `pve`;
+  "proxmox-mizu" es solo su nombre en Tailscale — identificar el host por `pct list`, no por el nombre.
+- **`error=''` en un log es un `asyncio.TimeoutError`, no un log roto.** `str(TimeoutError())` es vacío.
+  Loguear `type(e).__name__` junto a `str(e)` habría ahorrado media investigación.
+- **`python` en el PATH de esta máquina es el venv de hermes-agent (sin pytest).** Para la suite local
+  usar `py -3.12 -m pytest` (pandas 2.3.3); la verdad sigue siendo el test gate dentro del CT.
+- **Un notifier que no reintenta pierde mensajes en cada microcorte.** 9 timeouts en 4 noches (03:12
+  Madrid, ~1 min de corte del router/ISP) = 9 mensajes perdidos sin que nadie lo supiera. El envío por
+  red necesita reintento con backoff y un contador de fallos visible en el health.
 
 ## Auditoría R2 tanda 3 — "138 tests en verde" era una ilusión (2026-08-31)
 - **Un test que no falla al reintroducir el bug NO es un test.** La tanda 3 hizo mutation testing: 17 de 25
