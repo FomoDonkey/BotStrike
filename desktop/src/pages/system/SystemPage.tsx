@@ -59,7 +59,7 @@ export function SystemPage() {
         <Monitor className="w-5 h-5 text-accent" /> System Monitor
       </h1>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Engine Status */}
         <GlassPanel className="p-5" glow={system.engineRunning}>
           <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-4">Trading Engine</h3>
@@ -224,7 +224,7 @@ export function SystemPage() {
       </div>
 
       {/* Live Logs */}
-      <GlassPanel className="flex-1 p-4 flex flex-col min-h-0">
+      <GlassPanel className="flex-1 p-4 flex flex-col min-h-[280px] lg:min-h-0">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-xs text-text-secondary uppercase tracking-wider flex items-center gap-2">
             <Activity className="w-3 h-3" /> Live Logs

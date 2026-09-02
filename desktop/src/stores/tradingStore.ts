@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { STORE_FLUSH_MS } from "@/lib/constants";
 
 export interface PositionData {
   symbol: string;
@@ -73,25 +74,119 @@ interface TradingState {
   onPositions: (symbol: string, positions: PositionData[]) => void;
   onTrade: (trade: TradeData) => void;
   onSignal: (signal: SignalData) => void;
-  onMetrics: (metrics: MetricsData) => void;
+  onMetrics: (metrics: Partial<MetricsData>) => void;
+}
+
+const MAX_TRADES = 100;
+const MAX_SIGNALS = 50;
+
+const FALLBACK_METRICS: MetricsData = {
+  equity: 1000, pnl: 0, total_trades: 0, win_rate: 0,
+  sharpe_ratio: 0, max_drawdown: 0, total_fees: 0,
+};
+
+/**
+ * Keep only finite numbers: a `metrics` broadcast with a missing/null field used to land as
+ * `undefined` in the store → `pnl / x` = NaN → AnimatedNumber's `value !== seen` was always true
+ * → render loop → React #185 on every page. Never let NaN into the store.
+ */
+function sanitizeMetrics(input: Partial<MetricsData> | null | undefined, base: MetricsData): MetricsData {
+  const out: MetricsData = { ...base };
+  if (!input) return out;
+  for (const key of Object.keys(FALLBACK_METRICS) as (keyof MetricsData)[]) {
+    const v = input[key];
+    if (typeof v === "number" && Number.isFinite(v)) out[key] = v;
+  }
+  return out;
 }
 
 // Restore last known metrics from localStorage to avoid showing stale value on reconnect
 function loadCachedMetrics(): MetricsData {
-  const fallback: MetricsData = {
-    equity: 1000, pnl: 0, total_trades: 0, win_rate: 0,
-    sharpe_ratio: 0, max_drawdown: 0, total_fees: 0,
-  };
   try {
     const raw = localStorage.getItem("bs_last_metrics");
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return { ...fallback, ...parsed };
-    }
+    if (raw) return sanitizeMetrics(JSON.parse(raw) as Partial<MetricsData>, FALLBACK_METRICS);
   } catch {
     /* corrupt or unavailable localStorage — use defaults */
   }
-  return fallback;
+  return { ...FALLBACK_METRICS };
+}
+
+// ── Write batching ───────────────────────────────────────────────
+// On (re)connect the bridge replays the recent trades/signals and broadcasts positions for
+// every symbol; each used to be its own synchronous set() → one React commit per message.
+// Everything is queued here and flushed at most every STORE_FLUSH_MS in a single set().
+
+const pendingTrades: TradeData[] = [];
+const pendingSignals: SignalData[] = [];
+const pendingPositions = new Map<string, PositionData[]>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleFlush() {
+  if (flushTimer) return;
+  flushTimer = setTimeout(flushPending, STORE_FLUSH_MS);
+}
+
+function shallowEqualRecord(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+  const ka = Object.keys(a as object);
+  const kb = Object.keys(b as object);
+  if (ka.length !== kb.length) return false;
+  const ra = a as Record<string, unknown>;
+  const rb = b as Record<string, unknown>;
+  for (const k of ka) {
+    if (!Object.is(ra[k], rb[k])) return false;
+  }
+  return true;
+}
+
+/** Same length and every position shallow-equal → nothing to re-render. */
+export function positionsEqual(a: PositionData[] | undefined, b: PositionData[]): boolean {
+  if (!a) return false; // first broadcast for a symbol always lands
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (!shallowEqualRecord(a[i], b[i])) return false;
+  }
+  return true;
+}
+
+function flushPending() {
+  flushTimer = null;
+  const s = useTradingStore.getState();
+  const patch: Partial<TradingState> = {};
+
+  if (pendingTrades.length) {
+    patch.recentTrades = [...s.recentTrades, ...pendingTrades].slice(-MAX_TRADES);
+    pendingTrades.length = 0;
+  }
+  if (pendingSignals.length) {
+    patch.recentSignals = [...s.recentSignals, ...pendingSignals].slice(-MAX_SIGNALS);
+    pendingSignals.length = 0;
+  }
+  if (pendingPositions.size) {
+    let next: Record<string, PositionData[]> | null = null;
+    for (const [sym, arr] of pendingPositions) {
+      const cur = s.positions[sym];
+      if (cur && positionsEqual(cur, arr)) continue;
+      if (!cur && arr.length === 0) continue; // "no positions" for a symbol we never had — noise
+      if (!next) next = { ...s.positions };
+      next[sym] = arr;
+    }
+    pendingPositions.clear();
+    if (next) patch.positions = next;
+  }
+
+  if (Object.keys(patch).length > 0) useTradingStore.setState(patch);
+}
+
+/** Test/diagnostic hook: apply whatever is queued right now. */
+export function flushTradingStore() {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  flushPending();
 }
 
 export const useTradingStore = create<TradingState>((set) => ({
@@ -100,17 +195,30 @@ export const useTradingStore = create<TradingState>((set) => ({
   recentSignals: [],
   metrics: loadCachedMetrics(),
 
-  onPositions: (symbol, positions) =>
-    set((s) => ({ positions: { ...s.positions, [symbol]: positions } })),
+  onPositions: (symbol, positions) => {
+    if (!symbol) return;
+    pendingPositions.set(symbol, Array.isArray(positions) ? positions : []);
+    scheduleFlush();
+  },
 
-  onTrade: (trade) =>
-    set((s) => ({ recentTrades: [...s.recentTrades.slice(-99), trade] })),
+  onTrade: (trade) => {
+    pendingTrades.push(trade);
+    if (pendingTrades.length > MAX_TRADES) pendingTrades.splice(0, pendingTrades.length - MAX_TRADES);
+    scheduleFlush();
+  },
 
-  onSignal: (signal) =>
-    set((s) => ({ recentSignals: [...s.recentSignals.slice(-49), signal] })),
+  onSignal: (signal) => {
+    pendingSignals.push(signal);
+    if (pendingSignals.length > MAX_SIGNALS) pendingSignals.splice(0, pendingSignals.length - MAX_SIGNALS);
+    scheduleFlush();
+  },
 
-  onMetrics: (metrics) => {
-    try { localStorage.setItem("bs_last_metrics", JSON.stringify(metrics)); } catch { /* storage unavailable */ }
-    set({ metrics });
+  onMetrics: (incoming) => {
+    set((s) => {
+      const metrics = sanitizeMetrics(incoming, s.metrics);
+      if (shallowEqualRecord(metrics, s.metrics)) return {}; // identical broadcast → no render
+      try { localStorage.setItem("bs_last_metrics", JSON.stringify(metrics)); } catch { /* storage unavailable */ }
+      return { metrics };
+    });
   },
 }));

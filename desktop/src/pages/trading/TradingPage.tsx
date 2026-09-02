@@ -97,13 +97,13 @@ export function TradingPage() {
   const priceUp = price > prevPrice;
 
   return (
-    <div className="h-full flex flex-col gap-3">
-      {/* Top Row: Chart + Order Book */}
-      <div className="flex-1 flex gap-3 min-h-0">
+    <div className="flex flex-col gap-3 lg:h-full min-w-0">
+      {/* Top Row: Chart + Order Book — stacks below lg; the chart keeps a real height on phones */}
+      <div className="flex flex-col lg:flex-row gap-3 lg:flex-1 lg:min-h-0">
         {/* Main Chart */}
-        <Panel className="flex-1 flex flex-col overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-2 border-b border-white/5">
-            <div className="flex items-center gap-3">
+        <Panel className="flex-1 flex flex-col overflow-hidden min-h-[320px] lg:min-h-0 min-w-0">
+          <div className="flex items-center justify-between gap-2 px-3 sm:px-4 py-2 border-b border-white/5 flex-wrap">
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
               <SymbolSelector value={symbol} onChange={setSymbol} variant="tabs" />
               <div className="flex items-center gap-0.5 bg-white/[0.03] rounded-lg p-0.5">
                 {TIMEFRAMES.map((tf) => (
@@ -136,23 +136,25 @@ export function TradingPage() {
               )}
             </div>
           </div>
-          <div className="flex-1 min-h-0">
+          {/* flex column: the chart container fills via flex-1, not via height:100% — a percentage
+              height resolves to 0 px when the chain is sized by min-height (the phone layout) */}
+          <div className="flex-1 min-h-[260px] lg:min-h-0 flex flex-col">
             <ErrorBoundary
               fallback={
-                <div className="flex items-center justify-center h-full text-text-muted text-sm">
+                <div className="flex flex-1 items-center justify-center text-text-muted text-sm">
                   Chart unavailable
                 </div>
               }
             >
-              <CandlestickChart symbol={symbol} trades={symbolTrades} timeframe={timeframe} />
+              <CandlestickChart className="flex-1 min-h-0" symbol={symbol} trades={symbolTrades} timeframe={timeframe} />
             </ErrorBoundary>
           </div>
         </Panel>
 
         {/* Right Panel */}
-        <div className="w-72 flex flex-col gap-3">
+        <div className="w-full lg:w-72 flex flex-col sm:flex-row lg:flex-col gap-3 shrink-0">
           {/* Order Book */}
-          <Panel className="flex-1 p-3 overflow-hidden">
+          <Panel className="flex-1 p-3 overflow-hidden min-w-0">
             <h3 className="text-[10px] text-text-muted uppercase tracking-wider mb-2">Order Book</h3>
             {orderbook && (orderbook.bids?.length > 0 || orderbook.asks?.length > 0) ? (
               (() => {
@@ -194,7 +196,7 @@ export function TradingPage() {
           </Panel>
 
           {/* Microstructure */}
-          <Panel className="p-3">
+          <Panel className="p-3 sm:w-56 lg:w-auto shrink-0">
             <h3 className="text-[10px] text-text-muted uppercase tracking-wider mb-2">Microstructure</h3>
             <div className="space-y-1.5 text-xs">
               <div className="flex justify-between">
@@ -219,13 +221,13 @@ export function TradingPage() {
       </div>
 
       {/* Bottom Row */}
-      <div className="flex gap-3 h-44">
-        <Panel className="flex-1 p-3 overflow-auto">
+      <div className="flex flex-col lg:flex-row gap-3 lg:h-44 shrink-0">
+        <Panel className="flex-1 p-3 overflow-auto min-w-0 max-h-60 lg:max-h-none">
           <h3 className="text-[10px] text-text-muted uppercase tracking-wider mb-2">Open Positions</h3>
           {positions.length === 0 ? (
             <p className="text-text-muted text-xs">No open positions</p>
           ) : (
-            <table className="w-full text-xs">
+            <table className="w-full min-w-[420px] text-xs">
               <thead>
                 <tr className="text-text-muted border-b border-white/5">
                   <th className="text-left py-1">Symbol</th>
@@ -254,7 +256,7 @@ export function TradingPage() {
           )}
         </Panel>
 
-        <Panel className="w-80 p-3 overflow-auto">
+        <Panel className="w-full lg:w-80 p-3 overflow-auto max-h-60 lg:max-h-none shrink-0">
           <h3 className="text-[10px] text-text-muted uppercase tracking-wider mb-2">Signal Feed</h3>
           {signals.length === 0 ? (
             <p className="text-text-muted text-xs">No signals yet</p>

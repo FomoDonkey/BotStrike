@@ -1,5 +1,64 @@
 # BotStrike — Tasks
 
+## Sesión 2026-09-02 (3ª) — v2.14: "sí a todo" — EN CURSO
+Edgar: Fase 0 completa + fixes UI + TODO configurable desde el navegador + interés compuesto.
+### Backend HECHO (commit local, 211/211 tests, 7 guardas verificadas por mutación)
+- [x] `config/overrides.py`: esquema de 79 campos editables (tipo/límites/ayuda/restart), `PUT /api/config`
+  aplica EN CALIENTE y persiste `data/config_overrides.json` (gitignored; sobrevive al deploy);
+  `GET /api/config/schema`, `POST /api/config/reset`, `POST /api/bot/restart`. Tests: `BOTSTRIKE_NO_OVERRIDES=1`.
+- [x] `strategies/trend_daily.py` + `trend_daily_model.py`: motor diario (spec §11.2 validada), klines SPOT por
+  REST con cache parquet, libro persistente `data/trend_daily_state.json`, umbral de rebalanceo, tracking
+  modelo↔paper, kill → cierra libro, `POST /api/trend/run`, `GET /api/trend`. **Un restart NO cierra el
+  libro** (solo el halt por DD). Humo real: universo BTC/ETH/SOL, pesos 0,117/0,073/0,076, exposición 27 %.
+- [x] Interés compuesto (`compounding_enabled`, ON): sizing sobre equity histórico + PnL abierto;
+  `risk/persistence.py` reconstruye pico/PnL día/semana desde la DB; puerta semanal nueva; escalera
+  −2 % día / −5 % semana / −10 % pico (defaults cambiados: daily 5 %→2 %).
+- [x] Edge monitor (`analytics/edge.py`): t-stat/PF/fee-share por estrategia (ventana 200), kill automático
+  con aviso Telegram y des-kill si mejora; `/api/edge`; `/api/strategies` generado desde la config.
+- [x] Régimen (`core/regime_detector.py`): medido en el CT 885 cambios/48 h (4,6/h/símbolo, mediana 5 min,
+  320 idas y vueltas < 5 min, 302 TRENDING_UP↔DOWN) porque todo iba sobre velas de 1 min (ADX 14 min,
+  momentum 20 min, umbrales = percentiles móviles de 8 h, "suavizado" de 6 s). Ahora velas de 15 min
+  COMPLETAS + permanencia mínima 30 min (histéresis temporal) + `/api/regime`; Telegram de régimen OFF por
+  defecto y con tope de 1/h/símbolo. Simulación sobre los datos reales: con 30 min de permanencia
+  sobreviven el 11 % de los cambios (2/h en total); con 60 min el 4 %.
+- [x] Telegram: interruptores en vivo, reintento con backoff (3 intentos), contador de pérdidas en
+  `/api/health`, digest diario. Microestructura OFF por defecto (interruptor). Catálogo con filas reales.
+  Redirect `/ruta` → `/#/ruta`. `/api/performance` añade `current_drawdown`, `peak_equity`, `sharpe_valid`.
+- [x] LECCIÓN (coste real): la prueba de humo local usó el token de Telegram del `.env` → Edgar recibió
+  3 "compras" paper de MI PC que no existen en el CT. Silenciar Telegram en pruebas locales SIEMPRE.
+### Pendiente en esta sesión
+- [ ] Frontend (agente): crash #185, responsive, Settings editable por esquema, Strategies con toggles,
+  panel trend, Risk ladder, Dashboard/Performance coherentes, visibilitychange.
+- [ ] `npm run build:web` → verificar con Playwright (1440/390) contra bridge local → commit + push →
+  deploy CT → verificar API/UI/journal → `POST /api/trend/run` en el CT → Telegram.
+
+## Sesión 2026-09-02 (3ª) — UI v2.14: crash hardening + responsive + config editable (desktop/src)
+Agente frontend en paralelo con el backend (`tasks/ui_config_contract.md`). Solo `desktop/src`; sin commit.
+- [x] Crash React #185: `AnimatedNumber`/`PriceTicker` sin setState en render (tween por rAF sobre el nodo de
+  texto + flash por clase DOM); `tradingStore.onMetrics` descarta NaN/undefined (causa más probable del loop:
+  `pnl/equity` con campo ausente → NaN → `value !== seen` siempre true). ErrorBoundary con `resetKey` de ruta y
+  auto-retry 1 s. Batching 100 ms en trades/signals/positions/logs; posiciones shallow-equal no re-renderizan.
+  Toasts solo para fills de <60 s (no para el replay del bridge).
+- [x] Responsive: sidebar drawer <lg (hamburguesa, Escape, backdrop), TopBar con tickers scrollables (reloj y
+  REMOTE ocultos <md), grids `grid-cols-1 sm:2 xl:4`, tablas en `overflow-x-auto`, chart de Trading con altura
+  real en móvil (flex, no `height:100%`), tabs de Settings scrollables. Verificado en Chrome (bundle de
+  producción `vite preview` + iframe de 390 px): 0 px de overflow horizontal en todas las rutas.
+- [x] Dashboard: DD all-time (`current_drawdown`) con "Limit/Max", Sharpe "n/a" si `sharpe_valid=false`,
+  donut desde `/api/strategies` (sin 50/50 ficticio), tarjetas Trend daily y Edge monitor.
+- [x] Performance: solo trades cerrados (EXIT), Side LONG/SHORT, Fee, bps, Hold; cabecera = `total_trades`.
+- [x] Settings: editor genérico por schema (`components/settings/SchemaForm.tsx` + `FieldInput.tsx`), PUT solo
+  de rutas cambiadas, errores 400 en línea, banner "Restart engine", "Reset to defaults" con confirmación.
+- [x] Strategies: switch on/off (alloc 0 / última guardada / 1.0 TREND_DAILY / 0.5 resto), slider con PUT al
+  soltar, descripción y params de la API, bloque Edge; `TrendDailyPanel` (universo, targets, posiciones,
+  tracking model vs paper).
+- [x] Risk: escalera diario/semanal/DD desde `/api/risk` (5 s) + WS; peak, compounding, killed strategies.
+- [x] Data: `records` con separador de miles + `date_range`. `useVisibilityRefresh` + `pingAll()` en ws.ts.
+- [ ] PENDIENTE (backend): en el CT 104 todavía 404 en `/api/config/schema`, `/api/trend`, `/api/edge`,
+  `/api/risk` y `/api/strategies` sin `enabled/description/params/edge` → la UI muestra los fallbacks
+  ("not available on this bridge"). Re-verificar con el bridge v2.14 desplegado y hacer `build:web` + deploy.
+- [ ] PENDIENTE: la ruta de asignación se asume `trading.allocation_<type_lower>` (p.ej.
+  `allocation_trend_daily`) — confirmar con el backend.
+
 ## Sesión 2026-09-02 (2ª) — AUDITORÍA QUANT + UI del paper trading (informe publicado como artifact)
 Petición de Edgar: auditar como el mejor quant el paper trading (métricas, balances), revisar la UI al detalle
 en el navegador, coherencia UI↔datos y plan de mejoras para que sea rentable con 300 $ y con capital grande.

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { HEALTH_STALE_MS, HEALTH_WATCHDOG_TICK_MS } from "@/lib/constants";
+import { HEALTH_STALE_MS, HEALTH_WATCHDOG_TICK_MS, STORE_FLUSH_MS } from "@/lib/constants";
 
 export interface LogEntry {
   timestamp: number;
@@ -60,6 +60,27 @@ function startHealthWatchdog() {
   }, HEALTH_WATCHDOG_TICK_MS);
 }
 
+// ── Log batching ─────────────────────────────────────────────────
+// The bridge replays its recent log ring on connect (dozens of lines in one burst); each line
+// used to be a synchronous set() → one React commit per line. Queue and flush every STORE_FLUSH_MS.
+
+const pendingLogs: LogEntry[] = [];
+let logFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function queueLog(entry: LogEntry) {
+  pendingLogs.push(entry);
+  if (pendingLogs.length > MAX_LOGS) pendingLogs.splice(0, pendingLogs.length - MAX_LOGS);
+  if (logFlushTimer) return;
+  logFlushTimer = setTimeout(flushLogs, STORE_FLUSH_MS);
+}
+
+function flushLogs() {
+  logFlushTimer = null;
+  if (pendingLogs.length === 0) return;
+  const batch = pendingLogs.splice(0, pendingLogs.length);
+  useSystemStore.setState((s) => ({ logs: [...s.logs, ...batch].slice(-MAX_LOGS) }));
+}
+
 export const useSystemStore = create<SystemState>((set) => {
   startHealthWatchdog();
   return {
@@ -85,28 +106,18 @@ export const useSystemStore = create<SystemState>((set) => {
       }),
 
     onLog: (data) =>
-      set((s) => ({
-        logs: [
-          ...s.logs.slice(-(MAX_LOGS - 1)),
-          {
-            timestamp: data.timestamp ?? Date.now() / 1000,
-            level: data.level ?? "info",
-            message: data.message ?? JSON.stringify(data),
-          },
-        ],
-      })),
+      queueLog({
+        timestamp: data.timestamp ?? Date.now() / 1000,
+        level: data.level ?? "info",
+        message: data.message ?? JSON.stringify(data),
+      }),
 
     onEngineError: (data) =>
-      set((s) => ({
-        logs: [
-          ...s.logs.slice(-(MAX_LOGS - 1)),
-          {
-            timestamp: data.timestamp ?? Date.now() / 1000,
-            level: "error",
-            message: data.error ?? "Unknown engine error",
-          },
-        ],
-      })),
+      queueLog({
+        timestamp: data.timestamp ?? Date.now() / 1000,
+        level: "error",
+        message: data.error ?? "Unknown engine error",
+      }),
 
     setBridgeConnected: (v) => set({ bridgeConnected: v }),
 

@@ -18,6 +18,8 @@ import {
   type EngineErrorMessage,
 } from "@/stores/systemStore";
 import { useAlertStore } from "@/stores/alertStore";
+import { TRADE_ALERT_MAX_AGE_MS } from "@/lib/constants";
+import { toMs } from "@/lib/utils";
 
 /**
  * Start WebSocket connections to the bridge.
@@ -67,21 +69,28 @@ export function useWebSocketBridge() {
           const t = msg.data as TradeData | undefined;
           if (t) {
             useTradingStore.getState().onTrade(t);
-            const isExit = t.trade_type === "EXIT" || (t.pnl ?? 0) !== 0;
-            const label = isExit ? `Close ${t.side}` : `Open ${t.side}`;
-            const pnlStr = isExit ? ` -- PnL: $${(t.pnl ?? 0).toFixed(4)}` : "";
-            useAlertStore.getState().addAlert({
-              level: isExit ? ((t.pnl ?? 0) >= 0 ? "info" : "warning") : "info",
-              title: isExit ? "Position Closed" : "Position Opened",
-              message: `${label} ${t.symbol} @ $${t.price?.toFixed(2)}${pnlStr}`,
-              sound: isExit ? ((t.pnl ?? 0) >= 0 ? "profit" : "loss") : "trade",
-            });
+            // The bridge replays its recent fills on every (re)connect — a toast + sound for
+            // each of them was the "20 notifications on page load" symptom. Only a fill that
+            // happened in the last minute is news.
+            const fillMs = toMs(t.timestamp) || toMs(msg.timestamp);
+            const isLive = fillMs > 0 && Date.now() - fillMs <= TRADE_ALERT_MAX_AGE_MS;
+            if (isLive) {
+              const isExit = t.trade_type === "EXIT" || (t.pnl ?? 0) !== 0;
+              const label = isExit ? `Close ${t.side}` : `Open ${t.side}`;
+              const pnlStr = isExit ? ` -- PnL: $${(t.pnl ?? 0).toFixed(4)}` : "";
+              useAlertStore.getState().addAlert({
+                level: isExit ? ((t.pnl ?? 0) >= 0 ? "info" : "warning") : "info",
+                title: isExit ? "Position Closed" : "Position Opened",
+                message: `${label} ${t.symbol} @ $${(t.price ?? 0).toFixed(2)}${pnlStr}`,
+                sound: isExit ? ((t.pnl ?? 0) >= 0 ? "profit" : "loss") : "trade",
+              });
+            }
           }
         } else if (msg.type === "signal") {
           if (msg.data) useTradingStore.getState().onSignal(msg.data as SignalData);
         } else if (msg.type === "metrics") {
           const { type: _type, timestamp: _ts, ...metrics } = msg;
-          useTradingStore.getState().onMetrics(metrics as unknown as MetricsData);
+          useTradingStore.getState().onMetrics(metrics as unknown as Partial<MetricsData>);
         }
       } catch (e) {
         console.error("[ws:trading] handler error:", e);

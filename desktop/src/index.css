@@ -86,3 +86,44 @@ html, body, #root {
   background: rgba(0, 212, 170, 0.2);
   color: var(--color-text-primary);
 }
+
+/* Hidden-but-scrollable rows (TopBar tickers, Settings tabs on narrow screens) */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* Native range input styled to the theme (Strategies allocation slider) */
+input[type="range"].bs-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.08);
+  outline: none;
+}
+input[type="range"].bs-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--color-accent);
+  border: 2px solid var(--color-bg-surface);
+  cursor: pointer;
+}
+input[type="range"].bs-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--color-accent);
+  border: 2px solid var(--color-bg-surface);
+  cursor: pointer;
+}
+input[type="range"].bs-range:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

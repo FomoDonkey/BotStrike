@@ -1,48 +1,86 @@
-import { useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { GlassPanel } from "@/components/shared/GlassPanel";
-import { STRATEGY_COLORS, STRATEGY_LABELS } from "@/lib/constants";
-import { Brain, ToggleLeft, ToggleRight } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { api } from "@/lib/api";
-
-interface StrategyInfo {
-  type: string;
-  active: boolean;
-  allocation: number;
-  name: string;
-  killed?: boolean;
-  kill_reason?: string;
-}
-
-const FALLBACK_STRATEGIES: StrategyInfo[] = [
-  { type: "MEAN_REVERSION", active: true, allocation: 0.50, name: "MeanReversionStrategy" },
-  { type: "FIBONACCI_RETRACEMENT", active: true, allocation: 0.50, name: "FibonacciRetracementStrategy" },
-  { type: "ORDER_FLOW_MOMENTUM", active: false, allocation: 0, name: "OrderFlowMomentumStrategy" },
-  { type: "TREND_FOLLOWING", active: false, allocation: 0, name: "TrendFollowingStrategy" },
-  { type: "MARKET_MAKING", active: false, allocation: 0, name: "MarketMakingStrategy" },
-];
-
-const STRATEGY_DESCS: Record<string, string> = {
-  MEAN_REVERSION: "5m pullback in 1H trend direction — RSI + BB + trailing stop (ETH/SOL/ADA)",
-  FIBONACCI_RETRACEMENT: "15m impulse-retracement at 50-61.8% Fib zone — R:R 3.6:1 (BTC)",
-  ORDER_FLOW_MOMENTUM: "OBI + Hawkes + Microprice scalping (archived)",
-  TREND_FOLLOWING: "EMA crossover + ADX confirmation (archived)",
-  MARKET_MAKING: "Avellaneda-Stoikov dynamic spreads (archived)",
-};
+import { Brain } from "lucide-react";
+import { api, ApiError, type ConfigField, type ConfigSchemaResponse, type StrategyInfo } from "@/lib/api";
+import { STRATEGY_LABELS } from "@/lib/constants";
+import { usePolling } from "@/hooks/usePolling";
+import { useAlertStore } from "@/stores/alertStore";
+import { allocationPath } from "@/components/settings/schemaUtils";
+import { StrategyCard } from "./StrategyCard";
+import { TrendDailyPanel } from "./TrendDailyPanel";
+import { rememberAllocation } from "./allocationMemory";
 
 export function StrategiesPage() {
-  const [strategies, setStrategies] = useState<StrategyInfo[]>(FALLBACK_STRATEGIES);
+  const navigate = useNavigate();
+  const addAlert = useAlertStore((s) => s.addAlert);
+  const [strategies, setStrategies] = useState<StrategyInfo[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [schema, setSchema] = useState<ConfigSchemaResponse | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>("TREND_DAILY");
+
+  const load = useCallback(async () => {
+    try {
+      const r = await api.strategies();
+      setStrategies(r.strategies ?? []);
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+  usePolling(load, 30_000);
 
   useEffect(() => {
-    api.strategies()
-      .then((data) => {
-        if (data?.strategies && data.strategies.length > 0) {
-          setStrategies(data.strategies);
-        }
-      })
-      .catch(() => {});
+    let cancelled = false;
+    api.configSchema().then((s) => { if (!cancelled) setSchema(s); }).catch(() => {});
+    return () => { cancelled = true; };
   }, []);
+
+  const fieldByPath = useMemo(() => {
+    const m = new Map<string, ConfigField>();
+    for (const g of schema?.groups ?? []) for (const f of g.fields) m.set(f.path, f);
+    return m;
+  }, [schema]);
+
+  /** Settings tab holding this strategy's params (matched by field name), with a sane fallback. */
+  const paramGroupFor = useCallback((s: StrategyInfo): string => {
+    const keys = new Set(Object.keys(s.params ?? {}));
+    for (const g of schema?.groups ?? []) {
+      if (g.per_symbol) continue;
+      if (g.fields.some((f) => keys.has(f.path.split(".").pop() ?? ""))) return g.id;
+    }
+    return s.type === "TREND_DAILY" ? "trend_daily" : "strategies";
+  }, [schema]);
+
+  const setAllocation = useCallback(async (type: string, value: number) => {
+    setBusy(type);
+    const label = STRATEGY_LABELS[type] ?? type;
+    try {
+      const key = allocationPath(type).split(".")[1];
+      const res = await api.configUpdate({ trading: { [key]: value } });
+      if (value > 0) rememberAllocation(type, value);
+      addAlert({
+        level: res.restart_required ? "warning" : "info",
+        title: value > 0 ? `${label} → ${(value * 100).toFixed(0)}%` : `${label} disabled`,
+        message: res.restart_required ? "Applies after an engine restart (Settings)" : "Applied to the running engine",
+      });
+      await load();
+    } catch (e) {
+      addAlert({
+        level: "critical",
+        title: "Allocation update failed",
+        message: e instanceof ApiError ? e.message : String(e),
+        sound: "alert",
+      });
+    } finally {
+      setBusy(null);
+    }
+  }, [addAlert, load]);
 
   return (
     <motion.div
@@ -50,71 +88,51 @@ export function StrategiesPage() {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
     >
-      <h1 className="text-lg font-semibold text-text-primary flex items-center gap-2">
-        <Brain className="w-5 h-5 text-accent" /> Strategy Manager
-      </h1>
-
-      <div className="grid grid-cols-2 gap-4">
-        {strategies.map((s) => (
-          <GlassPanel
-            key={s.type}
-            className="p-5"
-            glow={s.active}
-          >
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-3">
-                <div
-                  className="w-3 h-3 rounded-full"
-                  style={{ backgroundColor: STRATEGY_COLORS[s.type] }}
-                />
-                <span className="font-semibold text-text-primary">
-                  {STRATEGY_LABELS[s.type] || s.type}
-                </span>
-              </div>
-              {s.active ? (
-                <ToggleRight className="w-6 h-6 text-accent" />
-              ) : (
-                <ToggleLeft className="w-6 h-6 text-text-muted" />
-              )}
-            </div>
-            <p className="text-xs text-text-secondary mb-4">
-              {STRATEGY_DESCS[s.type] || s.name}
-            </p>
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-text-muted">Allocation</span>
-              <div className="flex items-center gap-2">
-                <div className="w-24 h-1.5 rounded-full bg-white/5 overflow-hidden">
-                  <div
-                    className="h-full rounded-full"
-                    style={{
-                      width: `${s.allocation * 100}%`,
-                      backgroundColor: STRATEGY_COLORS[s.type],
-                    }}
-                  />
-                </div>
-                <span className="font-mono" style={{ color: STRATEGY_COLORS[s.type] }}>
-                  {(s.allocation * 100).toFixed(0)}%
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center justify-between text-xs mt-2">
-              <span className="text-text-muted">Status</span>
-              <span className={cn(
-                "px-2 py-0.5 rounded text-[10px] font-semibold uppercase",
-                s.killed ? "bg-loss/10 text-loss" :
-                s.active ? "bg-profit/10 text-profit" : "bg-white/5 text-text-muted"
-              )}>
-                {s.killed ? "KILLED" : s.active ? "ACTIVE" : "DISABLED"}
-              </span>
-            </div>
-            {s.killed && s.kill_reason && (
-              <div className="text-[10px] text-loss/80 mt-1 font-mono truncate">
-                {s.kill_reason}
-              </div>
-            )}
-          </GlassPanel>
-        ))}
+      <div className="flex items-baseline justify-between gap-3 flex-wrap">
+        <h1 className="text-lg font-semibold text-text-primary flex items-center gap-2">
+          <Brain className="w-5 h-5 text-accent" /> Strategy Manager
+        </h1>
+        <span className="text-[11px] text-text-muted">
+          {strategies.filter((s) => s.active).length} active · {strategies.filter((s) => s.enabled ?? s.allocation > 0).length} enabled · {strategies.length} total
+        </span>
       </div>
+
+      {!loaded ? (
+        <GlassPanel className="p-8 text-center"><p className="text-text-muted text-sm">Loading strategies…</p></GlassPanel>
+      ) : strategies.length === 0 ? (
+        <GlassPanel className="p-8 text-center">
+          <p className="text-text-muted text-sm">No strategies reported by the bridge.</p>
+          {loadError && <p className="text-xs font-mono text-loss mt-2 break-all">{loadError}</p>}
+        </GlassPanel>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {strategies.map((s) => {
+            const isTrend = s.type === "TREND_DAILY";
+            return (
+              <Fragment key={s.type}>
+                <StrategyCard
+                  s={s}
+                  allocField={fieldByPath.get(allocationPath(s.type))}
+                  busy={busy === s.type}
+                  expandable={isTrend}
+                  expanded={isTrend && expanded === s.type}
+                  onToggleExpand={() => setExpanded((cur) => (cur === s.type ? null : s.type))}
+                  onAllocation={setAllocation}
+                  onEditParams={() => navigate("/settings", { state: { tab: paramGroupFor(s) } })}
+                />
+                {isTrend && expanded === s.type && (
+                  <div className="lg:col-span-2 min-w-0">
+                    <TrendDailyPanel />
+                  </div>
+                )}
+              </Fragment>
+            );
+          })}
+        </div>
+      )}
+      {loaded && loadError && strategies.length > 0 && (
+        <p className="text-[11px] font-mono text-warning">Last refresh failed: {loadError}</p>
+      )}
     </motion.div>
   );
 }

@@ -46,6 +46,7 @@ export const STRATEGY_COLORS: Record<string, string> = {
   ORDER_FLOW_MOMENTUM: "#00CEC9",
   TREND_FOLLOWING: "#00B894",
   MARKET_MAKING: "#FDCB6E",
+  TREND_DAILY: "#38BDF8",
 };
 
 export const STRATEGY_LABELS: Record<string, string> = {
@@ -54,7 +55,15 @@ export const STRATEGY_LABELS: Record<string, string> = {
   ORDER_FLOW_MOMENTUM: "Order Flow",
   TREND_FOLLOWING: "Trend Following",
   MARKET_MAKING: "Market Making",
+  TREND_DAILY: "Trend daily",
 };
+
+// Store write batching — high-frequency WS channels (trades/signals/positions/logs) are
+// queued and flushed at most this often so a replay burst on connect is one render, not 100.
+export const STORE_FLUSH_MS = 100;
+// A trade older than this on arrival is replayed history (bridge re-sends recent fills on
+// connect) → no toast/sound for it.
+export const TRADE_ALERT_MAX_AGE_MS = 60_000;
 
 export const EXCHANGE_LABELS: Record<string, string> = {
   binance: "Binance",

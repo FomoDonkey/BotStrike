@@ -1,5 +1,32 @@
 # BotStrike — Lessons Learned
 
+## v2.14 (2026-09-02) — régimen, Telegram en pruebas, configuración en caliente
+- **Una prueba local con el `.env` de producción ES producción para el usuario.** El bridge levantado
+  en mi PC para la prueba de humo usó el token de Telegram real: Edgar recibió tres "compras" paper
+  que no existían en el servidor y buscó en la UI algo que no estaba. Regla: en cualquier arranque
+  local exportar `TELEGRAM_BOT_TOKEN=` vacío (o `telegram_enabled=false` en overrides) ANTES de
+  arrancar, y parar el proceso local en cuanto termine la prueba.
+- **Medir el ruido antes de "arreglarlo" a ojo.** 885 cambios de régimen en 48 h (mediana 5 min, 320
+  idas y vueltas < 5 min) salían del journal en un minuto de awk; con esos datos se puede simular la
+  corrección (permanencia 30 min → sobrevive el 11 %) ANTES de tocar el código y saber qué esperar.
+- **Un indicador de 14 barras de 1 minuto no es un régimen, es ruido con nombre.** ADX(14)=14 min,
+  momentum(20)=20 min y umbrales que son percentiles móviles de 8 h garantizan por construcción que
+  ~40 % del tiempo "hay tendencia" y que la etiqueta cambie al cruzar cualquier percentil. El horizonte
+  del régimen debe ser ≥ 10× el holding period de la estrategia (30 min → velas de 15 min, horas de
+  memoria) y necesita histéresis TEMPORAL (permanencia), no "2 detecciones a 3 s".
+- **Toda notificación necesita un tope de frecuencia independiente de su causa.** Aunque el detector
+  fuera perfecto, un aviso por evento sin intervalo mínimo por símbolo termina en cientos de mensajes.
+- **"Configurable desde la UI" = un esquema con tipo/límites + dry-run sobre una copia + persistencia
+  fuera del árbol de git.** Sin el dry-run (`deepcopy` + `Settings.validate()`) un valor incoherente
+  (capital 300 con topes de 500 $) habría dejado el engine mutado a medias; sin el fichero en `data/`
+  (untracked) el `git reset --hard` del deploy habría borrado la configuración del usuario.
+- **Los tests de un motor con estado en disco necesitan su propio directorio.** El primer fallo de
+  `test_restore_history…` fue el libro real del trend diario (0,43 $ de PnL abierto de la prueba de humo)
+  filtrándose en un test: variables de entorno `BOTSTRIKE_TREND_STATE/DATA_DIR` fijadas en `conftest`.
+- **Un restart no puede cerrar posiciones de una estrategia que aguanta semanas.** El flatten de
+  shutdown (correcto para MR intradía) habría destruido el trend diario en cada deploy: el libro diario
+  solo se aplana por halt de riesgo, y hay test de mutación que lo protege.
+
 ## Telegram desincronizado (2026-09-02) — el fix de una superficie no cura a las demás
 - **Al arreglar un bug de "fuente de verdad", enumerar TODAS las superficies que muestran ese
   dato.** v2.13.1 arregló "la UI se resetea a 0 tras cada restart" con la vista merged de la
@@ -912,3 +939,35 @@
 ### Regulación como riesgo de primer orden
 - Binance cesó servicios de trading para residentes en España el 1-jul-2026 (MiCA). El venue principal del bot dejó de existir para el dueño sin que ningún test lo detectara.
 - **LESSON: Un bot debe ser multi-venue por diseño y el "estado del arte" incluye leer regulación, no solo papers.**
+
+## Sesión 2026-09-02 (3ª) — UI: crash #185, responsive real y pestañas ocultas
+
+### Un NaN convierte "ajustar estado durante el render" en un bucle infinito
+- `if (value !== seen) setSeen(value)` es un patrón válido de React… hasta que `value` es NaN: `NaN !== NaN`
+  siempre es true → re-render → setState → React #185 "Maximum update depth" y el ErrorBoundary tapaba TODAS las
+  rutas. El NaN venía de `pnl / equity` cuando un broadcast `metrics` llegaba sin algún campo. Intermitente
+  porque dependía de qué mensaje llegaba primero.
+- **LESSON: Sanear los números en la frontera (store) — `Number.isFinite` o fuera — y no escribir estado en
+  render para efectos visuales: un tween/flash se hace con refs + effects sobre el DOM, con cero setState.**
+
+### `height: 100%` no funciona en una cadena de `min-height`
+- El chart de Trading medía 0 px en móvil aunque su wrapper tenía `min-h-[260px]`: el contenedor interno usa
+  `height:100%` y un porcentaje solo resuelve contra una altura DEFINIDA; con `min-height` (móvil) es
+  indefinida → 0. En escritorio funcionaba porque la cadena era `h-full` (definida).
+- **LESSON: Para "rellenar" un contenedor cuya altura viene de `min-height`, usar flex (`flex flex-col` +
+  `flex-1 min-h-0` en el hijo) o `absolute inset-0`, nunca `height:100%`. Y medir `clientHeight` del canvas en
+  el target (390 px), no fiarse de que el wrapper "tenga" altura.**
+
+### Verificar con una pestaña OCULTA engaña (y a la vez demuestra el fix)
+- Chrome en segundo plano: rAF congelado (framer-motion se queda a opacidad parcial → capturas "apagadas"),
+  timers a 1/min y mis propios `usePolling` pausados por diseño → "Waiting for data…" que parecía un bug.
+- **LESSON: Antes de juzgar una captura, comprobar `document.visibilityState`. Para verificar layout en una
+  pestaña oculta valen las MEDIDAS del DOM (scrollWidth/clientWidth, clientHeight), no las capturas; y un
+  iframe same-origin de 390 px emula el viewport móvil cuando la ventana no se puede encoger.**
+
+### Lint del React Compiler (eslint-plugin-react-hooks 7)
+- `refs` (no leer/escribir `ref.current` en render), `set-state-in-effect` (no setState síncrono en el cuerpo
+  de un effect), `purity` (`Date.now()` en render) e `immutability` (no reasignar variables capturadas por un
+  closure, p.ej. acumuladores dentro de `.map`) son ERROR en `recommended`.
+- **LESSON: resincronizar inputs con `key` (remontar) en vez de effects que hacen setState; "ahora" vía
+  `useSyncExternalStore` (`useNow`); acumular con `for` + `push` en vez de `.map` con `let` externo.**

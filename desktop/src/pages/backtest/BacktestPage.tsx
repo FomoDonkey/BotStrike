@@ -59,7 +59,7 @@ export function BacktestPage() {
         <FlaskConical className="w-5 h-5 text-accent" /> Backtesting Lab
       </h1>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Config Form */}
         <GlassPanel className="p-5">
           <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-4">Configuration</h3>
@@ -131,7 +131,7 @@ export function BacktestPage() {
         </GlassPanel>
 
         {/* Results */}
-        <GlassPanel className="col-span-2 p-5">
+        <GlassPanel className="lg:col-span-2 p-5 min-w-0">
           <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-4">Results</h3>
 
           {!result && !running && (
@@ -152,7 +152,7 @@ export function BacktestPage() {
           {result && (
             <div className="space-y-4">
               {/* Primary Metrics Row */}
-              <div className="grid grid-cols-6 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
                 {[
                   {
                     label: "Net PnL",
@@ -174,7 +174,7 @@ export function BacktestPage() {
               </div>
 
               {/* Secondary Metrics Row */}
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
                 {[
                   { label: "Profit Factor", value: result.profit_factor?.toFixed(2) ?? "0" },
                   { label: "Avg Trade", value: formatUSD(result.avg_trade_pnl ?? 0) },

@@ -26,7 +26,7 @@ export function OrderFlowPage() {
         entries.map(([sym, data]) => (
           <div key={sym} className="space-y-3">
             <h2 className="text-sm font-mono text-text-secondary">{sym}</h2>
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
               {/* VPIN */}
               <GlassPanel className="p-4" glow={data.vpin?.is_toxic}>
                 <div className="flex items-center gap-2 text-xs text-text-secondary uppercase mb-3">

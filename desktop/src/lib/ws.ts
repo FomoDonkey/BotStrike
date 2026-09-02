@@ -118,6 +118,36 @@ class WebSocketClient {
     };
   }
 
+  /**
+   * Tab became visible again (background tabs throttle timers, so the ping loop may not have
+   * noticed a dead socket for many minutes). A socket with no message for WS_STALE_MS is dropped
+   * and reconnected NOW; a pending back-off reconnect is fired immediately; a healthy socket
+   * just gets an extra ping so a missing pong is detected on the next tick.
+   */
+  checkStale() {
+    if (!this.wantOpen) return;
+    const ws = this.ws;
+    const open = !!ws && ws.readyState === WebSocket.OPEN;
+    const stale = open && Date.now() - this.lastMessageAt > WS_STALE_MS;
+    if (!open || stale) {
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+      if (ws && ws.readyState === WebSocket.CONNECTING && !stale) return; // handshake in flight — let it finish
+      this.dropSocket();
+      this.setClosed();
+      this._reconnectAttempts = 0;
+      this.connect();
+      return;
+    }
+    try {
+      ws!.send(JSON.stringify({ type: "ping" }));
+    } catch {
+      /* send on a closing socket — onclose will follow */
+    }
+  }
+
   /** Detach handlers + close without waiting for the close handshake (may take a long time on a dead peer). */
   private dropSocket() {
     const ws = this.ws;
@@ -216,6 +246,12 @@ export function disconnectAll() {
 
 export function isStarted() {
   return started;
+}
+
+/** visibilitychange → visible: drop stale sockets so they reconnect immediately (see checkStale). */
+export function pingAll() {
+  if (!started) return;
+  channels.forEach((c) => c.checkStale());
 }
 
 function clearStagger() {

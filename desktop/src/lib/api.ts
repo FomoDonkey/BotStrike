@@ -13,7 +13,7 @@ export class ApiError extends Error {
   }
 }
 
-// ── Response shapes (bridge.py) ──────────────────────────────────
+// ── Response shapes (bridge.py — see tasks/ui_config_contract.md) ──
 
 export interface HealthResponse {
   status: string;
@@ -23,6 +23,10 @@ export interface HealthResponse {
   clients: number;
   version?: string;
   exchange?: string;
+  /** Bridge ≥ 2.14 */
+  telegram_failures?: number;
+  microstructure_enabled?: boolean;
+  trend_daily_enabled?: boolean;
 }
 
 export interface BotStatusResponse {
@@ -42,6 +46,9 @@ export interface BotActionResponse {
   exchange?: string;
 }
 
+/** Any editable scalar the config schema can describe. */
+export type ConfigScalar = number | boolean | string | string[] | null;
+
 export interface SymbolConfig {
   symbol: string;
   leverage: number;
@@ -51,6 +58,8 @@ export interface SymbolConfig {
   hawkes_spike_mult: number;
   mm_gamma: number;
   obi_levels: number;
+  /** Every other SymbolConfig field the bridge exposes — read generically by the schema editor. */
+  [key: string]: ConfigScalar | undefined;
 }
 
 export interface TradingConfig {
@@ -71,6 +80,16 @@ export interface TradingConfig {
   kelly_min_trades: number;
   kelly_floor_pct: number;
   kelly_ceiling_pct: number;
+  /** Bridge ≥ 2.14 (optional so an older bridge still type-checks) */
+  compounding_enabled?: boolean;
+  allocation_trend_daily?: number;
+  /** Every other TradingConfig field the bridge exposes — read generically by the schema editor. */
+  [key: string]: ConfigScalar | undefined;
+}
+
+export interface ConfigOverrides {
+  trading?: Partial<TradingConfig>;
+  symbols?: Record<string, Partial<SymbolConfig>>;
 }
 
 export interface ConfigResponse {
@@ -79,6 +98,57 @@ export interface ConfigResponse {
   has_telegram: boolean;
   symbols: SymbolConfig[];
   trading: TradingConfig;
+  /** Bridge ≥ 2.14 — what the user changed (data/config_overrides.json) */
+  overrides?: ConfigOverrides;
+  /** Bridge ≥ 2.14 — true if some override only applies after an engine restart */
+  restart_required?: boolean;
+}
+
+export type ConfigFieldType = "number" | "int" | "percent" | "bool" | "string" | "select" | "list";
+
+export interface ConfigFieldOption {
+  value: string | number;
+  label: string;
+}
+
+export interface ConfigField {
+  /** Dot path: `trading.max_drawdown_pct` or `symbols.{symbol}.leverage` in per-symbol groups */
+  path: string;
+  label?: string;
+  type: ConfigFieldType;
+  min?: number;
+  max?: number;
+  step?: number;
+  unit?: string;
+  help?: string;
+  restart_required?: boolean;
+  options?: ConfigFieldOption[];
+}
+
+export interface ConfigGroup {
+  id: string;
+  label: string;
+  fields: ConfigField[];
+  per_symbol?: boolean;
+}
+
+export interface ConfigSchemaResponse {
+  groups: ConfigGroup[];
+}
+
+/** PUT /api/config body — only what changes. */
+export interface ConfigUpdateRequest {
+  trading?: Record<string, ConfigScalar>;
+  symbols?: Record<string, Record<string, ConfigScalar>>;
+  /** Any other root the schema may introduce (`<root>.<field>`) */
+  [root: string]: Record<string, ConfigScalar> | Record<string, Record<string, ConfigScalar>> | undefined;
+}
+
+export interface ConfigUpdateResponse {
+  status: string;
+  applied: string[];
+  restart_required: boolean;
+  config: ConfigResponse;
 }
 
 export interface PerformanceResponse {
@@ -103,6 +173,41 @@ export interface PerformanceResponse {
   expectancy?: number;
   /** [epoch_seconds, equity] pairs for a real time axis */
   equity_curve_ts?: [number, number][];
+  /** Bridge ≥ 2.14 */
+  current_drawdown?: number; // all-time, includes unrealized
+  peak_equity?: number;
+  sample_days?: number;
+  sharpe_valid?: boolean; // false → < 30 days or < 30 trades → UI shows "n/a"
+  first_trade_ts?: number;
+}
+
+export type EdgeVerdict = "insufficient" | "ok" | "warn" | "kill";
+
+export interface EdgeStats {
+  n: number;
+  wins: number;
+  win_rate: number;
+  net_pnl: number;
+  gross_pnl: number;
+  fees: number;
+  mean_gross_bps: number;
+  se_bps: number;
+  t_stat: number;
+  profit_factor: number;
+  fee_share: number;
+  expectancy_usd: number;
+  avg_hold_min: number;
+  verdict: EdgeVerdict;
+  reason?: string;
+}
+
+export interface EdgeResponse {
+  window: number;
+  min_trades: number;
+  t_stat_kill: number;
+  fee_share_kill: number;
+  computed_at: number;
+  strategies: Record<string, EdgeStats>;
 }
 
 export interface StrategyInfo {
@@ -112,10 +217,77 @@ export interface StrategyInfo {
   name: string;
   killed?: boolean;
   kill_reason?: string;
+  /** Bridge ≥ 2.14 */
+  enabled?: boolean; // allocation > 0
+  description?: string;
+  params?: Record<string, ConfigScalar>;
+  symbols?: string[];
+  edge?: EdgeStats;
 }
 
 export interface StrategiesResponse {
   strategies?: StrategyInfo[];
+}
+
+export interface TrendPosition {
+  symbol: string;
+  size: number;
+  entry_price: number;
+  mark_price: number;
+  notional: number;
+  unrealized_pnl: number;
+  weight: number;
+  opened: string;
+}
+
+export interface TrendTrackingRecord {
+  date: string;
+  model_ret: number;
+  paper_ret: number;
+  slippage_bps: number;
+}
+
+export interface TrendResponse {
+  enabled: boolean;
+  allocation: number;
+  mode: string;
+  next_run_utc: string | null;
+  last_run_utc: string | null;
+  last_run_status: string;
+  last_error: string;
+  universe: string[];
+  candidates: number;
+  targets: Record<string, number>;
+  positions: TrendPosition[];
+  equity_basis: number;
+  exposure: number;
+  tracking: {
+    days: number;
+    model_return: number;
+    paper_return: number;
+    tracking_error_ann: number;
+    records: TrendTrackingRecord[];
+  };
+  params: Record<string, ConfigScalar>;
+}
+
+export interface RiskResponse {
+  equity: number;
+  peak_equity: number;
+  drawdown_pct: number;
+  max_drawdown_pct: number;
+  daily_pnl: number;
+  daily_limit: number;
+  max_daily_loss_pct: number;
+  weekly_pnl: number;
+  weekly_limit: number;
+  max_weekly_loss_pct: number;
+  circuit_breaker: boolean;
+  drawdown_halted: boolean;
+  /** strategy → reason (string) or an object carrying a `reason` */
+  killed_strategies: Record<string, string | { reason?: string; [k: string]: unknown }>;
+  compounding_enabled: boolean;
+  equity_basis: number;
 }
 
 export interface TradeRecord {
@@ -226,6 +398,18 @@ function extractError(body: unknown): string | null {
   const b = body as { error?: unknown; detail?: unknown };
   if (typeof b.error === "string") return b.error;
   if (typeof b.detail === "string") return b.detail; // FastAPI HTTPException
+  // FastAPI request validation: detail = [{loc, msg, type}]
+  if (Array.isArray(b.detail)) {
+    const parts = b.detail
+      .map((d) => {
+        if (!d || typeof d !== "object") return null;
+        const { loc, msg } = d as { loc?: unknown; msg?: unknown };
+        const where = Array.isArray(loc) ? loc.filter((x) => x !== "body").join(".") : "";
+        return typeof msg === "string" ? (where ? `${where}: ${msg}` : msg) : null;
+      })
+      .filter((x): x is string => !!x);
+    if (parts.length) return parts.join("; ");
+  }
   return null;
 }
 
@@ -286,6 +470,12 @@ export function probeBridge(baseUrl: string): Promise<HealthResponse> {
 export const api = {
   health: () => request<HealthResponse>("/api/health", { timeoutMs: HEALTH_TIMEOUT_MS }),
   config: () => request<ConfigResponse>("/api/config"),
+  configSchema: () => request<ConfigSchemaResponse>("/api/config/schema"),
+  /** Partial update — only the changed paths. Token required when the bridge is not loopback. */
+  configUpdate: (body: ConfigUpdateRequest) =>
+    authed<ConfigUpdateResponse>("/api/config", { method: "PUT", body: JSON.stringify(body) }),
+  /** Drop every override → responds like GET /api/config with restart_required: true. */
+  configReset: () => authed<ConfigResponse>("/api/config/reset", { method: "POST" }),
   botStatus: () => request<BotStatusResponse>("/api/bot/status"),
   botStart: (mode = "paper", exchange = "binance") =>
     authed<BotActionResponse>(
@@ -293,8 +483,13 @@ export const api = {
       { method: "POST" },
     ),
   botStop: () => authed<BotActionResponse>("/api/bot/stop", { method: "POST" }),
+  /** stop + start with the same mode/exchange → {"status": "restarting", "mode": "paper"} */
+  botRestart: () => authed<BotActionResponse>("/api/bot/restart", { method: "POST" }),
   performance: () => request<PerformanceResponse>("/api/performance"),
   strategies: () => request<StrategiesResponse>("/api/strategies"),
+  edge: () => request<EdgeResponse>("/api/edge"),
+  trend: () => request<TrendResponse>("/api/trend"),
+  risk: () => request<RiskResponse>("/api/risk"),
   trades: (limit = 100) => request<TradesResponse>(`/api/trades?limit=${limit}`),
   dataCatalog: () => request<DataCatalogResponse>("/api/data/catalog"),
   backtestRun: (body: BacktestRequest) =>

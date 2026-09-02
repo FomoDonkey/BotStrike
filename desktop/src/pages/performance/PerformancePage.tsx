@@ -1,9 +1,10 @@
-import { useEffect, useState, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import { GlassPanel } from "@/components/shared/GlassPanel";
 import { MetricCard } from "@/components/shared/MetricCard";
 import { useTradingStore } from "@/stores/tradingStore";
-import { formatUSD, formatPct, cn } from "@/lib/utils";
+import { usePolling } from "@/hooks/usePolling";
+import { formatUSD, formatPct, formatDuration, pnlBps, cn } from "@/lib/utils";
 import { STRATEGY_COLORS, STRATEGY_LABELS } from "@/lib/constants";
 import { api, type PerformanceResponse, type TradeRecord } from "@/lib/api";
 import {
@@ -11,32 +12,61 @@ import {
 } from "recharts";
 import { TrendingUp, Target, BarChart3, DollarSign, Timer, Percent } from "lucide-react";
 
+const POLL_MS = 30_000;
+const TRADE_FETCH_LIMIT = 400; // ENTRY + EXIT rows → ~200 closed trades
+const HISTORY_ROWS = 100;
+
+/**
+ * /api/trades returns one row per FILL (ENTRY and EXIT). A closed trade is the EXIT row: it
+ * carries the round-trip PnL, fee and duration. ENTRY rows always have pnl 0 and used to be
+ * listed as trades ("48 rows" for 24 trades).
+ */
+function isClosedTrade(t: TradeRecord): boolean {
+  if (t.trade_type) return t.trade_type === "EXIT";
+  return !!t.exit_time && (t.pnl || 0) !== 0; // legacy rows without trade_type
+}
+
+/** Position side from the fill that closed it: selling closes a LONG, buying closes a SHORT. */
+function positionSide(t: TradeRecord): "LONG" | "SHORT" {
+  if (t.trade_type === "EXIT") return t.side === "SELL" ? "LONG" : "SHORT";
+  return t.side === "BUY" ? "LONG" : "SHORT";
+}
+
+function fmtDate(iso: string | undefined): string {
+  if (!iso) return "---";
+  return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function Chip({ label, value, tone }: { label: string; value: string; tone?: "profit" | "loss" | "muted" }) {
+  return (
+    <span className="whitespace-nowrap">
+      {label}{" "}
+      <span className={cn(
+        tone === "profit" && "text-profit",
+        tone === "loss" && "text-loss",
+        (!tone || tone === "muted") && "text-text-secondary",
+      )}>
+        {value}
+      </span>
+    </span>
+  );
+}
+
 export function PerformancePage() {
   const metrics = useTradingStore((s) => s.metrics);
   const [trades, setTrades] = useState<TradeRecord[]>([]);
   const [perfData, setPerfData] = useState<PerformanceResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const [perf, tradeRes] = await Promise.all([
-          api.performance().catch(() => null),
-          api.trades(200).catch(() => ({ trades: [] })),
-        ]);
-        if (cancelled) return;
-        if (perf) setPerfData(perf);
-        setTrades(tradeRes.trades || []);
-      } catch {
-        // bridge not running
-      }
-      setLoading(false);
-    }
-    load();
-    const interval = setInterval(load, 30000); // 30s — less aggressive than 10s
-    return () => { cancelled = true; clearInterval(interval); };
-  }, []);
+  usePolling(async () => {
+    const [perf, tradeRes] = await Promise.all([
+      api.performance().catch(() => null),
+      api.trades(TRADE_FETCH_LIMIT).catch(() => ({ trades: [] })),
+    ]);
+    if (perf) setPerfData(perf);
+    setTrades(tradeRes.trades || []);
+    setLoading(false);
+  }, POLL_MS);
 
   const equityCurve = perfData?.equity_curve;
   const equityCurveTs = perfData?.equity_curve_ts;
@@ -60,14 +90,13 @@ export function PerformancePage() {
   }, [hasTimeAxis, equityCurveData]);
 
   const p = perfData || metrics;
+  const sharpeValid = perfData ? perfData.sharpe_valid !== false : true;
 
-  // Strategy breakdown — closes only: counting ENTRY rows (pnl always 0)
-  // inflated the trade count and deflated the win rate
+  const closedTrades = useMemo(() => trades.filter(isClosedTrade), [trades]);
+
   const strategyBreakdown = useMemo(() => {
     const map: Record<string, { pnl: number; trades: number; wins: number }> = {};
-    for (const t of trades) {
-      const isClose = t.trade_type ? t.trade_type !== "ENTRY" : (t.pnl || 0) !== 0;
-      if (!isClose) continue;
+    for (const t of closedTrades) {
       const key = t.strategy || "UNKNOWN";
       if (!map[key]) map[key] = { pnl: 0, trades: 0, wins: 0 };
       map[key].pnl += t.pnl || 0;
@@ -80,7 +109,9 @@ export function PerformancePage() {
       ...d,
       wr: d.trades > 0 ? d.wins / d.trades : 0,
     }));
-  }, [trades]);
+  }, [closedTrades]);
+
+  const totalTrades = perfData?.total_trades ?? metrics.total_trades;
 
   return (
     <motion.div
@@ -89,30 +120,41 @@ export function PerformancePage() {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
     >
-      <div className="flex items-baseline justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-2">
         <h1 className="text-lg font-semibold text-text-primary">Performance Analytics</h1>
         {perfData?.realized_pnl !== undefined && (
-          <div className="flex gap-4 text-[11px] font-mono text-text-muted">
-            <span>Capital <span className="text-text-secondary">{formatUSD(perfData.initial_capital ?? 0)}</span></span>
-            <span>Realized <span className={cn(perfData.realized_pnl >= 0 ? "text-profit" : "text-loss")}>{formatUSD(perfData.realized_pnl)}</span></span>
-            <span>Unrealized <span className={cn((perfData.unrealized_pnl ?? 0) >= 0 ? "text-profit" : "text-loss")}>{formatUSD(perfData.unrealized_pnl ?? 0)}</span></span>
-            <span>Session <span className={cn((perfData.session_pnl ?? 0) >= 0 ? "text-profit" : "text-loss")}>{formatUSD(perfData.session_pnl ?? 0)}</span></span>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-mono text-text-muted">
+            <Chip label="Capital" value={formatUSD(perfData.initial_capital ?? 0)} />
+            <Chip label="Realized" value={formatUSD(perfData.realized_pnl)} tone={perfData.realized_pnl >= 0 ? "profit" : "loss"} />
+            <Chip label="Unrealized" value={formatUSD(perfData.unrealized_pnl ?? 0)} tone={(perfData.unrealized_pnl ?? 0) >= 0 ? "profit" : "loss"} />
+            <Chip label="Session" value={formatUSD(perfData.session_pnl ?? 0)} tone={(perfData.session_pnl ?? 0) >= 0 ? "profit" : "loss"} />
+            {perfData.peak_equity !== undefined && <Chip label="Peak" value={formatUSD(perfData.peak_equity)} />}
+            {perfData.current_drawdown !== undefined && (
+              <Chip label="Current DD" value={formatPct(perfData.current_drawdown)} tone={perfData.current_drawdown > 0 ? "loss" : "muted"} />
+            )}
           </div>
         )}
       </div>
 
       {/* Metrics */}
-      <div className="grid grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
         <MetricCard label="Total PnL" value={p.pnl} format={formatUSD} colorize icon={<DollarSign className="w-3 h-3" />} />
         <MetricCard label="Win Rate" value={p.win_rate} format={formatPct} icon={<Target className="w-3 h-3" />} />
-        <MetricCard label="Sharpe" value={p.sharpe_ratio} format={(v) => v.toFixed(2)} icon={<BarChart3 className="w-3 h-3" />} />
+        <MetricCard
+          label="Sharpe"
+          value={p.sharpe_ratio}
+          format={(v) => v.toFixed(2)}
+          display={sharpeValid ? undefined : "n/a"}
+          subtext={sharpeValid ? (perfData?.sample_days ? `${perfData.sample_days} days` : undefined) : "needs 30 days · 30 trades"}
+          icon={<BarChart3 className="w-3 h-3" />}
+        />
         <MetricCard label="Max DD" value={p.max_drawdown} format={formatPct} icon={<TrendingUp className="w-3 h-3" />} />
         <MetricCard label="Trades" value={p.total_trades} format={(v) => v.toFixed(0)} icon={<Timer className="w-3 h-3" />} />
         <MetricCard label="Fees" value={p.total_fees} format={formatUSD} icon={<Percent className="w-3 h-3" />} />
       </div>
 
       {/* Equity Curve */}
-      <GlassPanel className="p-4">
+      <GlassPanel className="p-4 min-w-0">
         <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-3">Equity Curve</h3>
         {equityCurveData.length > 0 ? (
           <ResponsiveContainer width="100%" height={240}>
@@ -164,9 +206,9 @@ export function PerformancePage() {
       </GlassPanel>
 
       {/* Strategy Breakdown + Trade History */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
         {/* Strategy Breakdown */}
-        <GlassPanel className="p-4">
+        <GlassPanel className="p-4 min-w-0">
           <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-3">By Strategy</h3>
           {strategyBreakdown.length > 0 ? (
             <div className="space-y-3">
@@ -190,50 +232,70 @@ export function PerformancePage() {
           )}
         </GlassPanel>
 
-        {/* Trade History */}
-        <GlassPanel className="col-span-2 p-4 max-h-80 overflow-auto">
-          <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-3">Trade History</h3>
-          {trades.length === 0 ? (
-            <p className="text-text-muted text-sm">{loading ? "Loading..." : "No trades recorded"}</p>
+        {/* Trade History — closed trades only, one row per round-trip */}
+        <GlassPanel className="lg:col-span-2 p-4 min-w-0">
+          <div className="flex items-baseline justify-between mb-3 gap-2">
+            <h3 className="text-xs text-text-secondary uppercase tracking-wider">Trade History</h3>
+            <span className="text-[11px] font-mono text-text-muted">
+              {totalTrades} closed{closedTrades.length > HISTORY_ROWS ? ` · showing ${HISTORY_ROWS}` : ""}
+            </span>
+          </div>
+          {closedTrades.length === 0 ? (
+            <p className="text-text-muted text-sm">{loading ? "Loading..." : "No closed trades recorded"}</p>
           ) : (
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-bg-surface">
-                <tr className="text-text-muted border-b border-white/5">
-                  <th className="text-left py-1">Open</th>
-                  <th className="text-left">Close</th>
-                  <th className="text-left">Symbol</th>
-                  <th className="text-left">Side</th>
-                  <th className="text-right">Entry</th>
-                  <th className="text-right">Exit</th>
-                  <th className="text-right">PnL</th>
-                  <th className="text-left pl-2">Strategy</th>
-                  <th className="text-left">Regime</th>
-                </tr>
-              </thead>
-              <tbody>
-                {trades.slice(0, 50).map((t) => (
-                  <tr key={t.id} className="border-b border-white/[0.02] hover:bg-white/[0.02]">
-                    <td className="py-1 text-text-muted">{t.entry_time ? new Date(t.entry_time).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "---"}</td>
-                    <td className="py-1 text-text-muted">{t.exit_time ? new Date(t.exit_time).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "---"}</td>
-                    <td className="font-mono">{t.symbol}</td>
-                    <td className={t.side === "BUY" ? "text-profit" : "text-loss"}>
-                      {t.side}{t.pnl !== 0 ? " (close)" : ""}
-                    </td>
-                    <td className="text-right font-mono">${(t.entry_price || 0).toFixed(2)}</td>
-                    <td className="text-right font-mono">${(t.exit_price || 0).toFixed(2)}</td>
-                    <td className={cn("text-right font-mono", (t.pnl || 0) >= 0 ? "text-profit" : "text-loss")}>
-                      {formatUSD(t.pnl || 0)}
-                    </td>
-                    <td className="pl-2">
-                      <span className="text-[10px]" style={{ color: STRATEGY_COLORS[t.strategy] || "#4A5568" }}>
-                        {STRATEGY_LABELS[t.strategy] || t.strategy || "---"}
-                      </span>
-                    </td>
-                    <td className="text-text-muted text-[10px]">{t.regime || "---"}</td>
+            <div className="overflow-x-auto max-h-80 overflow-y-auto -mx-1 px-1">
+              <table className="w-full min-w-[880px] text-xs">
+                <thead className="sticky top-0 bg-bg-surface z-10">
+                  <tr className="text-text-muted border-b border-white/5">
+                    <th className="text-left py-1 font-normal">Open</th>
+                    <th className="text-left font-normal">Close</th>
+                    <th className="text-left font-normal">Symbol</th>
+                    <th className="text-left font-normal">Side</th>
+                    <th className="text-right font-normal">Entry</th>
+                    <th className="text-right font-normal">Exit</th>
+                    <th className="text-right font-normal">PnL</th>
+                    <th className="text-right font-normal">Fee</th>
+                    <th className="text-right font-normal">bps</th>
+                    <th className="text-right font-normal">Hold</th>
+                    <th className="text-left pl-2 font-normal">Strategy</th>
+                    <th className="text-left font-normal">Regime</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {closedTrades.slice(0, HISTORY_ROWS).map((t) => {
+                    const side = positionSide(t);
+                    const bps = pnlBps(t.pnl || 0, (t.entry_price || 0) * (t.quantity || 0));
+                    const pnlPos = (t.pnl || 0) >= 0;
+                    return (
+                      <tr key={t.id} className="border-b border-white/[0.02] hover:bg-white/[0.02]">
+                        <td className="py-1 text-text-muted whitespace-nowrap">{fmtDate(t.entry_time)}</td>
+                        <td className="py-1 text-text-muted whitespace-nowrap">{fmtDate(t.exit_time)}</td>
+                        <td className="font-mono">{t.symbol}</td>
+                        <td className={side === "LONG" ? "text-profit" : "text-loss"}>{side}</td>
+                        <td className="text-right font-mono">${(t.entry_price || 0).toFixed(2)}</td>
+                        <td className="text-right font-mono">${(t.exit_price || 0).toFixed(2)}</td>
+                        <td className={cn("text-right font-mono", pnlPos ? "text-profit" : "text-loss")}>
+                          {formatUSD(t.pnl || 0)}
+                        </td>
+                        <td className="text-right font-mono text-text-muted">{formatUSD(t.fee || 0)}</td>
+                        <td className={cn("text-right font-mono", bps === null ? "text-text-muted" : pnlPos ? "text-profit" : "text-loss")}>
+                          {bps === null ? "---" : bps.toFixed(1)}
+                        </td>
+                        <td className="text-right font-mono text-text-muted whitespace-nowrap">
+                          {t.duration_sec > 0 ? formatDuration(t.duration_sec) : "---"}
+                        </td>
+                        <td className="pl-2">
+                          <span className="text-[10px]" style={{ color: STRATEGY_COLORS[t.strategy] || "#4A5568" }}>
+                            {STRATEGY_LABELS[t.strategy] || t.strategy || "---"}
+                          </span>
+                        </td>
+                        <td className="text-text-muted text-[10px]">{t.regime || "---"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </GlassPanel>
       </div>
