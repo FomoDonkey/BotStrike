@@ -26,11 +26,25 @@ Edgar: Fase 0 completa + fixes UI + TODO configurable desde el navegador + inter
   Redirect `/ruta` → `/#/ruta`. `/api/performance` añade `current_drawdown`, `peak_equity`, `sharpe_valid`.
 - [x] LECCIÓN (coste real): la prueba de humo local usó el token de Telegram del `.env` → Edgar recibió
   3 "compras" paper de MI PC que no existen en el CT. Silenciar Telegram en pruebas locales SIEMPRE.
-### Pendiente en esta sesión
-- [ ] Frontend (agente): crash #185, responsive, Settings editable por esquema, Strategies con toggles,
-  panel trend, Risk ladder, Dashboard/Performance coherentes, visibilitychange.
-- [ ] `npm run build:web` → verificar con Playwright (1440/390) contra bridge local → commit + push →
-  deploy CT → verificar API/UI/journal → `POST /api/trend/run` en el CT → Telegram.
+### Frontend + deploy HECHOS (commits 5181e9b UI, 0bff055 fix; CT en 0bff055, 212/212 en el CT)
+- [x] UI v2.14 (agente + verificación propia con Playwright 1440/390 contra bridge local y contra el CT):
+  0 crashes en 3 cargas × 12 s (causa probable del #185: `metrics.pnl` NaN en un broadcast + setState
+  en render de AnimatedNumber/PriceTicker → eliminado), 10 rutas sin desbordes en escritorio y móvil,
+  cajón lateral < 1024 px, Settings por esquema (guardado real verificado: max_drawdown 0,10 → 0,08 vía
+  UI), toggle de estrategia verificado por API (MR 0 → 0,5 → 0), panel Trend daily, Risk ladder,
+  Dashboard con DD histórico / Sharpe "n/a" / donut real / tarjetas trend+edge, Performance con solo
+  cierres (24 filas = 24 trades), chip de régimen al inicio de la barra (antes se recortaba a 1440 px).
+- [x] Deploy CT: 211→212 tests en el entorno real, verify PASS, `risk_state_restored` (equity 989,04,
+  pico 1.000, semana −5,05), trend engine arrancó y ejecutó el día solo (universo BTC/ETH/SOL, 3
+  entradas, exposición 26 %), 0 errores, Telegram sin fallos.
+- [x] **Defecto encontrado en el primer run real y corregido (0bff055):** un run tardío (11:02 UTC tras el
+  deploy) ejecutaba al precio de APERTURA de las 00:00 → −4,24 $ de PnL abierto ficticio. Ahora un run
+  con > 1 h de retraso ejecuta al precio actual (`last_run_late` en `/api/trend`). Las 3 entradas
+  artificiales se borraron del CT (servicio parado → estado + 3 filas DB → deploy del fix → nuevo run).
+- [ ] Vigilar 24-48 h: `regime_changed` en el journal (objetivo ≤ 2/h en total), primer run automático
+  de mañana 00:05 UTC, tracking modelo↔paper en `/api/trend`, y que Telegram solo mande fills + digest 07 UTC.
+- [ ] Siguientes (decisión de Edgar): venue MiCA para live (Fase 1), backup del CT 104 en vzdump,
+  Fase 2 (onboarding por capital, "qué esperar").
 
 ## Sesión 2026-09-02 (3ª) — UI v2.14: crash hardening + responsive + config editable (desktop/src)
 Agente frontend en paralelo con el backend (`tasks/ui_config_contract.md`). Solo `desktop/src`; sin commit.

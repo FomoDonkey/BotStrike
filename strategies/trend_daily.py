@@ -53,6 +53,7 @@ START_MS = 1_502_928_000_000  # 2017-08-17 — first Binance daily candle
 # A run more than this late after the scheduled open (restart, first deploy) must fill at the
 # CURRENT price, never at the stale daily open — the model assumes execution AT the open.
 LATE_FILL_SEC = 3600.0
+FETCH_ATTEMPTS = 3          # daily kline download retries per symbol
 SPOT_KLINES_URL = "https://api.binance.com/api/v3/klines"
 
 
@@ -66,7 +67,7 @@ def to_ui_symbol(pool_symbol: str) -> str:
 
 
 # ── Data ───────────────────────────────────────────────────────────────────────
-def fetch_daily_klines(symbol: str, start_ms: int = START_MS, timeout: float = 30.0) -> Optional[pd.DataFrame]:
+def fetch_daily_klines(symbol: str, start_ms: int = START_MS, timeout: float = 60.0) -> Optional[pd.DataFrame]:
     """All daily candles from `start_ms` (inclusive) — the LAST row may be the
     forming (incomplete) candle of today. None when the pair does not exist."""
     rows: List[list] = []
@@ -137,10 +138,19 @@ class DailyDataStore:
         start_ms = START_MS
         if cached is not None and len(cached):
             start_ms = int((cached.index[-1] + pd.Timedelta(days=1)).timestamp() * 1000)
-        try:
-            fresh = self._fetch(sym, start_ms)
-        except Exception as e:
-            logger.warning("trend_fetch_failed", symbol=sym, error=str(e), error_type=type(e).__name__)
+        fresh = None
+        last_err: Optional[Exception] = None
+        for attempt in range(FETCH_ATTEMPTS):
+            try:
+                fresh = self._fetch(sym, start_ms)
+                last_err = None
+                break
+            except Exception as e:  # Binance REST read timeouts happen (CT, 2026-09-02: BNB, ZEC)
+                last_err = e
+                time.sleep(1.5 * (attempt + 1))
+        if last_err is not None:
+            logger.warning("trend_fetch_failed", symbol=sym, error=str(last_err),
+                           error_type=type(last_err).__name__, attempts=FETCH_ATTEMPTS)
             return cached
         if fresh is None:
             return cached

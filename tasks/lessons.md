@@ -26,6 +26,12 @@
 - **Un restart no puede cerrar posiciones de una estrategia que aguanta semanas.** El flatten de
   shutdown (correcto para MR intradía) habría destruido el trend diario en cada deploy: el libro diario
   solo se aplana por halt de riesgo, y hay test de mutación que lo protege.
+- **"Ejecutar en la apertura" solo es verdad si estás despierto en la apertura.** El primer run real
+  del trend en el CT fue a las 11:02 UTC (tras el deploy) y rellenó al precio de las 00:00: un fill
+  imposible que creó −4,24 $ de PnL abierto de la nada. Un motor de cadencia programada necesita la
+  distinción "a tiempo / tardío" y, si es tardío, usar el precio actual y dejar constancia
+  (`last_run_late`). Mirar el PRIMER resultado real de cualquier motor nuevo antes de darlo por bueno:
+  el bug no lo detectaron 13 tests, lo detectó un −4,24 $ que no cuadraba.
 
 ## Telegram desincronizado (2026-09-02) — el fix de una superficie no cura a las demás
 - **Al arreglar un bug de "fuente de verdad", enumerar TODAS las superficies que muestran ese

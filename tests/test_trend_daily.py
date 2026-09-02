@@ -229,6 +229,26 @@ def test_data_store_drops_forming_candle_from_cache(tmp_path):
     assert TODAY not in out2["UPUSDT"].index
 
 
+def test_data_store_retries_a_failing_fetch(tmp_path, monkeypatch):
+    import strategies.trend_daily as td
+    monkeypatch.setattr(td.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    def flaky(sym, start_ms):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise TimeoutError("The read operation timed out")
+        return _frame("up")
+    store = DailyDataStore(data_dir=str(tmp_path), fetcher=flaky)
+    out = store.load(["UPUSDT"], TODAY, refresh=True, min_days=30)
+    assert "UPUSDT" in out and calls["n"] == 3
+
+    def dead(sym, start_ms):
+        raise TimeoutError("still dead")
+    store2 = DailyDataStore(data_dir=str(tmp_path / "x"), fetcher=dead)
+    assert store2.load(["UPUSDT"], TODAY, refresh=True, min_days=30) == {}
+
+
 def test_state_json_roundtrip():
     st = TrendState(positions={"BTCUSDT": BookPosition("BTCUSDT", 0.01, 100.0, 0.0004, 0.3, "2026-09-01", 1.0, 101.0)},
                     weights={"BTCUSDT": 0.3}, universe=["BTCUSDT"], universe_month="2026-09")
