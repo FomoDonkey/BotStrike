@@ -75,7 +75,8 @@ def journal_stats(since_min: int) -> Dict:
         "available": True,
         "errors": len(errors),
         "first_error": first_error,
-        "regime_changed": sum(1 for l in lines if "regime_changed" in l),
+        # startup transitions (old=UNKNOWN) are not flips: 4 per restart would look like a flood
+        "regime_changed": sum(1 for l in lines if "regime_changed" in l and "old=UNKNOWN" not in l),
         "telegram_sent": sum(1 for l in lines if "telegram_sent" in l),
         "telegram_failed": sum(1 for l in lines if "telegram_send_failed" in l or "telegram_message_lost" in l),
         "restarts": sum(1 for l in lines if "Started server process" in l),
@@ -143,7 +144,8 @@ def evaluate(now: datetime, health: Optional[dict], trend: Optional[dict], risk:
         if journal_15.get("errors", 0) > 0:
             alert("journal_errors", f"{journal_15['errors']} errores/tracebacks en los últimos {WINDOW_MIN} min"
                                     + (f": {journal_15['first_error']}" if journal_15.get("first_error") else ""))
-        if journal_15.get("restarts", 0) > 1:
+        # deploys restart once (twice when install.sh re-enables); a loop is 3+ in the window
+        if journal_15.get("restarts", 0) >= 3:
             alert("restart_loop", f"El bridge se ha reiniciado {journal_15['restarts']} veces en {WINDOW_MIN} min")
     if journal_60.get("available") and journal_60.get("regime_changed", 0) > MAX_REGIME_FLIPS_PER_HOUR:
         alert("regime_flood", f"{journal_60['regime_changed']} cambios de régimen en la última hora "

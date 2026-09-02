@@ -55,6 +55,8 @@ def test_bridge_down_engine_down_stale_feed_and_risk_halts():
 
 
 def test_journal_errors_restart_loop_and_regime_flood():
+    two = {**J_OK, "restarts": 2}                                  # a deploy: not a loop
+    assert om.evaluate(_now(12, 0), HEALTH, TREND, RISK, ACCOUNT, two, J_OK, J_OK, {}).alerts == []
     bad15 = {**J_OK, "errors": 4, "first_error": "RuntimeError: x", "restarts": 3}
     flood60 = {**J_OK, "regime_changed": 20}
     rep = om.evaluate(_now(12, 0), HEALTH, TREND, RISK, ACCOUNT, bad15, flood60, J_OK, {})
