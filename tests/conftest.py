@@ -8,6 +8,9 @@ import tempfile as _tempfile
 _tmp = _tempfile.mkdtemp(prefix="botstrike_tests_")
 os.environ.setdefault("BOTSTRIKE_TREND_STATE", os.path.join(_tmp, "trend_state.json"))
 os.environ.setdefault("BOTSTRIKE_TREND_DATA_DIR", os.path.join(_tmp, "binance_daily"))
+# The activity feed (analytics/activity.py) must never write into data/activity.json from tests:
+# the CT test gate polluted the production feed with synthetic trend runs (2026-09-02).
+os.environ.setdefault("BOTSTRIKE_ACTIVITY_PATH", os.path.join(_tmp, "activity.json"))
 
 # Script-style test files: they run assertions at import time via a `check(name, cond)`
 # helper instead of pytest functions, so collecting them would execute side effects.
