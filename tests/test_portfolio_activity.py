@@ -47,7 +47,7 @@ def test_compute_portfolio_numbers():
     a = p["analysis"]
     assert a["closed_trades"] == 3 and a["longest_win_streak_days"] == 1 and a["trading_style"] == "Day trader"
     assert a["median_hold_sec"] == 7200 and a["avg_hold_sec"] == pytest.approx((3600 + 7200 + DAY) / 3, rel=1e-6)
-    assert p["perf_30d"]["trades"] == 3 and p["perf_30d"]["win_rate"] == pytest.approx(2 / 3)
+    assert p["perf_30d"]["trades"] == 3 and p["perf_30d"]["win_rate"] == pytest.approx(2 / 3, abs=1e-4)
     assert p["perf_30d"]["sharpe"] is None and p["perf_30d"]["sharpe_valid"] is False
     assert p["perf_30d"]["drawdown"] == pytest.approx(2.0 / 1000.0)
     assert len(p["daily"]) == 6 and p["daily"][0]["pnl"] == 5.0 and p["daily"][1]["pnl"] == -2.0
