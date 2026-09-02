@@ -801,6 +801,8 @@ class TelegramNotifier:
                     if resp.status == 200:
                         if attempt:
                             self.send_retries += 1
+                        # Observability: the CT journal had no way to tell whether fills went out
+                        logger.info("telegram_sent", chars=len(text), attempt=attempt + 1)
                         return True
                     if resp.status == 429:
                         data = await resp.json()

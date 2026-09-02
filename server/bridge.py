@@ -153,7 +153,10 @@ class ChannelManager:
             return
         dead = []
         message = json.dumps(data, default=_json_default)
-        for ws in clients:
+        # Snapshot: send_text awaits, and a client can disconnect (set.discard) meanwhile.
+        # Iterating the live set raised "Set changed size during iteration" 348x on the CT
+        # (2026-09-02 04:28Z) and dropped that tick's market broadcast for everyone.
+        for ws in tuple(clients):
             try:
                 await ws.send_text(message)
             except Exception:
