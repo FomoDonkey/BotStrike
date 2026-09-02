@@ -1,5 +1,57 @@
 # BotStrike — Tasks
 
+## Sesión 2026-09-02 (2ª) — AUDITORÍA QUANT + UI del paper trading (informe publicado como artifact)
+Petición de Edgar: auditar como el mejor quant el paper trading (métricas, balances), revisar la UI al detalle
+en el navegador, coherencia UI↔datos y plan de mejoras para que sea rentable con 300 $ y con capital grande.
+### Datos analizados (DB del CT: 48 filas = 24 round-trips, 29-31 ago, 1,33 días)
+- **El bot lleva desde el 31-ago SIN estrategias activas** (MR y Fibonacci a 0 % por la auditoría R2): equity
+  989,04 $ congelada; 18 sesiones desde el 29-ago, 14 con 0 trades (restarts por deploys).
+- Net -10,96 $ (-1,10 %), bruto -7,43 $, fees 3,53 $ (8 bps/RT = 32 % de la pérdida). WR 29,2 %, PF 0,21,
+  expectancy -0,46 $/trade (-13 bps brutos sobre nocional, SE 7,7 bps, t = -1,70).
+- 15/24 salidas por SL (media -35 bps), 8 por z-exit (+26 bps, 7/8 ganadoras), 1 close. El TP a 4 ATR NUNCA
+  se alcanzó → R:R realizado invertido (26/35 bps) con WR 29 % = expectancy negativa ESTRUCTURAL, no ruido.
+- Por régimen: RANGING 13 trades, bruto +1,7 bps (plano, WR 46 %); TRENDING_UP/DOWN + BREAKOUT 11 trades,
+  TODOS negativos (-25 a -54 bps) = 98 % de la pérdida bruta. `should_activate` solo veta BREAKOUT y aun así
+  hubo 2 trades etiquetados BREAKOUT. Shorts 1/11 ganadores (-20,5 bps), longs 6/13 (-6,7 bps).
+- Cadencia 18 trades/día → fees 0,27 %/día del equity ≈ **97 %/año** (la regla P0 de research §8.2 es ≤30 %).
+- Sizing real: riesgo materializado 0,05-0,18 % del equity por trade frente al 1,5 % presupuestado; mandan
+  los topes `max_position_usd` (150-500 $) y el 2x, no el presupuesto de riesgo. Nocional medio 184 $ (18 %).
+- Sharpe -29,51 en UI/API: 2 retornos diarios × √365. Sin sentido con n<30 días → mostrar "n/a".
+- Risk manager: `_equity_peak` y el DD son de SESIÓN (se reinician en cada restart) → el circuit breaker del
+  10 % nunca acumula entre reinicios; paper resetea equity a 1000 $ en cada sesión.
+### UI (extensión Chrome 1536 px + Playwright 1440/390 px con pestaña visible; console + overflow)
+- [ ] **P0 crash intermitente**: React #185 (Maximum update depth) → "Page Error / Retry" en TODAS las páginas
+  (1 de 11 cargas de escritorio, en <12 s, coincidiendo con la ráfaga inicial del WS). El ErrorBoundary NO se
+  resetea al cambiar de ruta: hay que pulsar Retry. Sospecha: setState por mensaje del WS sin batching.
+- [ ] **P0 responsive roto a 390 px**: sidebar fija de 223 px, tarjetas en 4 columnas ilegibles ("SH RA"),
+  chart de 0 px, tabla clipada, header desborda a 852 px. En escritorio 1440 el header clipa 20 px (reloj).
+- [ ] Dashboard: Drawdown 0,00 % (sesión) junto a un MAX DD histórico de 1,10 %; "Max 10.00%" se lee como
+  DD máximo; **Allocation 50/50 FICTICIA** (`DEFAULT_ALLOCATION` cuando todas son 0 porque `filter(v>0)`
+  vacía la lista); Sharpe -29,51 en grande.
+- [ ] Performance: "24 trades" pero Trade History lista 48 filas (ENTRY con PnL 0,00 $ mezcladas) y la
+  columna Exit muestra un precio en filas de entrada.
+- [ ] Market Data: catálogo "0 rows" para 4 parquet de 7-10 MB (`records: 0` y `date_range: ""` hardcodeados
+  en `/api/data/catalog`).
+- [ ] Rutas con `#`: `/performance` sin almohadilla devuelve JSON `{"detail":"Not Found"}` → redirect a `/#/…`.
+- [ ] Pestaña en segundo plano: tickers "---" y Regime UNKNOWN durante 30 min (rAF throttled) → refetch en
+  `visibilitychange`.
+- [ ] Strategies: la descripción de MR ("5m pullback in 1H trend, RSI+BB") no describe el código (z-score 1m).
+- [x] Coherente: equity/PnL/WR/fees/trades iguales en TopBar, Dashboard, Performance, Risk, System, API y DB;
+  horas en Madrid correctas; por estrategia MR -8,85 $/19 y Fib -2,11 $/5; Strategies 0 %/DISABLED;
+  Settings refleja la config real; System 5/5 canales.
+### Plan propuesto (detalle y prioridades en el informe; decisiones de Edgar marcadas)
+- [ ] P0 producto: integrar el trend diario validado en el motor (cadencia diaria, señal al cierre, ejecución
+  en apertura con limit) y ≥90 días de paper; apagar la microestructura cuando ninguna estrategia la consume;
+  pico de equity/DD persistidos (all-time) para el circuit breaker; "monitor de edge" (n, media bps, SE,
+  t-stat, PF, share de fees) en UI+Telegram con kill automático; los fixes de UI de arriba.
+- [ ] P1: venue MiCA (research_r2_venues §7.2), presupuesto de fees como límite duro, stops en el exchange +
+  reconciliación, kill switch CLI (fix_exchange-05), close_all solo símbolos del bot (fix_core-03),
+  contabilidad live (persistence-01), retry/backoff en Telegram.
+- [ ] P2: onboarding por tamaño de cuenta (universo por notional mínimo: con 300 $ BTC queda fuera en un venue
+  con mínimo 100 $), panel "qué esperar" por capital, móvil de verdad, digest diario en Telegram.
+- Cuentas pequeñas (honesto, con el trend validado CAGR 11,4 % / maxDD 12,6 %): 300 $ ≈ +34 $/año (DD ~38 $);
+  1.000 $ ≈ +114 $; 10.000 $ ≈ +1.140 $. Rentable ≠ ingreso: a 300 $ el valor es track record + compounding.
+
 ## Sesión 2026-09-02 — Telegram sincronizado con la realidad + URL del dashboard
 Quejas de Edgar: (1) la URL de supervisión "deja de funcionar" al reiniciar su PC; (2) las
 notificaciones de Telegram "no cuadran en nada" con lo que opera el bot (portfolio siempre
