@@ -12,7 +12,7 @@ export interface OrderRow {
   key: string;
   ts: number | string;
   symbol: string;
-  kind: "ENTRY" | "EXIT";
+  kind: "ENTRY" | "EXIT" | "FUNDING";
   side: string;
   price: number;
   size: number;
@@ -31,6 +31,17 @@ export interface OrderRow {
 function orderRows(trades: TradeRecord[]): OrderRow[] {
   const out: OrderRow[] = [];
   for (const t of trades) {
+    // A funding settlement is a cash flow, not a fill. Rendered as an ENTRY it showed a phantom
+    // order: side SELL (from the string "FUNDING"), a mark price and size 0 (audit 2026-09-03).
+    if (t.trade_type === "FUNDING") {
+      out.push({
+        key: `f-${t.trade_id ?? t.id ?? ""}-${t.entry_ts ?? t.entry_time}`,
+        ts: t.entry_ts || t.entry_time,
+        symbol: t.symbol, kind: "FUNDING", side: "FUNDING", price: t.entry_price, size: 0,
+        orderType: "funding", strategy: t.strategy, fee: 0, pnl: t.pnl, trigger: "8h settlement",
+      });
+      continue;
+    }
     const closed = isClosedTrade(t);
     const kind: "ENTRY" | "EXIT" = t.trade_type === "ENTRY" ? "ENTRY" : closed ? "EXIT" : "ENTRY";
     if (kind === "EXIT") {
@@ -81,12 +92,12 @@ export function OrderHistoryTable({ trades, symbol, loading, filter }: OrderHist
   const columns: Column<OrderRow>[] = [
     { id: "time", label: "Time", align: "l", render: (r) => formatDateTime(r.ts) },
     { id: "symbol", label: "Symbol", align: "l", sortValue: (r) => r.symbol, render: (r) => <span className="font-semibold">{r.symbol}</span> },
-    { id: "kind", label: "Order", align: "l", sortValue: (r) => r.kind, render: (r) => <Chip tone={r.kind === "ENTRY" ? "blue" : "neutral"} size="xs">{r.kind}</Chip> },
-    { id: "side", label: "Side", align: "l", render: (r) => <SideChip side={r.side} size="xs" labels="order" /> },
+    { id: "kind", label: "Order", align: "l", sortValue: (r) => r.kind, render: (r) => <Chip tone={r.kind === "ENTRY" ? "blue" : r.kind === "FUNDING" ? "amber" : "neutral"} size="xs">{r.kind}</Chip> },
+    { id: "side", label: "Side", align: "l", render: (r) => r.kind === "FUNDING" ? <span className="text-text-2 font-medium">carry</span> : <SideChip side={r.side} size="xs" labels="order" /> },
     { id: "type", label: "Type", align: "l", render: (r) => <span className="font-medium">{r.orderType ? r.orderType.replace(/_/g, " ") : "market"}</span> },
     { id: "price", label: "Fill price", sortValue: (r) => r.price, render: (r) => <span className="num">{formatPrice(r.price || 0)}</span> },
-    { id: "size", label: "Size", sortValue: (r) => r.size, render: (r) => <span className="num">{formatSize(r.size)}</span> },
-    { id: "value", label: "Value", sortValue: (r) => r.price * r.size, render: (r) => <span className="num">{formatUSD((r.price || 0) * (r.size || 0))}</span> },
+    { id: "size", label: "Size", sortValue: (r) => r.size, render: (r) => r.kind === "FUNDING" ? <span className="text-text-3">---</span> : <span className="num">{formatSize(r.size)}</span> },
+    { id: "value", label: "Value", sortValue: (r) => r.price * r.size, render: (r) => r.kind === "FUNDING" ? <span className="text-text-3">---</span> : <span className="num">{formatUSD((r.price || 0) * (r.size || 0))}</span> },
     { id: "slip", label: "Slippage", hint: HINTS.slippage, render: (r) => typeof r.slippageBps === "number" ? <span className={cn("num", r.slippageBps > 0 ? "text-rose" : "text-text")}>{r.slippageBps.toFixed(1)} bps</span> : <span className="text-text-3">---</span> },
     { id: "spread", label: "Spread", hint: HINTS.spread, render: (r) => typeof r.spreadBps === "number" ? <span className="num">{r.spreadBps.toFixed(2)} bps</span> : <span className="text-text-3">---</span> },
     { id: "fee", label: "Fee", render: (r) => <span className="num">{formatUSD(r.fee)}</span> },

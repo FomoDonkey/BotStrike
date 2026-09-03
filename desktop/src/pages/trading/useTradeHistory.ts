@@ -24,6 +24,7 @@ export function useTradeHistory() {
   const markers = useMemo<TradeData[]>(() => {
     const out: TradeData[] = [];
     for (const t of trades) {
+      if (t.trade_type === "FUNDING") continue;   // a settlement is not a fill: it drew a phantom marker
       const entryTs = t.entry_ts || (t.entry_time ? Date.parse(t.entry_time) / 1000 : 0);
       const exitTs = t.exit_ts || (t.exit_time ? Date.parse(t.exit_time) / 1000 : 0);
       if (entryTs > 0 && t.entry_price > 0) {
