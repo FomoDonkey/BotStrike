@@ -1820,11 +1820,21 @@ async def get_risk_profiles():
             equity = float(s.trading.initial_capital)
     else:
         equity = float(s.trading.initial_capital)
+    # Price the profiles on the basis the engine SIZES on (equity including open positions), not on
+    # the risk manager's realised equity: the header read "current equity $1,009.64" beside an equity
+    # card showing $1,016.07 on the same page (audit 2026-09-03).
+    basis = equity
+    if engine is not None:
+        try:
+            basis = float(engine._sizing_equity())
+        except Exception:  # noqa: BLE001
+            basis = equity
     return _json_safe({
         "current": rp.profile_of(s.trading),
         "equity": round(equity, 2),
+        "equity_basis": round(basis, 2),
         "validated_target_vol_range": list(rp.VALIDATED_RANGE),
-        "profiles": rp.catalog(equity),
+        "profiles": rp.catalog(basis),
         "current_values": {"trend_target_vol": float(s.trading.trend_target_vol),
                            "max_drawdown_pct": float(s.trading.max_drawdown_pct),
                            "max_daily_loss_pct": float(s.trading.max_daily_loss_pct),
@@ -2232,11 +2242,22 @@ def _strategy_view(settings: Settings, st: StrategyType) -> dict:
                   "vol_window": tc.trend_vol_window, "n_assets": tc.trend_n_assets,
                   "leverage_cap": tc.trend_leverage_cap, "rebalance_threshold": tc.trend_rebalance_threshold,
                   "execution_hour_utc": tc.trend_execution_hour_utc, "min_order_usd": tc.trend_min_order_usd}
+        # The selection rule depends on the pool. Describing a mixed pool as "top-N by 30d volume"
+        # advertised the rule that was REMOVED for being meaningless across asset classes (an index
+        # reports its constituents' summed share volume, a metal reports contracts) — audit 2026-09-03.
+        from strategies.trend_daily_model import asset_class
+        pool = [x.strip().upper() for x in str(getattr(tc, "trend_pool", "") or "").split(",") if x.strip()]
+        classes = {asset_class(x) for x in pool}
+        rule = ("%d markets: one per asset class, longest history, correlation cap, venue liquidity floor"
+                % tc.trend_n_assets if len(classes) > 1
+                else "top-%d by 30d volume" % tc.trend_n_assets)
         desc = (f"Daily Donchian ensemble {tc.trend_lookbacks} · long-only · vol target "
-                f"{tc.trend_target_vol:.0%} ({tc.trend_vol_window}d) · top-{tc.trend_n_assets} by 30d volume · "
+                f"{tc.trend_target_vol:.0%} ({tc.trend_vol_window}d) · {rule} · "
                 f"signal at close, executed at {tc.trend_execution_hour_utc:02d}:00 UTC open + "
                 f"{tc.trend_execution_delay_min} min")
-        return {"description": desc, "params": params, "symbols": ["universe (monthly)"], "group": "trend_daily"}
+        return {"description": desc, "params": params, "group": "trend_daily",
+                "symbols": [f"universe re-picked monthly and whenever the pool or size changes "
+                            f"({len(pool)} candidates, {'/'.join(sorted(classes))})"]}
     if st == StrategyType.DIVERGENCE:
         params = {"timeframe_min": tc.div_timeframe_min, "rsi_period": tc.div_rsi_period, "pivot_k": tc.div_pivot_k,
                   "rsi_os": tc.div_rsi_os, "rsi_ob": tc.div_rsi_ob, "min_rsi_gap": tc.div_min_rsi_gap,

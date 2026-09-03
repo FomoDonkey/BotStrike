@@ -29,6 +29,13 @@ interface StrategyCardProps {
   nowMs: number;
 }
 
+/** Profit factor with no losing trades is not 99 or 9999.99 — those are the backend's sentinels. */
+function profitFactor(v: unknown): string {
+  const n = typeof v === "number" ? v : NaN;
+  if (!Number.isFinite(n) || n <= 0) return "---";
+  return n >= 99 ? "∞" : n.toFixed(2);
+}
+
 function num(v: unknown, digits = 2): string {
   return typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : "---";
 }
@@ -100,7 +107,7 @@ export function StrategyCard({ s, pf, edge, allocField, busy, expanded, onToggle
         <ListRow label="30D return"><Signed value={pf ? pf.return_30d : null} format={(v) => `${v > 0 ? "+" : ""}${(v * 100).toFixed(2)}%`} /></ListRow>
         <ListRow label="Trades">{pf ? pf.trades : edge ? edge.n : "---"}</ListRow>
         <ListRow label="Win rate">{pf ? formatPct(pf.win_rate, 0) : edge ? formatPct(edge.win_rate, 0) : "---"}</ListRow>
-        <ListRow label="PF" hint="Profit factor = gross wins / gross losses">{pf ? num(pf.profit_factor) : edge ? num(edge.profit_factor) : "---"}</ListRow>
+        <ListRow label="PF" hint="Profit factor = gross wins / gross losses. Infinite until the first loss.">{pf ? profitFactor(pf.profit_factor) : edge ? profitFactor(edge.profit_factor) : "---"}</ListRow>
         <ListRow label="Sharpe">{pf && typeof pf.sharpe === "number" ? num(pf.sharpe) : "n/a"}</ListRow>
         <ListRow label="Max DD"><span className={cn(pf && pf.max_drawdown > 0 && "text-rose")}>{pf ? formatPct(pf.max_drawdown) : "---"}</span></ListRow>
         <ListRow label="Age" hint="Since the first trade">{ageSec !== null ? formatDurationShort(ageSec) : "---"}</ListRow>
@@ -133,7 +140,7 @@ export function StrategyCard({ s, pf, edge, allocField, busy, expanded, onToggle
                 <ListRow label="n">{edge.n}</ListRow>
                 <ListRow label="Win rate">{formatPct(edge.win_rate, 0)}</ListRow>
                 <ListRow label="t-stat"><span className={cn(edge.t_stat <= -2 && "text-rose", edge.t_stat >= 2 && "text-mint")}>{num(edge.t_stat)}</span></ListRow>
-                <ListRow label="PF"><span className={cn(edge.profit_factor >= 1 ? "text-mint" : "text-rose")}>{num(edge.profit_factor)}</span></ListRow>
+                <ListRow label="PF"><span className={cn(edge.profit_factor >= 1 ? "text-mint" : "text-rose")}>{profitFactor(edge.profit_factor)}</span></ListRow>
                 <ListRow label="Fee share"><span className={cn(edge.fee_share >= 0.5 && "text-amber")}>{formatPct(edge.fee_share, 0)}</span></ListRow>
                 <ListRow label="Net PnL"><Signed value={edge.net_pnl} format={formatSignedMoney} /></ListRow>
                 <ListRow label="Mean gross">{num(edge.mean_gross_bps, 1)} ± {num(edge.se_bps, 1)} bps</ListRow>
@@ -189,7 +196,7 @@ function ResearchChip({ r }: { r: StrategyResearch }) {
 function ResearchDetails({ r }: { r: StrategyResearch }) {
   const parts: string[] = [];
   if (typeof r.trades === "number") parts.push(`${r.trades} trades`);
-  if (typeof r.profit_factor === "number") parts.push(`PF ${r.profit_factor.toFixed(2)}`);
+  if (typeof r.profit_factor === "number") parts.push(`PF ${profitFactor(r.profit_factor)}`);
   if (typeof r.t_stat === "number") parts.push(`t ${r.t_stat.toFixed(2)}`);
   return (
     <div>

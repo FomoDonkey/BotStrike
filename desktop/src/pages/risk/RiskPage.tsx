@@ -70,7 +70,7 @@ export function RiskPage() {
       used: risk.max_drawdown_pct > 0 ? Math.min(1, risk.drawdown_pct / risk.max_drawdown_pct) : null,
       current: <span className={cn("num", risk.drawdown_pct > 0 && "text-rose")}>{formatPct(risk.drawdown_pct)}</span>,
       limit: `${formatPct(risk.max_drawdown_pct, 1)} → circuit breaker`,
-      note: risk.peak_equity > 0 ? `peak ${formatMoney(risk.peak_equity)}` : undefined,
+      note: risk.peak_equity > 0 ? `peak realised ${formatMoney(risk.peak_equity)}` : undefined,
     },
   ];
 
@@ -101,7 +101,12 @@ export function RiskPage() {
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
         <KpiCard label="Circuit breaker" hint="Trips on the max-drawdown limit or an engine halt; no new entries while tripped" value={<span className={cn("inline-flex items-center gap-2", halted ? "text-rose" : "text-mint")}>{halted ? <CircleOff className="w-5 h-5" /> : <Shield className="w-5 h-5" />}{risk.circuit_breaker_active ? "TRIPPED" : risk.drawdown_halted ? "HALTED" : "NORMAL"}</span>} sub={risk.drawdown_halted ? "Halted by the drawdown limit" : "All limits inside budget"} />
-        <KpiCard label="Equity" hint="Merged all-time equity (same as the top bar)" value={formatMoney(equity)} sub={risk.peak_equity > 0 ? `Peak ${formatMoney(risk.peak_equity)}` : "Peak not reported yet"} />
+        {/* The risk manager's peak tracks REALISED equity — the basis the drawdown ladder measures
+            against. Printed as plain "Peak" under the live value it read as a peak below the current
+            equity, which looks like a bug (audit 2026-09-03). */}
+        <KpiCard label="Equity" hint="Live equity including open positions (same as the top bar). The peak below is the realised equity the drawdown ladder measures from."
+                 value={formatMoney(equity)}
+                 sub={risk.peak_equity > 0 ? `Peak realised ${formatMoney(risk.peak_equity)}` : "Peak not reported yet"} />
         <KpiCard label="Session drawdown" hint={HINTS.drawdown} value={<span className={cn(risk.drawdown_pct > 0 && "text-rose")}>{formatPct(risk.drawdown_pct)}</span>} sub={`All-time max ${formatPct(metrics.max_drawdown)} · limit ${formatPct(risk.max_drawdown_pct, 0)}`}>
           <ProgressBar ratio={risk.max_drawdown_pct > 0 ? risk.drawdown_pct / risk.max_drawdown_pct : 0} tone={tone(risk.max_drawdown_pct > 0 ? risk.drawdown_pct / risk.max_drawdown_pct : 0)} />
         </KpiCard>

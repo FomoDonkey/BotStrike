@@ -8,6 +8,7 @@ import { StatusChip, Chip } from "@/components/ui/Chip";
 import { ListRow, Signed } from "@/components/ui/ListRow";
 import { ProgressBar } from "@/components/ui/KpiCard";
 import { DataTable, type Column } from "@/components/ui/DataTable";
+import { marketName } from "@/lib/market";
 import { CHART_GRID, CHART_TEXT, CHART_TOOLTIP_ITEM, CHART_TOOLTIP_LABEL, CHART_TOOLTIP_STYLE, COLOR_BLUE, COLOR_UP } from "@/lib/constants";
 import { cn, formatLocalDateTime, formatMoney, formatPct, formatPrice, formatRelative, formatSignedMoney, formatSize } from "@/lib/utils";
 import { trimNumber } from "@/components/settings/schemaUtils";
@@ -47,7 +48,7 @@ export function TrendDailyPanel() {
   const statusKind = /^(ok|success|done)$/i.test(trend.last_run_status) ? "ok" : /(error|fail)/i.test(trend.last_run_status) ? "error" : "disabled";
 
   const posColumns: Column<TrendPosition>[] = [
-    { id: "symbol", label: "Symbol", align: "l", render: (p) => <span className="font-semibold">{p.symbol}</span> },
+    { id: "symbol", label: "Symbol", align: "l", render: (p) => <span className="font-semibold">{p.ui_symbol ?? marketName(p.symbol)}</span> },
     { id: "size", label: "Size", render: (p) => <span className="num">{formatSize(p.size)}</span> },
     { id: "entry", label: "Entry", render: (p) => <span className="num">{formatPrice(p.entry_price)}</span> },
     { id: "mark", label: "Mark", render: (p) => <span className="num">{formatPrice(p.mark_price)}</span> },
@@ -80,7 +81,7 @@ export function TrendDailyPanel() {
           <div className="flex flex-wrap gap-1.5">
             {(trend.universe ?? []).map((sym) => {
               const w = trend.targets?.[sym] ?? 0;
-              return <Chip key={sym} tone={w > 0 ? "mint" : "outline"} size="xs" uppercase={false}>{sym}</Chip>;
+              return <Chip key={sym} tone={w > 0 ? "mint" : "outline"} size="xs" uppercase={false}>{marketName(sym)}</Chip>;
             })}
             {(trend.universe?.length ?? 0) === 0 && <span className="text-[12.5px] font-medium text-text">empty</span>}
           </div>
@@ -104,7 +105,7 @@ export function TrendDailyPanel() {
               {targets.map(([sym, w]) => (
                 <div key={sym} className="text-[12.5px]">
                   <div className="flex justify-between mb-1">
-                    <span className="font-semibold text-text">{sym}</span>
+                    <span className="font-semibold text-text">{marketName(sym)}</span>
                     <span className={cn("num font-semibold", w > 0 ? "text-mint" : w < 0 ? "text-rose" : "text-text")}>{formatPct(w, 1)}</span>
                   </div>
                   <ProgressBar ratio={Math.abs(w) / barScale} tone={w >= 0 ? "blue" : "rose"} />

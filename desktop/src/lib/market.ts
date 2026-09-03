@@ -10,6 +10,20 @@ export function marketLabel(symbol: string): string {
   return SYMBOL_LABELS[symbol] ?? symbol.split("-")[0];
 }
 
+/**
+ * The engine's venue key (BTCUSDT) as the market name every table shows (BTC-USD).
+ *
+ * The trend panels listed "BTCUSDT, SOLUSDT, WTI-USD, SP500-USD" side by side: two naming schemes
+ * for one book, in one list (audit 2026-09-03).
+ */
+export function marketName(symbol: string): string {
+  const s = (symbol ?? "").toUpperCase();
+  if (s.includes("-")) return s;
+  if (s.endsWith("USDT")) return `${s.slice(0, -4)}-USD`;
+  if (s.endsWith("USD")) return `${s.slice(0, -3)}-USD`;
+  return s;
+}
+
 /** Maintenance margin used by the paper liquidation estimate (contract §2). */
 export const PAPER_MAINTENANCE_MARGIN = 0.005;
 

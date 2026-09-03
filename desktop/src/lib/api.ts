@@ -544,7 +544,8 @@ export interface RiskProfileInfo {
 /** GET /api/risk/profiles (operator contract §4). `current` is `custom` when nothing matches. */
 export interface RiskProfilesResponse {
   current: string;
-  equity: number;
+  equity: number;              // the risk manager's realised equity
+  equity_basis?: number;       // what the engine sizes on: equity including open positions
   /** [min, max] target volatility the research validated */
   validated_target_vol_range: [number, number] | number[];
   profiles: RiskProfileInfo[];

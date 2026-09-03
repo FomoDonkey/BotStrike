@@ -42,7 +42,10 @@ export function RiskProfileCards() {
   const d: RiskProfilesResponse | null = ep.data;
   const profiles = d?.profiles ?? [];
   const current = d?.current ?? "";
-  const equity = d?.equity ?? 0;
+  // Size on the same basis the engine sizes on (equity including open positions), not on the risk
+  // manager's realised equity: the header said "current equity $1,009.64" beside a card reading
+  // $1,016.07 (audit 2026-09-03).
+  const equity = d?.equity_basis ?? d?.equity ?? 0;
   const range = d?.validated_target_vol_range ?? [0.1, 0.3];
   const targetVol = d?.current_values?.trend_target_vol;
   const outsideRange =
@@ -89,7 +92,7 @@ export function RiskProfileCards() {
       <div className="flex items-baseline gap-2 flex-wrap">
         <h2 className="text-[14px] font-semibold text-text">Risk level</h2>
         <span className="text-[12.5px] font-medium text-text-2">
-          priced for the current equity <span className="num text-text font-semibold">{formatMoney(equity)}</span>
+          priced for the equity the bot sizes on <span className="num text-text font-semibold">{formatMoney(equity)}</span>
           {sharpe !== null && (
             <>
               {" · Sharpe "}
