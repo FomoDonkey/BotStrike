@@ -143,7 +143,11 @@ export function StrategyCard({ s, pf, edge, allocField, busy, expanded, onToggle
                 <ListRow label="PF"><span className={cn(edge.profit_factor >= 1 ? "text-mint" : "text-rose")}>{profitFactor(edge.profit_factor)}</span></ListRow>
                 <ListRow label="Fee share"><span className={cn(edge.fee_share >= 0.5 && "text-amber")}>{formatPct(edge.fee_share, 0)}</span></ListRow>
                 <ListRow label="Net PnL"><Signed value={edge.net_pnl} format={formatSignedMoney} /></ListRow>
-                <ListRow label="Mean gross">{num(edge.mean_gross_bps, 1)} ± {num(edge.se_bps, 1)} bps</ListRow>
+                {/* "Mean gross ± se bps" is the widest pair here and truncated to "Mea..." in a
+                    three-column card at 1536 px. The standard error rides with the value instead. */}
+                <ListRow label="Gross/trade" hint="Mean gross return per trade before fees, ± one standard error, in basis points">
+                  {num(edge.mean_gross_bps, 1)} <span className="text-text-2">±{num(edge.se_bps, 1)}</span> bps
+                </ListRow>
                 <ListRow label="Expectancy">{formatMoney(edge.expectancy_usd)}</ListRow>
                 <ListRow label="Avg hold">{num(edge.avg_hold_min, 0)} min</ListRow>
                 <ListRow label="Verdict"><StatusChip status={edge.verdict === "ok" ? "ok" : edge.verdict === "kill" ? "killed" : edge.verdict === "warn" ? "warning" : "disabled"} label={edge.verdict} size="xs" title={edge.reason} /></ListRow>
