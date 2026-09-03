@@ -25,8 +25,11 @@ validated here is literally what the bot executes; the numbers above are that re
 research-only rule gave 1.81 / 8.8 %). The engine's rule adds monthly hysteresis (a market already
 held is kept) and the venue liquidity floor.
 
-Script: `scripts/trend_multi_research.py` · data: `scripts/download_daily.py` (Yahoo daily, 10 years,
-23 markets) · funding: measured on Binance (166 days) and applied as a cost.
+Script: `scripts/trend_multi_research.py` · price data: `scripts/download_daily.py` (Yahoo daily,
+10 years, 23 markets) · costs: `scripts/strike_market_stats.py` writes `data/strike_costs.json`
+from Strike's own funding and spread history. **That file is a snapshot, not a live feed: re-run
+the stats script before re-running this study, or the funding assumptions drift.** The live bot
+does not use it — it charges the venue's current rate at every settlement.
 
 ## 1. Setup
 
