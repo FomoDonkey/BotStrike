@@ -99,7 +99,11 @@ function BotTab({ market, positions }: { market: MarketView; positions: Position
   const eq = acct.equity > 0 ? acct.equity : equity;
   const riskUsd = trading ? trading.risk_per_trade_pct * eq : null;
   const nextRunMs = trend.data?.next_run_utc ? Date.parse(trend.data.next_run_utc) : Number.NaN;
-  const target = trend.data?.targets?.[symbol];
+  // targets are keyed by the Binance symbol (BTCUSDT); the UI symbol is BTC-USD (positions carry ui_symbol)
+  const targets = (trend.data?.targets ?? {}) as Record<string, number>;
+  const trendPositions = (trend.data?.positions ?? []) as Array<{ symbol?: string; ui_symbol?: string }>;
+  const binanceSymbol = trendPositions.find((p) => p.ui_symbol === symbol)?.symbol ?? symbol.replace("-", "").replace(/USD$/, "USDT");
+  const target = targets[symbol] ?? targets[binanceSymbol];
   const estEntry = market.mark > 0 ? market.mark : market.price;
   const slip = trading ? trading.slippage_bps : null;
   const estLiqLong = estEntry > 0 && leverage > 1 ? estEntry * (1 - 1 / leverage + PAPER_MAINTENANCE_MARGIN) : null;

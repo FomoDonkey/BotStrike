@@ -96,7 +96,7 @@ export function SystemPage() {
               </ListSection>
               {Object.keys(journal).length > 0 && (
                 <ListSection title="Journal · last 15 min">
-                  {Object.entries(journal).map(([k, v]) => <ListRow key={k} label={k.replace(/_/g, " ")}><span className={cn(k === "errors" && v > 0 && "text-rose")}>{v}</span></ListRow>)}
+                  {Object.entries(journal).filter(([k, v]) => k !== "available" && !(k === "first_error" && !v)).map(([k, v]) => <ListRow key={k} label={k.replace(/_/g, " ")}><span className={cn(k === "errors" && Number(v) > 0 && "text-rose")}>{typeof v === "boolean" ? (v ? "yes" : "no") : String(v)}</span></ListRow>)}
                 </ListSection>
               )}
               {(opsData.alerts?.length ?? 0) > 0 && (
