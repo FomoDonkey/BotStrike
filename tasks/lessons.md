@@ -1053,3 +1053,9 @@
 - La auditoría compone un ancestro blanco translúcido como blanco opaco → usar fondos opacos para resaltados de fila.
 - `scrollIntoView` desplaza TODOS los ancestros, incluido el contenedor de página → `block: "nearest"` o scroll manual.
 - `/api/data/catalog.datasets` es un objeto (claves `SYMBOL/type`), no un array → la página Data se rompía.
+
+### El journal lleva códigos ANSI: "old=UNKNOWN" nunca coincide
+- structlog colorea la consola y journald guarda los escapes: `old=\x1b[35mUNKNOWN`. El filtro de arranques del
+  monitor no filtraba nada y cada deploy sumaba 4 "cambios de régimen". Visto en la comprobación de las 00:17Z.
+- **LESSON: antes de hacer `grep`/`in` sobre líneas del journal, quitar ANSI (`re.sub(r"\x1b\[[0-9;]*m", "", l)`)
+  o usar `journalctl -o json`. Y escribir parches con `\x1b` desde archivos, nunca por heredoc del shell.**
