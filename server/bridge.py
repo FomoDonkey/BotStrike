@@ -1919,6 +1919,13 @@ def _measured_funding_90d() -> dict:
     return _COSTS_CACHE["data"]
 
 
+def _venue_quote_age(engine) -> Optional[float]:
+    """How old the cached venue quote is. A rate that moves every second will differ in its last
+    printed digit between two clients; showing the age turns that into a fact instead of a doubt."""
+    ts = float(getattr(engine, "_venue_funding_ts", 0.0) or 0.0)
+    return round(max(0.0, time.time() - ts), 1) if ts else None
+
+
 def _live_funding_rates(engine, interval_hours: int) -> dict:
     """The rate each market is charged at, as the ENGINE charges it — never a different number.
 
@@ -1971,6 +1978,7 @@ async def get_funding():
     out["enabled"] = bool(getattr(engine.settings.trading, "funding_enabled", True))
     out["engine"] = True
     out["rates"] = _live_funding_rates(engine, int(out.get("interval_hours") or 1))
+    out["quote_age_sec"] = _venue_quote_age(engine)
     return _json_safe(out)
 
 
@@ -2011,7 +2019,7 @@ async def get_markets():
                     "annualized_pct": round(annualized_pct(rate, interval), 6) if sym in venue else None,
                     "annualized_90d": measured.get(sym)})
     return _json_safe({"engine": True, "venue": str(getattr(engine.settings.trading, "exchange_venue", "") or ""),
-                       "interval_hours": interval, "markets": out})
+                       "interval_hours": interval, "quote_age_sec": _venue_quote_age(engine), "markets": out})
 
 
 @app.get("/api/ops")

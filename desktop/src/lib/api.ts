@@ -507,8 +507,10 @@ export interface FundingSettlement {
 export interface FundingResponse {
   enabled: boolean;
   engine?: boolean;
-  /** Settlement interval in hours (8 on Binance perps) */
+  /** Settlement interval in hours (1 on Strike, 8 on Binance-style perps) */
   interval_hours?: number;
+  /** seconds since the venue quote these rates come from was taken */
+  quote_age_sec?: number | null;
   last_settled_utc?: string | null;
   next_settlement_utc?: string | null;
   /** Cumulative funding since inception (negative = paid) */
@@ -949,6 +951,8 @@ export interface MarketsResponse {
   engine: boolean;
   venue?: string;
   interval_hours?: number;
+  /** seconds since the venue quote these rates come from was taken */
+  quote_age_sec?: number | null;
   markets: VenueMarket[];
 }
 

@@ -51,6 +51,13 @@ export function FundingBlock({ funding }: { funding: EndpointState<FundingRespon
           <p className="text-[12px] font-medium text-text-2 flex items-center gap-2 flex-wrap">
             <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-mint" />positive: long pays short — the book pays</span>
             <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-rose" />negative: short pays long — the book is paid</span>
+            {/* The rate moves every second: without the age of the quote, a last-digit difference
+                against the venue's own screen looks like an error instead of a timestamp. */}
+            {typeof f?.quote_age_sec === "number" && (
+              <span className="opacity-70" title="Age of the venue quote these rates come from">
+                venue quote {f.quote_age_sec < 1 ? "just now" : `${Math.round(f.quote_age_sec)} s ago`}
+              </span>
+            )}
           </p>
           <div className="flex flex-wrap gap-1.5">
             {rates.map(([sym, r]) => (

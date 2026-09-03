@@ -52,7 +52,11 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
-VENUE_FUNDING_TTL_SEC = 45      # the funding loop runs every 60 s, so this refreshes every pass
+# 15 s: the venue rate moves continuously, so at 45 s the fourth decimal on screen could sit one or
+# two units away from Strike's — small, but Edgar reads both terminals side by side and a digit that
+# does not match is a digit he has to think about. One premiumIndex call per pass covers all 31
+# markets, so the cost is a request a minute.
+VENUE_FUNDING_TTL_SEC = 15
 
 
 class BotStrike:
