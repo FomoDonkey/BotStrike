@@ -32,7 +32,9 @@ export function Modal({ open, onClose, title, children, width = "max-w-lg", clas
         role="dialog"
         aria-modal="true"
         onMouseDown={(e) => e.stopPropagation()}
-        className={cn("w-full rounded-[10px] border border-hairline-strong bg-panel flex flex-col min-h-0 max-h-[84vh] overflow-hidden", width, className)}
+        // `text-left whitespace-normal font-normal`: a modal opened from a table cell is a DOM
+        // descendant of `.term-table td`, which sets nowrap / right-align / 500 — all inherited.
+        className={cn("w-full rounded-[10px] border border-hairline-strong bg-panel flex flex-col min-h-0 max-h-[84vh] overflow-hidden text-left whitespace-normal font-normal", width, className)}
       >
         {!bare && (
           <div className="flex items-center h-11 px-4 border-b border-hairline shrink-0">

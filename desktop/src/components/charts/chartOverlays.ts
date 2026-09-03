@@ -5,7 +5,7 @@ import type { IChartApi, IPriceLine, ISeriesApi, LineStyle, SeriesMarker, Time, 
 import type { PositionData } from "@/lib/api";
 import type { DivergencePivot, SignalData, SignalMetadata } from "@/stores/tradingStore";
 import { COLOR_DOWN, COLOR_UP, STRATEGY_COLORS } from "@/lib/constants";
-import { isLong, positionLiquidation } from "@/lib/market";
+import { exitLadderOf, isLong, ladderLevelLabel, mergedLadderLevels, positionLiquidation } from "@/lib/market";
 
 export type LineStyleName = "solid" | "dashed" | "dotted";
 
@@ -32,7 +32,11 @@ export interface DivergenceOverlay {
 /** lightweight-charts LineStyle enum values (Solid=0, Dotted=1, Dashed=2) without importing the runtime enum. */
 const LINE_STYLE: Record<LineStyleName, LineStyle> = { solid: 0 as LineStyle, dotted: 1 as LineStyle, dashed: 2 as LineStyle };
 
-/** Price lines for every open position on this symbol: entry (strategy colour), SL, TP, liq. */
+/**
+ * Price lines for every open position on this symbol: entry (strategy colour), SL, TP, liq, and —
+ * for a trend position, which has neither SL nor TP — every rung of its exit ladder in rose
+ * (`exit 25 %` … `full exit`), so the operator sees exactly where the position dies.
+ */
 export function positionPriceLines(positions: PositionData[], symbol: string): PriceLineSpec[] {
   const out: PriceLineSpec[] = [];
   positions.forEach((p, i) => {
@@ -41,6 +45,12 @@ export function positionPriceLines(positions: PositionData[], symbol: string): P
     const key = `${p.strategy ?? "pos"}-${i}`;
     const color = STRATEGY_COLORS[p.strategy ?? ""] ?? (long ? COLOR_UP : COLOR_DOWN);
     out.push({ id: `entry-${key}`, price: p.entry_price, color, title: `${long ? "L" : "S"} entry`, style: "solid", width: 1 });
+    const ladder = exitLadderOf(p);
+    if (ladder) {
+      for (const lv of mergedLadderLevels(ladder)) {
+        out.push({ id: `ladder-${key}-${lv.lookback}`, price: lv.stop, color: COLOR_DOWN, title: ladderLevelLabel(lv), style: "dashed" });
+      }
+    }
     if (typeof p.stop_loss === "number" && p.stop_loss > 0) {
       out.push({ id: `sl-${key}`, price: p.stop_loss, color: COLOR_DOWN, title: "SL", style: "dashed" });
     }

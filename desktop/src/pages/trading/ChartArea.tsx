@@ -14,6 +14,8 @@ import { CandlestickChart } from "@/components/charts/CandlestickChart";
 import { IndicatorPane, type IndicatorKind } from "@/components/charts/IndicatorPane";
 import { MORE_TIMEFRAMES, TIMEFRAMES, type Timeframe } from "@/components/charts/chartConfig";
 import { divergenceOverlays, positionPriceLines, type PriceLineSpec } from "@/components/charts/chartOverlays";
+import { exitLadderOf } from "@/lib/market";
+import { formatPrice, formatSignedPct } from "@/lib/utils";
 import { COLOR_BLUE, COLOR_DOWN, COLOR_DOWN_CB, COLOR_UP, COLOR_UP_CB } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { SignalsFeed } from "./SignalsFeed";
@@ -69,6 +71,17 @@ export function ChartArea({ market, timeframe, onTimeframe, markers, positions, 
     return lines;
   }, [positions, symbol, elements.positions, priceMode, market.mark]);
   const overlays = useMemo(() => (elements.divergence ? divergenceOverlays(signals, symbol) : []), [signals, symbol, elements.divergence]);
+  // The ladder legend: on a 5m chart the stops sit ~8 % below the visible candles, so the dashed
+  // lines exist but are outside the auto-scaled price range — the operator still needs the numbers.
+  const ladder = useMemo(() => {
+    if (!elements.positions) return null;
+    for (const p of positions) {
+      if (p.symbol !== symbol) continue;
+      const l = exitLadderOf(p);
+      if (l) return l;
+    }
+    return null;
+  }, [positions, symbol, elements.positions]);
   const tradeMarkers = elements.trades ? markers : [];
   const symbolSignals = useMemo(() => signals.filter((s) => s.symbol === symbol).length, [signals, symbol]);
 
@@ -137,7 +150,7 @@ export function ChartArea({ market, timeframe, onTimeframe, markers, positions, 
       <Popover width="w-52" trigger={(open) => <DropdownTrigger size="xs" open={open} label="Chart Elements" />}>
         <MenuLabel>Show</MenuLabel>
         <MenuItem onClick={() => setElements((e) => ({ ...e, trades: !e.trades }))}><Check on={elements.trades} /> Trade markers</MenuItem>
-        <MenuItem onClick={() => setElements((e) => ({ ...e, positions: !e.positions }))}><Check on={elements.positions} /> Position lines (entry · SL · TP · liq)</MenuItem>
+        <MenuItem onClick={() => setElements((e) => ({ ...e, positions: !e.positions }))}><Check on={elements.positions} /> Position lines (entry · exit ladder · SL · TP · liq)</MenuItem>
         <MenuItem onClick={() => setElements((e) => ({ ...e, divergence: !e.divergence }))}><Check on={elements.divergence} /> Divergence overlays</MenuItem>
       </Popover>
       <span className="w-px h-4 bg-hairline-strong" />
@@ -183,9 +196,18 @@ export function ChartArea({ market, timeframe, onTimeframe, markers, positions, 
                 <span className="font-semibold">{symbol} · {timeframe}</span>
                 <span ref={legendRef} className="truncate" />
               </div>
-              {overlays.length > 0 && (
-                <div className="absolute left-2 top-6 z-[2] text-[11px] font-medium text-[#F472B6] pointer-events-none select-none">
-                  {overlays.map((o) => o.label).join(" · ")} divergence
+              {(ladder || overlays.length > 0) && (
+                <div className="absolute left-2 top-[26px] z-[2] w-fit max-w-[calc(100%-92px)] flex flex-col gap-0.5 rounded-[4px] bg-panel px-1 py-px pointer-events-none select-none">
+                  {ladder && (
+                    <span className="text-[11px] font-medium text-rose truncate">
+                      exit ladder {formatPrice(ladder.first_exit)} → {formatPrice(ladder.full_exit)} · full exit {formatSignedPct(ladder.worst_case_pct ?? 0, 1)}
+                    </span>
+                  )}
+                  {overlays.length > 0 && (
+                    <span className="text-[11px] font-medium text-[#F472B6] truncate">
+                      {overlays.map((o) => o.label).join(" · ")} divergence
+                    </span>
+                  )}
                 </div>
               )}
             </div>

@@ -1,0 +1,163 @@
+{
+ "AAOI-USD": {
+  "yahoo": "AAOI",
+  "bars": 2512,
+  "first": "2016-09-06",
+  "last": "2026-09-02",
+  "downloaded": "2026-09-03T02:10:43Z"
+ },
+ "ADA-USD": {
+  "yahoo": "ADA-USD",
+  "bars": 3220,
+  "first": "2017-11-09",
+  "last": "2026-09-03",
+  "downloaded": "2026-09-03T02:10:44Z"
+ },
+ "BNB-USD": {
+  "yahoo": "BNB-USD",
+  "bars": 3220,
+  "first": "2017-11-09",
+  "last": "2026-09-03",
+  "downloaded": "2026-09-03T02:10:44Z"
+ },
+ "BTC-USD": {
+  "yahoo": "BTC-USD",
+  "bars": 3652,
+  "first": "2016-09-03",
+  "last": "2026-09-03",
+  "downloaded": "2026-09-03T02:10:56Z"
+ },
+ "COIN-USD": {
+  "yahoo": "COIN",
+  "bars": 1354,
+  "first": "2021-04-14",
+  "last": "2026-09-02",
+  "downloaded": "2026-09-03T02:10:57Z"
+ },
+ "CRCL-USD": {
+  "yahoo": "CRCL",
+  "bars": 313,
+  "first": "2025-06-05",
+  "last": "2026-09-02",
+  "downloaded": "2026-09-03T02:10:57Z"
+ },
+ "ETH-USD": {
+  "yahoo": "ETH-USD",
+  "bars": 3220,
+  "first": "2017-11-09",
+  "last": "2026-09-03",
+  "downloaded": "2026-09-03T02:10:58Z"
+ },
+ "GOOGL-USD": {
+  "yahoo": "GOOGL",
+  "bars": 2512,
+  "first": "2016-09-06",
+  "last": "2026-09-02",
+  "downloaded": "2026-09-03T02:10:58Z"
+ },
+ "HYPE-USD": {
+  "yahoo": "HYPE32196-USD",
+  "bars": 642,
+  "first": "2024-11-29",
+  "last": "2026-09-03",
+  "downloaded": "2026-09-03T02:10:59Z"
+ },
+ "MU-USD": {
+  "yahoo": "MU",
+  "bars": 2512,
+  "first": "2016-09-06",
+  "last": "2026-09-02",
+  "downloaded": "2026-09-03T02:10:59Z"
+ },
+ "NAS100-USD": {
+  "yahoo": "^NDX",
+  "bars": 2512,
+  "first": "2016-09-06",
+  "last": "2026-09-02",
+  "downloaded": "2026-09-03T02:11:00Z"
+ },
+ "NEAR-USD": {
+  "yahoo": "NEAR-USD",
+  "bars": 2150,
+  "first": "2020-10-14",
+  "last": "2026-09-03",
+  "downloaded": "2026-09-03T02:11:00Z"
+ },
+ "NVDA-USD": {
+  "yahoo": "NVDA",
+  "bars": 2512,
+  "first": "2016-09-06",
+  "last": "2026-09-02",
+  "downloaded": "2026-09-03T02:11:00Z"
+ },
+ "SKHYNIX-USD": {
+  "yahoo": "000660.KS",
+  "bars": 2446,
+  "first": "2016-09-05",
+  "last": "2026-09-03",
+  "downloaded": "2026-09-03T02:11:01Z"
+ },
+ "SNDK-USD": {
+  "yahoo": "SNDK",
+  "bars": 390,
+  "first": "2025-02-13",
+  "last": "2026-09-02",
+  "downloaded": "2026-09-03T02:11:01Z"
+ },
+ "SOL-USD": {
+  "yahoo": "SOL-USD",
+  "bars": 2337,
+  "first": "2020-04-10",
+  "last": "2026-09-03",
+  "downloaded": "2026-09-03T02:11:01Z"
+ },
+ "SP500-USD": {
+  "yahoo": "^GSPC",
+  "bars": 2512,
+  "first": "2016-09-06",
+  "last": "2026-09-02",
+  "downloaded": "2026-09-03T02:11:02Z"
+ },
+ "TSLA-USD": {
+  "yahoo": "TSLA",
+  "bars": 2512,
+  "first": "2016-09-06",
+  "last": "2026-09-02",
+  "downloaded": "2026-09-03T02:11:02Z"
+ },
+ "WTI-USD": {
+  "yahoo": "CL=F",
+  "bars": 2513,
+  "first": "2016-09-02",
+  "last": "2026-09-03",
+  "downloaded": "2026-09-03T02:11:02Z"
+ },
+ "XAG-USD": {
+  "yahoo": "SI=F",
+  "bars": 2512,
+  "first": "2016-09-02",
+  "last": "2026-09-03",
+  "downloaded": "2026-09-03T02:11:03Z"
+ },
+ "XAU-USD": {
+  "yahoo": "GC=F",
+  "bars": 2512,
+  "first": "2016-09-02",
+  "last": "2026-09-03",
+  "downloaded": "2026-09-03T02:11:03Z"
+ },
+ "XRP-USD": {
+  "yahoo": "XRP-USD",
+  "bars": 3220,
+  "first": "2017-11-09",
+  "last": "2026-09-03",
+  "downloaded": "2026-09-03T02:11:04Z"
+ },
+ "ZEC-USD": {
+  "yahoo": "ZEC-USD",
+  "bars": 3220,
+  "first": "2017-11-09",
+  "last": "2026-09-03",
+  "downloaded": "2026-09-03T02:11:04Z"
+ }
+}

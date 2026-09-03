@@ -87,3 +87,24 @@ def test_funding_row_written_by_the_adapter(tmp_path):
     assert r.trade_type == "FUNDING" and r.pnl == pytest.approx(-0.42) and r.quantity == 0.0
     assert r.symbol == "ETH-USD" and r.strategy == "TREND_DAILY" and r.side == "FUNDING"
     assert r.signal_strength == pytest.approx(0.0001)      # the rate is kept for the audit trail
+
+
+def test_engine_prefers_the_venue_funding_rate_over_the_intraday_feed(monkeypatch):
+    """Strike charges materially more than Binance on crypto and pays the longs on WTI/NAS100:
+    the rate that must be charged is the one of the venue we will execute on."""
+    import main as m
+    from types import SimpleNamespace as NS
+
+    eng = object.__new__(m.BotStrike)
+    eng.settings = NS(symbol_names=["BTC-USD", "ETH-USD"])
+    eng.paper_sim = None
+    eng.trend_engine = None
+    eng._venue_funding = {"BTC-USD": 0.000098, "WTI-USD": -0.00018}      # Strike
+    eng._venue_funding_ts = 9e18                                          # cache is fresh
+    eng.market_data = NS(get_snapshot=lambda s: NS(funding_rate=0.000037))  # Binance feed
+    eng._funding_positions = lambda: [{"symbol": "BTC-USD"}, {"symbol": "WTI-USD"}]
+
+    rates = m.BotStrike._funding_rates(eng)
+    assert rates["BTC-USD"] == pytest.approx(0.000098)   # venue wins over the feed's 0.000037
+    assert rates["WTI-USD"] == pytest.approx(-0.00018)   # market outside the feed still charged
+    assert rates["ETH-USD"] == pytest.approx(0.000037)   # feed only fills the gap

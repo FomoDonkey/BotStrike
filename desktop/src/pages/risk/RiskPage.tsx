@@ -13,6 +13,7 @@ import { SYMBOLS } from "@/lib/constants";
 import { HINTS } from "@/lib/hints";
 import { cn, formatMoney, formatPct, formatSignedMoney } from "@/lib/utils";
 import { positionNotional } from "@/lib/market";
+import { RiskProfileCards } from "./RiskProfileCards";
 
 const RISK_POLL_MS = 5_000;
 
@@ -95,6 +96,8 @@ export function RiskPage() {
           </Chip>
         )}
       </div>
+
+      <RiskProfileCards />
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
         <KpiCard label="Circuit breaker" hint="Trips on the max-drawdown limit or an engine halt; no new entries while tripped" value={<span className={cn("inline-flex items-center gap-2", halted ? "text-rose" : "text-mint")}>{halted ? <CircleOff className="w-5 h-5" /> : <Shield className="w-5 h-5" />}{risk.circuit_breaker_active ? "TRIPPED" : risk.drawdown_halted ? "HALTED" : "NORMAL"}</span>} sub={risk.drawdown_halted ? "Halted by the drawdown limit" : "All limits inside budget"} />

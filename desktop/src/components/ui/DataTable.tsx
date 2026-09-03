@@ -14,6 +14,8 @@ export interface Column<T> {
   render: (row: T, index: number) => ReactNode;
   className?: string;
   headerClassName?: string;
+  /** Pin to the right edge of the horizontal scroll (row actions stay reachable) */
+  stickyRight?: boolean;
 }
 
 interface DataTableProps<T> {
@@ -81,7 +83,7 @@ export function DataTable<T>({ columns, rows, rowKey, rowClassName, onRowClick, 
               return (
                 <th
                   key={c.id}
-                  className={cn(c.align ?? "r", c.sortValue && "sortable", c.headerClassName)}
+                  className={cn(c.align ?? "r", c.sortValue && "sortable", c.stickyRight && "sticky-r", c.headerClassName)}
                   onClick={() => toggleSort(c)}
                   aria-sort={active ? (sort!.dir === "asc" ? "ascending" : "descending") : undefined}
                 >
@@ -102,7 +104,7 @@ export function DataTable<T>({ columns, rows, rowKey, rowClassName, onRowClick, 
               <RowPair key={key}>
                 <tr className={cn(onRowClick && "cursor-pointer", rowClassName?.(row, i))} onClick={onRowClick ? () => onRowClick(row, i) : undefined}>
                   {columns.map((c) => (
-                    <td key={c.id} className={cn(c.align ?? "r", c.className)}>{c.render(row, i)}</td>
+                    <td key={c.id} className={cn(c.align ?? "r", c.stickyRight && "sticky-r", c.className)}>{c.render(row, i)}</td>
                   ))}
                 </tr>
                 {detail && (

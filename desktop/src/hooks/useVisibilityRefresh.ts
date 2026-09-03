@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { api } from "@/lib/api";
+import { api, type PositionData } from "@/lib/api";
 import { pingAll } from "@/lib/ws";
 import { useTradingStore } from "@/stores/tradingStore";
 import { useRiskStore } from "@/stores/riskStore";
@@ -19,6 +19,28 @@ export async function refreshPerformanceIntoStore(): Promise<void> {
     });
   } catch {
     /* bridge unreachable — the WS reconnect will refresh the store */
+  }
+}
+
+/**
+ * GET /api/positions → tradingStore, keyed by symbol like the WS broadcast. Used right after a
+ * manual close so the row disappears without waiting for the next broadcast; symbols that no
+ * longer have a position are explicitly emptied.
+ */
+export async function refreshPositionsIntoStore(): Promise<void> {
+  try {
+    const r = await api.positions();
+    const bySymbol = new Map<string, PositionData[]>();
+    for (const sym of Object.keys(useTradingStore.getState().positions)) bySymbol.set(sym, []);
+    for (const p of r.positions ?? []) {
+      const list = bySymbol.get(p.symbol);
+      if (list) list.push(p);
+      else bySymbol.set(p.symbol, [p]);
+    }
+    const store = useTradingStore.getState();
+    for (const [sym, list] of bySymbol) store.onPositions(sym, list);
+  } catch {
+    /* older bridge without /api/positions, or unreachable — the WS broadcast refreshes anyway */
   }
 }
 

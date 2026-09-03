@@ -4,10 +4,12 @@ import { HINTS } from "@/lib/hints";
 import { HoldTime, PnlCell } from "@/components/shared/TradeChips";
 import { SideChip, StrategyTag } from "@/components/ui/Chip";
 import { DataTable, type Column } from "@/components/ui/DataTable";
-import { cn, formatPrice, formatSignedBps, formatSignedPct, formatSize, formatUSD } from "@/lib/utils";
+import { ExitLadderCell } from "@/components/ui/ExitLadder";
+import { cn, formatPrice, formatSignedBps, formatSignedMoney, formatSignedPct, formatSize, formatUSD } from "@/lib/utils";
 import {
-  pnlDistancePct, positionHoldSec, positionLeverage, positionLiquidation, positionMargin, positionNotional, positionRoe,
+  exitLadderOf, pnlDistancePct, positionHoldSec, positionLeverage, positionLiquidation, positionMargin, positionNotional, positionRoe,
 } from "@/lib/market";
+import { ClosePositionButton } from "./ClosePosition";
 
 interface PositionsTableProps {
   positions: PositionData[];
@@ -53,8 +55,30 @@ export function PositionsTable({ positions, symbol, compact, emptyText = "No ope
   );
   if (!compact) {
     columns.push(
-      { id: "sl", label: "SL", hint: `${HINTS.sl} Distance in PnL direction: negative = adverse.`, render: (p) => <Level level={p.stop_loss} mark={p.mark_price > 0 ? p.mark_price : p.entry_price} pct={p.sl_distance_pct} side={p.side} /> },
-      { id: "tp", label: "TP", hint: `${HINTS.tp} Distance in PnL direction: positive = favourable.`, render: (p) => <Level level={p.take_profit} mark={p.mark_price > 0 ? p.mark_price : p.entry_price} pct={p.tp_distance_pct} side={p.side} /> },
+      {
+        id: "exits", label: "Exits", hint: HINTS.exitLegs,
+        sortValue: (p) => exitLadderOf(p)?.active ?? -1,
+        render: (p) => {
+          const l = exitLadderOf(p);
+          if (!l) return <span className="text-text-3" title="Intraday strategy — one stop-loss and one take-profit, in the next two columns">---</span>;
+          return <span className="num" title={HINTS.exitLadder}><span className="font-semibold">{l.active}/{l.total}</span><span className="text-text-2 font-medium"> legs</span></span>;
+        },
+      },
+      {
+        id: "sl", label: "SL / Exit ladder", hint: `${HINTS.sl} ${HINTS.exitLadder}`,
+        render: (p) => {
+          const l = exitLadderOf(p);
+          if (l) return <ExitLadderCell ladder={l} />;
+          return <Level level={p.stop_loss} mark={p.mark_price > 0 ? p.mark_price : p.entry_price} pct={p.sl_distance_pct} side={p.side} />;
+        },
+      },
+      {
+        id: "tp", label: "TP", hint: `${HINTS.tp} Distance in PnL direction: positive = favourable.`,
+        render: (p) => {
+          if (exitLadderOf(p)) return <span className="text-text-2 font-medium" title={HINTS.exitLadder}>none · by design</span>;
+          return <Level level={p.take_profit} mark={p.mark_price > 0 ? p.mark_price : p.entry_price} pct={p.tp_distance_pct} side={p.side} />;
+        },
+      },
       { id: "mae", label: "MAE / MFE", hint: `${HINTS.mae} / ${HINTS.mfe}`, render: (p) => (typeof p.mae_bps === "number" || typeof p.mfe_bps === "number") ? <span className="num"><span className="text-rose">{formatSignedBps(p.mae_bps)}</span><span className="text-text-2"> / </span><span className="text-mint">{formatSignedBps(p.mfe_bps)}</span></span> : <span className="text-text-3" title="MAE/MFE need bridge ≥ 2.15">---</span> },
     );
   }
@@ -66,9 +90,19 @@ export function PositionsTable({ positions, symbol, compact, emptyText = "No ope
     columns.push(
       { id: "trigger", label: "Trigger", align: "l", hint: HINTS.trigger, render: (p) => p.trigger ? <span className="font-medium">{p.trigger}</span> : <span className="text-text-3">---</span> },
       { id: "regime", label: "Regime", align: "l", hint: "Market regime when the position was opened", render: (p) => p.regime_at_entry ? <span className="font-medium">{p.regime_at_entry.replace(/_/g, " ")}</span> : <span className="text-text-3">---</span> },
-      { id: "fees", label: "Fees", hint: HINTS.fees, render: (p) => typeof p.fees_paid === "number" ? <span className="num">{formatUSD((p.fees_paid ?? 0) + (p.funding_paid ?? 0))}</span> : <span className="text-text-3">---</span> },
+      { id: "fees", label: "Fees", hint: HINTS.fees, sortValue: (p) => p.fees_paid ?? 0, render: (p) => typeof p.fees_paid === "number" ? <span className="num">{formatUSD(p.fees_paid, 4)}</span> : <span className="text-text-3">---</span> },
     );
   }
+  columns.push(
+    {
+      id: "funding", label: "Funding", hint: HINTS.fundingPaid,
+      sortValue: (p) => p.funding_paid ?? 0,
+      render: (p) => typeof p.funding_paid === "number"
+        ? <span className={cn("num", p.funding_paid < 0 ? "text-rose" : p.funding_paid > 0 ? "text-mint" : "text-text")}>{formatSignedMoney(p.funding_paid, 4)}</span>
+        : <span className="text-text-3" title="Funding needs bridge ≥ 2.16">---</span>,
+    },
+    { id: "close", label: "", align: "c", stickyRight: true, className: "w-[72px]", render: (p) => <ClosePositionButton position={p} /> },
+  );
 
   return (
     <DataTable
@@ -76,7 +110,7 @@ export function PositionsTable({ positions, symbol, compact, emptyText = "No ope
       rows={positions}
       rowKey={(p, i) => `${p.symbol}-${p.strategy ?? ""}-${p.order_id ?? i}`}
       rowClassName={(p) => (symbol && p.symbol === symbol ? "is-open" : undefined)}
-      minWidth={compact ? "760px" : "1640px"}
+      minWidth={compact ? "900px" : "1980px"}
       emptyText={emptyText}
     />
   );

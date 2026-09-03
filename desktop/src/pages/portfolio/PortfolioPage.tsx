@@ -18,6 +18,8 @@ import { BiasBar } from "@/components/ui/BiasBar";
 import { TabBar } from "@/components/ui/TabBar";
 import { StatusChip } from "@/components/ui/Chip";
 import { ActivityFeed } from "@/components/ui/ActivityFeed";
+import { FundingCostCard } from "@/components/ui/Funding";
+import { useFunding } from "@/hooks/useFunding";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { EXCHANGE_LABELS } from "@/lib/constants";
 import { HINTS } from "@/lib/hints";
@@ -56,6 +58,7 @@ export function PortfolioPage() {
   const exchange = useExchangeStore((s) => s.exchange);
   const { acct } = useAccount(positions);
   const history = useTradeHistory();
+  const funding = useFunding();
   const [tab, setTab] = useState<TableTab>("positions");
   const [accountOpen, setAccountOpen] = useState(false);
   const isXl = useMediaQuery("(min-width: 1280px)");
@@ -80,6 +83,9 @@ export function PortfolioPage() {
   const shortN = p?.bias.short_notional ?? positions.filter((x) => x.side === "SELL" || x.side === "SHORT").reduce((a, x) => a + Math.abs((x.notional ?? x.size * x.mark_price) || 0), 0);
   const sharpe30 = p?.perf_30d;
   const todayIso = todayIsoUtc(now);
+  const fundingTotal = typeof funding.data?.total_paid === "number"
+    ? funding.data.total_paid
+    : typeof acct.funding_paid === "number" ? acct.funding_paid : null;
 
   const left = (
     <Panel className="flex flex-col min-h-0">
@@ -109,6 +115,9 @@ export function PortfolioPage() {
         <ListRow label="All Time PNL"><Signed value={alltimePnl} format={formatSignedMoney} /></ListRow>
         <ListRow label="All Time Volume" hint="Sum of entry and exit notionals">{p ? formatMoney(p.alltime_volume) : "---"}</ListRow>
         <ListRow label="Fees paid">{formatMoney(fees)}</ListRow>
+        <ListRow label="Funding paid" hint={HINTS.fundingPaid}>
+          <Signed value={fundingTotal ?? undefined} format={(v) => formatSignedMoney(v, 4)} />
+        </ListRow>
       </ListSection>
       <ListSection title="30 Day Volume" right={p ? formatMoney(p.volume_30d) : "---"}>
         <button type="button" onClick={() => setTab("history")} className="text-[12.5px] font-semibold text-mint hover:underline">See trade history →</button>
@@ -169,6 +178,8 @@ export function PortfolioPage() {
     </Panel>
   );
 
+  const fundingCard = <FundingCostCard funding={funding} />;
+
   const activity = (
     <Panel className="flex flex-col overflow-hidden min-h-[320px] lg:min-h-0 lg:flex-1">
       <PanelHeader title="Recent activity" dense />
@@ -184,6 +195,7 @@ export function PortfolioPage() {
           {kpis}
           {chart}
           {tables}
+          {fundingCard}
         </div>
         <div className="min-h-0 flex flex-col">{activity}</div>
       </div>
@@ -197,6 +209,7 @@ export function PortfolioPage() {
           {kpis}
           {chart}
           {tables}
+          {fundingCard}
           <div className="min-h-[360px] flex flex-col">{activity}</div>
         </div>
       </div>
@@ -214,6 +227,7 @@ export function PortfolioPage() {
       </Panel>
       {chart}
       {tables}
+      {fundingCard}
       {activity}
     </div>
   );

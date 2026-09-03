@@ -5,7 +5,6 @@ import { useEndpoint } from "@/hooks/useEndpoint";
 import { useNow } from "@/hooks/useNow";
 import { useSystemStore } from "@/stores/systemStore";
 import { useTradingStore } from "@/stores/tradingStore";
-import { useBridgeConfig } from "@/lib/config";
 import { TabBar } from "@/components/ui/TabBar";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { ListRow, ListSection, Signed } from "@/components/ui/ListRow";
@@ -16,9 +15,11 @@ import { HoldTime } from "@/components/shared/TradeChips";
 import { HINTS } from "@/lib/hints";
 import { STRATEGY_LABELS } from "@/lib/constants";
 import { cn, capitalize, formatDurationShort, formatMoney, formatPct, formatPrice, formatSignedMoney, formatSignedPct, formatSize } from "@/lib/utils";
-import { isLong, positionHoldSec, positionLiquidation, positionMargin, positionNotional, positionRoe, PAPER_MAINTENANCE_MARGIN } from "@/lib/market";
+import { exitLadderOf, isLong, positionHoldSec, positionLiquidation, positionMargin, positionNotional, positionRoe, PAPER_MAINTENANCE_MARGIN } from "@/lib/market";
 import { useAccount } from "@/hooks/useAccount";
 import { AccountPanel } from "./AccountPanel";
+import { ClosePositionButton } from "./ClosePosition";
+import { ExitLadderCell } from "@/components/ui/ExitLadder";
 
 type BotTab = "bot" | "account";
 const STRAT_POLL_MS = 30_000;
@@ -80,8 +81,6 @@ function BotTab({ market, positions }: { market: MarketView; positions: Position
   const cfg = useEndpoint(() => api.config(), CONFIG_POLL_MS);
   const { acct } = useAccount(positions);
   const equity = useTradingStore((s) => s.metrics.equity);
-  const { isLocal, token } = useBridgeConfig();
-  const canControl = isLocal || token.length > 0;
 
   const symPositions = useMemo(() => positions.filter((p) => p.symbol === symbol), [positions, symbol]);
   const onSymbol = useMemo(() => {
@@ -146,14 +145,13 @@ function BotTab({ market, positions }: { market: MarketView; positions: Position
 
       <ListSection title="Open position" right={symPositions.length > 1 ? <span className="text-[12px] font-medium text-text-2">{symPositions.length} on {symbol}</span> : undefined}>
         {pos ? <PositionCard p={pos} now={now} /> : <EmptyState className="py-4">No open position on {symbol}</EmptyState>}
-        <Button
-          variant="secondary"
-          className="w-full mt-2"
-          disabled
-          title={canControl ? "This bridge exposes no manual close endpoint — exits are decided by the engine (SL / TP / signal / rebalance)" : "Remote bridge without a token — and this bridge exposes no manual close endpoint"}
-        >
-          Close position (paper)
-        </Button>
+        {pos
+          ? <ClosePositionButton position={pos} size="md" block className="w-full mt-2" />
+          : (
+            <Button variant="secondary" className="w-full mt-2" disabled title={`No open position on ${symbol} to close`}>
+              Close position (paper)
+            </Button>
+          )}
       </ListSection>
 
       <ListSection title="Next order (estimate)">
@@ -170,6 +168,7 @@ function BotTab({ market, positions }: { market: MarketView; positions: Position
 
 function PositionCard({ p, now }: { p: PositionData; now: number }) {
   const roe = positionRoe(p);
+  const ladder = exitLadderOf(p);
   const liq = positionLiquidation(p);
   const mark = p.mark_price > 0 ? p.mark_price : p.entry_price;
   const long = isLong(p.side);
@@ -187,13 +186,26 @@ function PositionCard({ p, now }: { p: PositionData; now: number }) {
         <ListRow label="Mark" hint={HINTS.mark}>{mark > 0 ? formatPrice(mark) : "---"}</ListRow>
         <ListRow label="PnL" hint={HINTS.pnl}><Signed value={p.unrealized_pnl ?? 0} format={formatSignedMoney} /></ListRow>
         <ListRow label="ROE" hint={HINTS.roe}><Signed value={roe} format={(v) => formatSignedPct(v)} /></ListRow>
-        <ListRow label="SL" hint={HINTS.sl}>{p.stop_loss && p.stop_loss > 0 ? formatPrice(p.stop_loss) : "---"}</ListRow>
-        <ListRow label="TP" hint={HINTS.tp}>{p.take_profit && p.take_profit > 0 ? formatPrice(p.take_profit) : "---"}</ListRow>
+        {ladder
+          ? <>
+              <ListRow label="Exits" hint={HINTS.exitLegs}>{ladder.active}/{ladder.total} legs</ListRow>
+              <ListRow label="Worst case" hint="Distance from here down to the last stop of the ladder — where the position is fully out."><span className="text-rose">{formatSignedPct(ladder.worst_case_pct ?? 0, 1)}</span></ListRow>
+            </>
+          : <>
+              <ListRow label="SL" hint={HINTS.sl}>{p.stop_loss && p.stop_loss > 0 ? formatPrice(p.stop_loss) : "---"}</ListRow>
+              <ListRow label="TP" hint={HINTS.tp}>{p.take_profit && p.take_profit > 0 ? formatPrice(p.take_profit) : "---"}</ListRow>
+            </>}
         <ListRow label="Liq." hint={HINTS.liq}>{liq.price ? formatPrice(liq.price) : "---"}</ListRow>
         <ListRow label="Margin" hint={HINTS.margin}>{formatMoney(positionMargin(p))}</ListRow>
         <ListRow label="Hold" hint={HINTS.hold}><HoldTime seconds={positionHoldSec(p, now)} /></ListRow>
         <ListRow label="Side">{long ? "Long" : "Short"} · {STRATEGY_LABELS[p.strategy ?? ""] ? "" : ""}{p.leverage ?? 1}x</ListRow>
       </div>
+      {ladder && (
+        <div className="mt-1.5 pt-1.5 border-t border-hairline flex items-center justify-between gap-2">
+          <span className="text-[12px] font-medium text-text-2">Exit ladder</span>
+          <ExitLadderCell ladder={ladder} />
+        </div>
+      )}
     </div>
   );
 }

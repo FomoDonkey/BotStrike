@@ -134,6 +134,9 @@ export const EXIT_REASON_LABELS: Record<string, { label: string; tone: "profit" 
   kill: { label: "Killed", tone: "loss" },
 };
 
+/** Tooltip on every token-gated action (Start/Stop/Restart, Close position, Apply risk level). */
+export const TOKEN_GATED_REASON = "Remote bridge — set the auth token in Settings → Connection to control the bot";
+
 /** Market tape depth kept per symbol (marketStore) */
 export const TAPE_SIZE = 60;
 /** Bridge candle history is 16 h of 1m bars — 24h stats computed client-side are labelled by span. */

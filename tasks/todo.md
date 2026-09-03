@@ -1,5 +1,32 @@
 # BotStrike — Tasks
 
+## Sesión 2026-09-03 (6ª) — UI v2.17: escalera de salida, cierre manual, funding, nivel de riesgo — HECHO
+Contrato: `tasks/ui_operator_contract.md`. Edgar: "cuándo se cierran las operaciones... no había ni tp ni sl ni
+botón de cierre manual... tampoco veo el funding por operación ni el total" + "si algún usuario quiere aumentar
+el riesgo". Solo `desktop/src` + `server/webui`; sin commits; el CT (9420) SOLO GET.
+- [x] **Escalera de salida** (§1): `exit_ladder` tipado en `api.ts`; celda `Exit 71,574.79 → 69,437.15` + barra de
+  4 segmentos en la columna SL, columna `Exits` con `4/6 legs`, TP → `none · by design`, tarjeta al pasar el ratón
+  con cada peldaño (D20/D30/D60/D90, stop, distancia, "exit 25 %"/"full exit", peso restante) y el texto del
+  contrato. Líneas discontinuas rosas en el chart + leyenda `exit ladder … · full exit -10.2%` (los peldaños caen
+  ~8 % por debajo del rango autoescalado en 5m: las líneas existen pero la leyenda es lo que se ve).
+- [x] **Cierre manual** (§2): `POST /api/positions/close` con el mismo token-gating que Start/Stop; botón en cada
+  fila (columna fijada a la derecha) y en la columna Bot; diálogo con símbolo, tamaño, nocional, PnL y el texto
+  literal del contrato; toast + refresco de posiciones. Probado de verdad en el bridge local: 3 → 1 posiciones.
+- [x] **Funding** (§3): columna `Funding` en posiciones (rosa pagado / menta cobrado), fila `Funding paid` en
+  Portfolio, bloque en Trade → Account (total + cuenta atrás + tasa anualizada por mercado) y tarjeta
+  "Funding cost" en Portfolio con barra por mercado y el texto de los 166 días de Binance.
+- [x] **Nivel de riesgo** (§4): tres tarjetas en Risk con €/año y peor drawdown EN DINERO para la equity actual,
+  los tres límites de pérdida, Sharpe 1.77 una sola vez y la frase "Same strategy, same edge…"; confirmación que
+  dice que la nueva volatilidad objetivo entra en el run de las 00:05 UTC; aviso ámbar si `custom` fuera de rango.
+  Probado en el bridge local: balanced → aggressive (vol 0.2 → 0.3, límites 10/2/5 % → 15/3/7 %).
+- [x] Gates: `tsc -b` 0, `lint` 0, `build:web` 0. Auditoría de contraste 0 offenders en 8 rutas × (1440, 390),
+  local y con el bundle nuevo apuntando al CT. 0 desbordes y 0 errores de consola en /trading, /portfolio, /risk.
+- [x] Números comparados con la API del CT: escalera de BTC y de las 6 posiciones, funding total −0,023996 y por
+  mercado, tasas anualizadas, las tres tarjetas de perfil (51,49/102,98/153,46 y 42,40/78,75/114,09 sobre 1.009,64).
+### No verificado
+- [ ] Escalera con una estrategia intradía viva (no hay ninguna abierta): la rama SL/TP real no se vio con datos.
+- [ ] 409 en modo live del cierre manual (el CT es paper); breakpoint 1024–1279; modo daltónico.
+
 ## Sesión 2026-09-02/03 (5ª) — vigilancia automática, reset de histórico, UI premium (Strike) — HECHO
 Edgar: "déjalo todo listo para tú mismo vigilarlo", "borra el histórico y deja solo las abiertas de hoy",
 "UI/UX al nivel premium de Strike Finance, texto blanco brillante en todas partes".

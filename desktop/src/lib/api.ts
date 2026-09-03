@@ -350,6 +350,42 @@ export interface TradesResponse {
 }
 
 /**
+ * One rung of the trend exit ladder (operator contract §1): a Donchian lookback with its own
+ * trailing stop that never falls. When price closes below it, `share_exiting` of the position
+ * leaves and `weight_after` stays open.
+ */
+export interface ExitLadderLevel {
+  lookback: number;
+  stop: number;
+  /** Signed distance from the ladder reference price, as a ratio (−0.0754 = 7.54 % below) */
+  distance_pct: number;
+  /** Fraction of the position that leaves at this level (0.25 = a quarter) */
+  share_exiting: number;
+  /** Fraction still open once this level has triggered */
+  weight_after: number;
+}
+
+/**
+ * The trend book has no single stop-loss and no take-profit by design: the position is the
+ * average of `total` Donchian sub-strategies, so it leaves the market in steps.
+ * `null` on intraday strategies, which carry a real `stop_loss` / `take_profit`.
+ */
+export interface ExitLadder {
+  /** Reference price the distances were measured from */
+  price: number;
+  /** Sub-strategies still holding / in the ensemble */
+  active: number;
+  total: number;
+  levels: ExitLadderLevel[];
+  /** Highest stop — where the first share leaves */
+  first_exit: number;
+  /** Lowest stop — where the position is fully out */
+  full_exit: number;
+  /** Distance from `price` down to `full_exit`, as a ratio */
+  worst_case_pct: number;
+}
+
+/**
  * WS `trading` → `positions` row (bridge 2.14 sends the first block; ≥ 2.15 adds the rest —
  * contract §2). Everything past the 2.14 block is optional so an older bridge still renders.
  */
@@ -389,6 +425,8 @@ export interface PositionData {
   order_type?: string;
   atr_at_entry?: number;
   expected_cost_bps?: number;
+  /** Bridge ≥ 2.16 — trend positions exit in steps instead of on one stop (operator contract §1) */
+  exit_ladder?: ExitLadder | null;
 }
 
 /** GET /api/positions (bridge ≥ 2.15) — same rich rows as the WS broadcast. */
@@ -435,8 +473,99 @@ export interface AccountResponse {
   drawdown_pct: number;
   max_leverage?: number;
   max_total_exposure_pct?: number;
+  /** Bridge ≥ 2.16 — cumulative perpetual funding on the book (negative = paid) */
+  funding_paid?: number;
   /** false → engine not running: only mode / initial_capital are present */
   engine?: boolean;
+}
+
+/** Live 8 h funding rate of one market and its annualised equivalent (a ratio: 0.0948 = 9.5 %/yr). */
+export interface FundingRate {
+  rate: number;
+  annualized_pct: number;
+}
+
+/** One settlement charged to the paper book (negative `amount` = the book paid). */
+export interface FundingSettlement {
+  symbol: string;
+  side: string;
+  strategy?: string | null;
+  notional: number;
+  rate: number;
+  amount: number;
+  ts: number;
+  mark_price?: number;
+  periods?: number;
+}
+
+/** GET /api/funding (operator contract §3) — cumulative cost, per market, and the live rates. */
+export interface FundingResponse {
+  enabled: boolean;
+  engine?: boolean;
+  /** Settlement interval in hours (8 on Binance perps) */
+  interval_hours?: number;
+  last_settled_utc?: string | null;
+  next_settlement_utc?: string | null;
+  /** Cumulative funding since inception (negative = paid) */
+  total_paid?: number;
+  by_symbol?: Record<string, number>;
+  recent?: FundingSettlement[];
+  rates?: Record<string, FundingRate>;
+}
+
+export interface RiskProfileLimits {
+  max_drawdown_pct: number;
+  max_daily_loss_pct: number;
+  max_weekly_loss_pct: number;
+}
+
+/** One risk level from GET /api/risk/profiles — same strategy, sized harder or softer. */
+export interface RiskProfileInfo {
+  profile: string;
+  /** false → outside the range the research validated */
+  validated: boolean;
+  target_vol: number;
+  expected_cagr: number;
+  expected_vol: number;
+  expected_max_dd: number;
+  sharpe: number;
+  /** Expected return over a year at the CURRENT equity */
+  expected_year_usd: number;
+  /** Expected worst peak-to-trough loss at the CURRENT equity */
+  expected_worst_drawdown_usd: number;
+  limits: RiskProfileLimits;
+  note?: string;
+}
+
+/** GET /api/risk/profiles (operator contract §4). `current` is `custom` when nothing matches. */
+export interface RiskProfilesResponse {
+  current: string;
+  equity: number;
+  /** [min, max] target volatility the research validated */
+  validated_target_vol_range: [number, number] | number[];
+  profiles: RiskProfileInfo[];
+  current_values: {
+    trend_target_vol: number;
+    max_drawdown_pct: number;
+    max_daily_loss_pct: number;
+    max_weekly_loss_pct: number;
+  };
+  source?: string;
+}
+
+export interface RiskProfileApplyResponse {
+  status: string;
+  profile: string;
+  applied?: Record<string, ConfigScalar>;
+  restart_required?: boolean;
+  describe?: string;
+}
+
+/** POST /api/positions/close — paper only (409 in live). */
+export interface ClosePositionResponse {
+  symbol: string;
+  closed: boolean;
+  source?: string;
 }
 
 /**
@@ -835,6 +964,16 @@ export const api = {
   /** Bridge ≥ 2.16 — 8 h funding history of a symbol (404 on older bridges). */
   fundingHistory: (symbol: string, limit = 200) =>
     request<FundingHistoryResponse>(`/api/market/${encodeURIComponent(symbol)}/funding_history?limit=${limit}`),
+  /** Bridge ≥ 2.16 — funding accrued on the book + the live rate per market (operator contract §3). */
+  funding: () => request<FundingResponse>("/api/funding"),
+  /** Bridge ≥ 2.16 — the three validated risk levels priced for the current equity (§4). */
+  riskProfiles: () => request<RiskProfilesResponse>("/api/risk/profiles"),
+  /** Token-gated. Moves target volatility AND the loss ladder; live at the next daily run. */
+  riskProfileApply: (profile: string) =>
+    authed<RiskProfileApplyResponse>("/api/risk/profile", { method: "POST", body: JSON.stringify({ profile }) }),
+  /** Token-gated operator brake: close ONE position now at the current price. Paper only (409 in live). */
+  closePosition: (symbol: string) =>
+    authed<ClosePositionResponse>("/api/positions/close", { method: "POST", body: JSON.stringify({ symbol }) }),
   /** Bridge ≥ 2.16 — ops monitor state (`available:false` until the monitor ran). */
   ops: () => request<OpsResponse>("/api/ops"),
   regime: () => request<RegimeResponse>("/api/regime"),

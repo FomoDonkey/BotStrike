@@ -871,21 +871,25 @@ class BotStrike:
         """Funding rate per symbol. The intraday feed only covers the configured symbols, but the
         trend book can hold any Strike market (gold, S&P 500, oil...), so anything missing is read
         from the venue's public premiumIndex. Cached for the settlement period."""
-        out = {}
-        for sym in self.settings.symbol_names:
+        held = {p["symbol"] for p in self._funding_positions()}
+        # The TARGET venue is the truth for funding: Strike charges materially more than Binance on
+        # crypto (measured 2026-09-03 over 90 d: BTC +8.6 %/yr on Strike vs +3.2 % on Binance) and
+        # PAYS the longs on WTI (-15.7 %) and NAS100 (-3.7 %). Charging the intraday feed's rate to
+        # a book that will execute on Strike would misprice the whole cost of carry.
+        out = dict(self._venue_funding_rates(held)) if held else {}
+        for sym in self.settings.symbol_names:            # feed only fills gaps
+            if sym in out and out[sym]:
+                continue
             snap = self.market_data.get_snapshot(sym)
             if snap is not None and snap.funding_rate:
                 out[sym] = float(snap.funding_rate)
-        wanted = {p["symbol"] for p in self._funding_positions()} - set(out)
-        if wanted:
-            out.update(self._venue_funding_rates(wanted))
         return out
 
     def _venue_funding_rates(self, symbols: set) -> dict:
         """Public premiumIndex from the venue for markets outside the intraday feed."""
         now = time.time()
         if self._venue_funding and now - self._venue_funding_ts < 600:
-            return {s: r for s, r in self._venue_funding.items() if s in symbols}
+            return {s: r for s, r in self._venue_funding.items() if s in symbols and r}
         try:
             import json as _json
             import urllib.request
@@ -901,7 +905,7 @@ class BotStrike:
         except Exception as e:  # noqa: BLE001 — missing rates simply mean no charge this period
             logger.warning("venue_funding_unavailable", error=str(e)[:160])
             return {}
-        return {s: r for s, r in self._venue_funding.items() if s in symbols}
+        return {s: r for s, r in self._venue_funding.items() if s in symbols and r}
 
     async def _funding_loop(self) -> None:
         """Settle perpetual funding on open positions (paper). Live mode gets funding from the

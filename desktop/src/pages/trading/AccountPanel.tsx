@@ -8,6 +8,8 @@ import { ListRow, ListSection, Signed } from "@/components/ui/ListRow";
 import { Button } from "@/components/ui/Button";
 import { StatusChip } from "@/components/ui/Chip";
 import { ConfirmDialog } from "@/components/ui/Modal";
+import { FundingBlock } from "@/components/ui/Funding";
+import { useFunding } from "@/hooks/useFunding";
 import { useBotControl } from "@/components/layout/useBotControl";
 import { HINTS } from "@/lib/hints";
 import { cn, formatMoney, formatPct, formatSignedMoney } from "@/lib/utils";
@@ -25,6 +27,7 @@ export function AccountPanel({ positions, className, actions = true }: AccountPa
   const { acct, derived, missing } = useAccount(positions);
   const risk = useRiskStore(useShallow((s) => ({ dailyLimit: s.daily_limit, weeklyLimit: s.weekly_limit })));
   const { canControl, disabledReason, busy, run } = useBotControl();
+  const funding = useFunding();
   const [confirm, setConfirm] = useState(false);
   const mr = acct.margin_ratio;
   const mrTone = mr >= 0.8 ? "text-rose" : mr >= 0.5 ? "text-amber" : "text-text";
@@ -57,6 +60,7 @@ export function AccountPanel({ positions, className, actions = true }: AccountPa
         <ListRow label="Drawdown" hint={HINTS.drawdown}><span className={acct.drawdown_pct > 0 ? "text-rose" : ""}>{formatPct(acct.drawdown_pct)}</span></ListRow>
         <ListRow label="Open positions">{acct.open_positions}</ListRow>
       </ListSection>
+      <FundingBlock funding={funding} />
       {actions && (
         <div className="px-3 py-3 border-t border-hairline flex items-center gap-2">
           <Button variant="secondary" className="flex-1" icon={<RefreshCw className="w-3.5 h-3.5" />} disabled={!canControl} title={disabledReason} loading={busy === "restart"} onClick={() => setConfirm(true)}>

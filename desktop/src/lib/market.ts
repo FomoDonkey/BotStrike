@@ -1,12 +1,49 @@
 // Derived market / position maths shared by the terminal, Dashboard and Performance.
 // Everything here is a pure function of bridge payloads; when a ≥ 2.15 field is present it
 // wins, otherwise the value is derived and the caller labels it as such.
-import type { PositionData, TradeRecord } from "@/lib/api";
+import type { ExitLadder, ExitLadderLevel, PositionData, TradeRecord } from "@/lib/api";
 import type { Candle } from "@/stores/marketStore";
-import { FUNDING_INTERVAL_SEC } from "@/lib/constants";
+import { FUNDING_INTERVAL_SEC, SYMBOL_LABELS } from "@/lib/constants";
+
+/** "BTC" from "BTC-USD" — works for the non-crypto markets of the multi-asset pool too. */
+export function marketLabel(symbol: string): string {
+  return SYMBOL_LABELS[symbol] ?? symbol.split("-")[0];
+}
 
 /** Maintenance margin used by the paper liquidation estimate (contract §2). */
 export const PAPER_MAINTENANCE_MARGIN = 0.005;
+
+/** A trend position exits in steps; `null` for intraday strategies, which carry a real SL/TP. */
+export function exitLadderOf(p: PositionData): ExitLadder | null {
+  const l = p.exit_ladder;
+  return l && Array.isArray(l.levels) && l.levels.length > 0 ? l : null;
+}
+
+/**
+ * Two Donchian lookbacks often share the same stop price (D20 and D30 on the same channel low).
+ * Merge them so one price = one rung: the shares add up and the chart draws a single line.
+ */
+export function mergedLadderLevels(ladder: ExitLadder): ExitLadderLevel[] {
+  const out: ExitLadderLevel[] = [];
+  for (const lv of ladder.levels ?? []) {
+    if (!(lv.stop > 0)) continue;
+    const prev = out.find((o) => Math.abs(o.stop - lv.stop) < 1e-9);
+    if (prev) {
+      prev.share_exiting += lv.share_exiting ?? 0;
+      prev.weight_after = Math.min(prev.weight_after, lv.weight_after ?? 0);
+      prev.lookback = lv.lookback;
+    } else {
+      out.push({ ...lv });
+    }
+  }
+  return out;
+}
+
+/** `exit 25 %` … `full exit` — the label on the chart line and in the hover card. */
+export function ladderLevelLabel(lv: ExitLadderLevel): string {
+  if ((lv.weight_after ?? 0) <= 1e-9) return "full exit";
+  return `exit ${Math.round((lv.share_exiting ?? 0) * 100)} %`;
+}
 
 export interface Stats24h {
   /** open of the first candle inside the window (reference for the change) */

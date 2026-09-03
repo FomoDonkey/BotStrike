@@ -488,3 +488,56 @@ class StrikeClient:
         if tick > 0:
             price = round(round(price / tick) * tick, 10)
         return price
+
+    # ── Platform statistics (public, /stat base path) ─────────────
+
+    STATS_PATH = "/stat/v1/stats/coin"
+
+    async def _stats_get(self, path: str, **params) -> Any:
+        """GET on the statistics API. NOTE the `/stat` prefix: `/v1/stats/...` alone returns 404,
+        which is why these endpoints looked missing until 2026-09-03."""
+        await self._rate_limiter.acquire()
+        session = await self._get_session()
+        url = f"{self._base_url}{self.STATS_PATH}{path}{self._qs(params)}"
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                logger.warning("strike_stats_error", url=url, status=resp.status, body=text[:200])
+                raise RuntimeError(f"Strike stats {resp.status}: {text[:200]}")
+            return await resp.json()
+
+    @staticmethod
+    def _stats_rows(payload: Any) -> List[Dict[str, Any]]:
+        """{"columns": [...], "data": [[...], ...]} -> list of dicts."""
+        if not isinstance(payload, dict):
+            return []
+        cols = payload.get("columns") or []
+        return [dict(zip(cols, row)) for row in (payload.get("data") or [])]
+
+    async def get_funding_rate_history(self, symbol: str, days: int = 90) -> List[Dict[str, Any]]:
+        """Historical funding rate of a MARKET (not of our account): [{ts, funding_rate}, ...].
+        `days` is capped at 90 by the venue. Positive = longs pay."""
+        return self._stats_rows(await self._stats_get("/history/funding", symbol=symbol, days=min(int(days), 90)))
+
+    async def get_spread_history(self, symbol: str, interval: str = "1d") -> List[Dict[str, Any]]:
+        """[{ts, spread, ratio}, ...] where `ratio` is the spread as a PERCENT of price
+        (verified against the live book), so basis points = ratio * 100."""
+        return self._stats_rows(await self._stats_get("/history/spread", symbol=symbol, interval=interval))
+
+    async def get_open_interest_history(self, symbol: str, interval: str = "1d") -> List[Dict[str, Any]]:
+        return self._stats_rows(await self._stats_get("/history/open-interest", symbol=symbol, interval=interval))
+
+    async def get_long_short_ratio(self, symbol: str, interval: str = "1d") -> List[Dict[str, Any]]:
+        return self._stats_rows(await self._stats_get("/history/long-short-ratio", symbol=symbol, interval=interval))
+
+    async def get_funding_rates_now(self) -> Dict[str, float]:
+        """Current funding rate per market from premiumIndex: {symbol: rate_per_interval}."""
+        rows = await self.get_premium_index()
+        if not isinstance(rows, list):
+            rows = [rows]
+        out: Dict[str, float] = {}
+        for r in rows:
+            sym = str(r.get("symbol") or "").upper()
+            if sym:
+                out[sym] = _f(r.get("fundingRate"))
+        return out

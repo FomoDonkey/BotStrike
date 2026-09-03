@@ -3,6 +3,7 @@ import { api, ApiError } from "@/lib/api";
 import { useBridgeConfig } from "@/lib/config";
 import { useAlertStore } from "@/stores/alertStore";
 import { useExchangeStore } from "@/stores/exchangeStore";
+import { TOKEN_GATED_REASON } from "@/lib/constants";
 
 export type BotAction = "start" | "start_dry" | "stop" | "restart";
 
@@ -17,7 +18,7 @@ export function useBotControl() {
   const addAlert = useAlertStore((s) => s.addAlert);
   const [busy, setBusy] = useState<BotAction | null>(null);
   const canControl = isLocal || token.length > 0;
-  const disabledReason = canControl ? undefined : "Remote bridge — set the auth token in Settings → Connection to control the bot";
+  const disabledReason = canControl ? undefined : TOKEN_GATED_REASON;
 
   const run = async (action: BotAction) => {
     if (!canControl || busy) return;

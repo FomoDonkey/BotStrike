@@ -1,5 +1,46 @@
 # BotStrike — Lessons Learned
 
+## UI v2.17 (2026-09-03) — lo que solo se ve mirando
+
+### Un modal abierto desde una celda de tabla HEREDA `white-space: nowrap`
+- `ConfirmDialog` es `position: fixed`, pero en el árbol de React vive dentro del `<td>` del botón Close.
+  `.term-table td { white-space: nowrap; text-align: right; font-weight: 500 }` se HEREDA: el párrafo del
+  diálogo salía en una sola línea de 752 px recortada a 336 px. Los gates estaban en verde y la captura a
+  primera vista "parecía bien".
+- **LESSON: un overlay portalado por CSS (fixed) sigue heredando tipografía del ancestro DOM. Cualquier
+  popup/modal que pueda abrirse desde una tabla debe fijar `text-left whitespace-normal font-normal`.
+  Y se detecta midiendo `scrollWidth` vs `clientWidth` del nodo, no mirando la captura.**
+
+### `position: fixed` sí escapa del `overflow: auto` de la tabla — `absolute` no
+- La tarjeta de la escalera se dibuja con `fixed` + rect del disparador (con volteo arriba/abajo y clamp
+  horizontal). Con `absolute` la habría recortado el contenedor con scroll de la tabla.
+
+### Una línea de precio fuera del rango autoescalado no se ve
+- Los peldaños de la escalera están ~8 % por debajo del precio; lightweight-charts no estira la escala por
+  una `createPriceLine`, así que en 5m las líneas existen pero quedan fuera de la ventana. La solución no es
+  forzar la escala (aplasta las velas) sino una leyenda con los números.
+- **LESSON: dibujar un nivel lejano no es mostrarlo. Comprobar que cae dentro del rango visible o duplicar
+  el dato en texto.**
+
+### Texto sobre un canvas necesita fondo opaco
+- La leyenda de la escalera se solapaba a 390 px con el marcador de trade dibujado en el canvas. Fondo
+  `bg-panel` opaco (nunca translúcido: la auditoría de contraste compone alfa) y queda legible.
+
+### Una columna de acción al final de una tabla de 1980 px no existe
+- El botón Close estaba a la derecha del scroll horizontal: invisible sin arrastrar. `position: sticky;
+  right: 0` con fondo OPACO (y variantes para `:hover` y `.is-open`) lo deja siempre a la vista, también a 390 px.
+
+### `eslint-plugin-react-refresh` prohíbe exportar funciones no-componente desde un `.tsx`
+- `useFunding`, `useClosePosition` y `marketLabel` rompían el lint al vivir junto a sus componentes
+  (las constantes sí están permitidas). Van a `src/hooks/*.ts` y `src/lib/market.ts`.
+
+### El bridge local deja de servir los estáticos mucho antes de morir
+- Tras varios `build:web` (que borra y recrea `server/webui`) el bridge seguía respondiendo `/api/health`
+  pero `/` y `/assets/*` colgaban hasta el timeout, y luego cayó entero. Reiniciarlo lo cura un rato.
+- **LESSON: para verificar la UI contra un bridge, servir el bundle con `python -m http.server` y apuntar
+  `botstrike.bridgeUrl` por localStorage inyectado en el `index.html` de la copia. Además así se audita el
+  bundle NUEVO contra los datos REALES del CT sin desplegar nada ni tocarlo (el CT ya manda CORS al origen).**
+
 ## v2.14 (2026-09-02) — régimen, Telegram en pruebas, configuración en caliente
 - **Una prueba local con el `.env` de producción ES producción para el usuario.** El bridge levantado
   en mi PC para la prueba de humo usó el token de Telegram real: Edgar recibió tres "compras" paper
