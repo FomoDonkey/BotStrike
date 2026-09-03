@@ -486,6 +486,7 @@ export interface FundingRate {
   annualized_pct: number;
   held?: boolean;               // the book has an open position in this market
   source?: "venue" | "feed" | "none";
+  annualized_90d?: number | null;   // measured median on the venue, the reference for today's rate
 }
 
 /** One settlement charged to the paper book (negative `amount` = the book paid). */

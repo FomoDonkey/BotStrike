@@ -159,3 +159,24 @@ def test_funding_panel_shows_what_the_engine_charges(monkeypatch):
     assert r["XAU-USD"]["rate"] == 0.0 and r["XAU-USD"]["held"] is True        # a zero rate is shown
     assert r["ETH-USD"]["held"] is False
     assert r["ETH-USD"]["rate"] == pytest.approx(0.0001 / 8)     # the feed's 8 h rate, scaled
+
+
+def test_the_panel_carries_the_measured_reference_next_to_the_live_rate(tmp_path, monkeypatch):
+    """One hour annualised swings between -80 and +90 %/yr. Alone it is noise; next to the 90-day
+    median measured on the venue it is readable."""
+    import json as _json
+    from types import SimpleNamespace as NS
+    from server import bridge
+
+    costs = tmp_path / "strike_costs.json"
+    costs.write_text(_json.dumps({"markets": {"BTC-USD": {"funding": {"annualized_pct": 0.0856}}}}), encoding="utf-8")
+    monkeypatch.setattr(bridge.os.path, "getmtime", lambda p: costs.stat().st_mtime)
+    real_open = open
+    monkeypatch.setattr("builtins.open", lambda p, *a, **k: real_open(costs if "strike_costs" in str(p) else p, *a, **k))
+    bridge._COSTS_CACHE["mtime"] = 0.0
+
+    eng = NS(_venue_funding={"BTC-USD": 1.16e-05}, settings=NS(symbol_names=["BTC-USD"], trading=NS()),
+             market_data=NS(get_snapshot=lambda s: None), _funding_positions=lambda: [{"symbol": "BTC-USD"}])
+    r = bridge._live_funding_rates(eng, 1)
+    assert r["BTC-USD"]["annualized_pct"] == pytest.approx(0.1016, abs=1e-4)   # this hour
+    assert r["BTC-USD"]["annualized_90d"] == pytest.approx(0.0856)             # normally

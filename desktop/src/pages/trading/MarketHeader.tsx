@@ -90,7 +90,7 @@ export function MarketHeader({ market: m, onSymbolChange }: MarketHeaderProps) {
         <Stat label="Mark Price" hint={HINTS.mark}>{m.mark > 0 ? formatPrice(m.mark) : "---"}</Stat>
         <Stat label="Index Price" hint={HINTS.index}>{m.index > 0 ? formatPrice(m.index) : "---"}</Stat>
         <Stat label="Funding / Countdown" hint={HINTS.funding}>
-          {m.funding === null ? <span className="text-text-3">---</span> : <span className={m.funding > 0 ? "text-mint" : m.funding < 0 ? "text-rose" : ""}>{formatSignedPct(m.funding, 4)}</span>}
+          {m.funding === null ? <span className="text-text-3">---</span> : <span className={m.funding > 0 ? "text-rose" : m.funding < 0 ? "text-mint" : ""}>{formatSignedPct(m.funding, 4)}</span>}
           <span className="text-text-2 font-medium"> / {formatCountdown(m.countdownSec)}</span>
         </Stat>
         <Stat label={`${m.winLabel} Change`} hint={winHint}><SignedPct value={m.change} /></Stat>

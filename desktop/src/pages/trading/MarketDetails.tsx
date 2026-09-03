@@ -71,8 +71,13 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
 
         <div className="min-w-0">
           <ListSection title="Funding & fees">
-            <ListRow label="Current funding" hint={HINTS.funding}><Signed value={m.funding} format={(v) => formatSignedPct(v, 4)} /></ListRow>
-            <ListRow label="Next payment" hint="Countdown to the next 8 h UTC funding mark">{formatCountdown(m.countdownSec)}</ListRow>
+            {/* Positive funding is what a LONG pays: rose, like every other cost on these screens. */}
+            <ListRow label="Current funding" hint={HINTS.funding}>
+              {m.funding === null || m.funding === undefined
+                ? <span className="text-text-3">---</span>
+                : <span className={cn("num", m.funding > 0 ? "text-rose" : m.funding < 0 ? "text-mint" : "text-text")}>{formatSignedPct(m.funding, 4)}</span>}
+            </ListRow>
+            <ListRow label="Next payment" hint="Countdown to the venue's next funding settlement">{formatCountdown(m.countdownSec)}</ListRow>
             <ListRow label="Maintenance margin" hint="Margin fraction at which the paper liquidation estimate triggers">{formatPct(mm, 1)}</ListRow>
             <ListRow label="Taker fee (paper)">{taker !== null ? formatPct(taker, 2) : "---"}</ListRow>
             <ListRow label="Maker fee (paper)">{maker !== null ? formatPct(maker, 2) : "---"}</ListRow>

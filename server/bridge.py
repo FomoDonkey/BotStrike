@@ -1645,8 +1645,10 @@ async def get_account():
     return _json_safe(out)
 
 
-def _funding_countdown_sec(now: float) -> int:
-    period = 8 * 3600
+def _funding_countdown_sec(now: float, interval_hours: int = 1) -> int:
+    """Seconds to the venue's next settlement. Strike settles hourly; a hardcoded 8 h clock told the
+    operator the next payment was 4 h 55 m away when it was 55 minutes (audit 2026-09-03)."""
+    period = max(1, int(interval_hours)) * 3600
     return int(period - (now % period))
 
 
@@ -1859,6 +1861,31 @@ async def set_risk_profile(body: dict):
                        "restart_required": bool(restart_now), "describe": rp.describe(name)})
 
 
+_COSTS_CACHE: dict = {"mtime": 0.0, "data": {}}
+
+
+def _measured_funding_90d() -> dict:
+    """{symbol: annualised fraction} measured on the venue over 90 days (scripts/strike_market_stats.py).
+
+    One hour of funding annualised swings between -80 % and +90 %/yr, which is true and useless on
+    its own. Shown next to the measured median it becomes readable: "now" versus "normally".
+    """
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(root, "data", "strike_costs.json")
+    try:
+        mtime = os.path.getmtime(path)
+        if mtime != _COSTS_CACHE["mtime"]:
+            with open(path, encoding="utf-8") as fh:
+                raw = json.load(fh)
+            _COSTS_CACHE["data"] = {k: float(v["funding"]["annualized_pct"])
+                                    for k, v in (raw.get("markets") or {}).items()
+                                    if isinstance(v, dict) and (v.get("funding") or {}).get("annualized_pct") is not None}
+            _COSTS_CACHE["mtime"] = mtime
+    except Exception:  # noqa: BLE001 - the snapshot is optional context, never a hard dependency
+        return _COSTS_CACHE.get("data") or {}
+    return _COSTS_CACHE["data"]
+
+
 def _live_funding_rates(engine, interval_hours: int) -> dict:
     """The rate each market is charged at, as the ENGINE charges it — never a different number.
 
@@ -1873,7 +1900,7 @@ def _live_funding_rates(engine, interval_hours: int) -> dict:
         held = {str(p.get("symbol")) for p in (engine._funding_positions() or [])}
     except Exception:  # noqa: BLE001 - a display figure must not break the endpoint
         held = set()
-    out = {}
+    out, measured = {}, _measured_funding_90d()
     for sym in sorted(held | set(getattr(engine.settings, "symbol_names", []) or [])):
         if sym in venue:
             rate, source = float(venue[sym] or 0.0), "venue"
@@ -1882,7 +1909,8 @@ def _live_funding_rates(engine, interval_hours: int) -> dict:
             raw = float(snap.funding_rate) if snap is not None and snap.funding_rate else 0.0
             rate, source = raw * scale, ("feed" if raw else "none")
         out[sym] = {"rate": rate, "annualized_pct": round(annualized_pct(rate, interval_hours), 6),
-                    "held": sym in held, "source": source}
+                    "held": sym in held, "source": source,
+                    "annualized_90d": measured.get(sym)}
     return out
 
 
@@ -1971,8 +1999,8 @@ async def get_market(symbol: str):
         "price": float(snap.price) if snap else None,
         "mark_price": float(snap.mark_price) if snap else None,
         "index_price": float(snap.index_price) if snap else None,
-        "funding_rate": float(snap.funding_rate) if snap else None,
-        "funding_countdown_sec": _funding_countdown_sec(time.time()),
+        "funding_rate": _market_funding_rate(engine, symbol, snap),
+        "funding_countdown_sec": _funding_countdown_sec(time.time(), _funding_interval(engine)),
         "open_interest": float(snap.open_interest) if snap else None,
         "spread_bps": float(ob.spread_bps) if ob else None,
         "best_bid": ob.best_bid if ob else None, "best_ask": ob.best_ask if ob else None,
@@ -1984,12 +2012,52 @@ async def get_market(symbol: str):
     })
 
 
+def _strategies_on(engine, symbol: str, sc) -> list:
+    """Strategies configured for this market, plus the one that actually holds it.
+
+    The panel listed Fibonacci and Divergence — both disabled — for a market whose open position
+    belongs to TREND_DAILY, which was missing entirely (audit 2026-09-03).
+    """
+    out = [s for s in str(getattr(sc, "strategies", "")).split(",") if s]
+    try:
+        for row in (getattr(engine, "trend_engine", None).status().get("positions") or []):
+            if row.get("ui_symbol") == symbol or row.get("symbol") == symbol:
+                if "TREND_DAILY" not in out:
+                    out.insert(0, "TREND_DAILY")
+                break
+    except Exception:  # noqa: BLE001 - a label must never break the market endpoint
+        pass
+    return out
+
+
+def _funding_interval(engine) -> int:
+    """The venue's settlement cadence in hours, as the engine is configured to charge it."""
+    try:
+        return max(1, int(getattr(engine.settings.trading, "funding_interval_hours", 1) or 1))
+    except Exception:  # noqa: BLE001
+        return 1
+
+
+def _market_funding_rate(engine, symbol: str, snap):
+    """The rate THIS market is charged at: the venue's, scaled feed only where the venue is silent.
+
+    The market panel used to read the feed snapshot raw, so it showed Binance's 8 h rate (+0.0100 %)
+    for a book charged Strike's hourly rate (+0.00116 %) — a factor of nine (audit 2026-09-03).
+    """
+    venue = getattr(engine, "_venue_funding", None) or {}
+    if symbol in venue:
+        return float(venue[symbol] or 0.0)
+    if snap is not None and snap.funding_rate:
+        return float(snap.funding_rate) * _funding_interval(engine) / 8.0
+    return None
+
+
 def _symbol_config_view(engine, symbol: str) -> dict:
     try:
         sc = engine.settings.get_symbol_config(symbol)
         t = engine.settings.trading
         return {"leverage": int(getattr(sc, "leverage", 1)), "max_position_usd": float(getattr(sc, "max_position_usd", 0.0)),
-                "min_notional_usd": 20.0, "strategies": [s for s in str(getattr(sc, "strategies", "")).split(",") if s],
+                "min_notional_usd": 20.0, "strategies": _strategies_on(engine, symbol, sc),
                 "taker_fee": float(getattr(t, "taker_fee", 0.0004)), "maker_fee": float(getattr(t, "maker_fee", 0.0002)),
                 "maintenance_margin": 0.005, "max_leverage": int(getattr(t, "max_leverage", 5)),
                 "risk_per_trade_pct": float(getattr(t, "risk_per_trade_pct", 0.0))}

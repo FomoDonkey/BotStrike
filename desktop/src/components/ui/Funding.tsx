@@ -44,7 +44,7 @@ export function FundingBlock({ funding }: { funding: EndpointState<FundingRespon
         </p>
       ) : (
         <div className="flex flex-col gap-1 pt-1">
-          <p className="text-[12px] font-medium text-text-2">Annualised rate per market — what holding costs at today's rate. Outlined = open position.</p>
+          <p className="text-[12px] font-medium text-text-2">Annualised rate per market: this settlement extrapolated to a year, next to the 90-day median measured on the venue. Outlined = open position.</p>
           <div className="flex flex-wrap gap-1.5">
             {rates.map(([sym, r]) => (
               <span key={sym} className={cn("inline-flex items-baseline gap-1 rounded-[6px] px-2 py-1",
@@ -54,7 +54,12 @@ export function FundingBlock({ funding }: { funding: EndpointState<FundingRespon
                 <span className={cn("num text-[12px] font-semibold", (r.annualized_pct ?? 0) > 0 ? "text-rose" : (r.annualized_pct ?? 0) < 0 ? "text-mint" : "text-text")}>
                   {formatPct(r.annualized_pct ?? 0, 1)}
                 </span>
-                <span className="text-[11.5px] font-medium text-text-2">/yr</span>
+                <span className="text-[11.5px] font-medium text-text-2">/yr now</span>
+                {typeof r.annualized_90d === "number" && (
+                  <span className="text-[11.5px] font-medium text-text-2" title="Median measured on the venue over 90 days">
+                    · {formatPct(r.annualized_90d, 1)} 90d
+                  </span>
+                )}
               </span>
             ))}
           </div>
