@@ -122,6 +122,8 @@ class BotStrike:
         self.trade_repo = TradeRepository("data/trade_database.db")
         # Perpetual funding accrual (paper): state survives restarts so a settlement is never
         # charged twice nor silently skipped (analytics/funding.py).
+        self._venue_funding: dict = {}
+        self._venue_funding_ts: float = 0.0
         self.funding = FundingAccrual.load(
             interval_hours=int(getattr(settings.trading, "funding_interval_hours", 8) or 8))
         self.trade_db = TradeDBAdapter(
@@ -866,13 +868,40 @@ class BotStrike:
         return rows
 
     def _funding_rates(self) -> dict:
-        """Latest funding rate per symbol from the market snapshots (venue truth)."""
+        """Funding rate per symbol. The intraday feed only covers the configured symbols, but the
+        trend book can hold any Strike market (gold, S&P 500, oil...), so anything missing is read
+        from the venue's public premiumIndex. Cached for the settlement period."""
         out = {}
         for sym in self.settings.symbol_names:
             snap = self.market_data.get_snapshot(sym)
             if snap is not None and snap.funding_rate:
                 out[sym] = float(snap.funding_rate)
+        wanted = {p["symbol"] for p in self._funding_positions()} - set(out)
+        if wanted:
+            out.update(self._venue_funding_rates(wanted))
         return out
+
+    def _venue_funding_rates(self, symbols: set) -> dict:
+        """Public premiumIndex from the venue for markets outside the intraday feed."""
+        now = time.time()
+        if self._venue_funding and now - self._venue_funding_ts < 600:
+            return {s: r for s, r in self._venue_funding.items() if s in symbols}
+        try:
+            import json as _json
+            import urllib.request
+            url = os.getenv("BOTSTRIKE_VENUE_PREMIUM_URL",
+                            "https://api.strikefinance.org/price/v2/premiumIndex")
+            req = urllib.request.Request(url, headers={"User-Agent": "botstrike/1.0"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                rows = _json.loads(r.read())
+            self._venue_funding = {str(x.get("symbol", "")).upper(): float(x.get("fundingRate") or 0.0)
+                                   for x in rows}
+            self._venue_funding_ts = now
+            logger.info("venue_funding_rates_loaded", markets=len(self._venue_funding))
+        except Exception as e:  # noqa: BLE001 — missing rates simply mean no charge this period
+            logger.warning("venue_funding_unavailable", error=str(e)[:160])
+            return {}
+        return {s: r for s, r in self._venue_funding.items() if s in symbols}
 
     async def _funding_loop(self) -> None:
         """Settle perpetual funding on open positions (paper). Live mode gets funding from the
