@@ -1211,3 +1211,19 @@
 - La tasa del venue se cacheaba 10 minutos. BTC pasó de 0,0020 % a 0,0027 % en cuatro minutos: el
   panel puede ir con retraso, el asiento contable no.
 - **LESSON: separar la frescura que necesita una pantalla de la que necesita un apunte contable.**
+
+### Comparar dos fuentes UNA VEZ no prueba que coincidan
+- Verifiqué el funding contra Strike con lecturas simultáneas de las dos APIs: 12/12 idénticas, y di
+  el asunto por cerrado. Edgar tenía las dos pantallas abiertas y vio 0,0034 % en el bot contra
+  0,0027 % en Strike. Ambos números habían sido correctos al medirlos; el del bot venía de una caché
+  de 10 minutos y el del venue se mueve cada minuto.
+- **LESSON: un valor en vivo se verifica MUESTREÁNDOLO EN EL TIEMPO, no en un instante. Un test
+  puntual pasa con una caché arbitrariamente vieja. Y separar siempre la frescura que necesita una
+  pantalla de la que necesita un apunte contable.**
+
+### Si tu color significa algo distinto al del venue, dilo en la pantalla
+- El bot pinta el funding positivo en rojo (te cuesta) y Strike lo pinta todo en verde. Mi explicación
+  estaba en un mensaje de chat, no donde está el número, así que al comparar las dos UI el rojo
+  parecía un error.
+- **LESSON: una convención propia que se aparta de la del venue de referencia necesita leyenda en el
+  propio panel, no una explicación fuera de la interfaz.**
