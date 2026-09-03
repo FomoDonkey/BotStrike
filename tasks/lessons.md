@@ -1036,3 +1036,20 @@
   UNKNOWN→X). Ninguno era un problema del bot.
 - **LESSON: un monitor nuevo se ejecuta a mano una vez y se leen sus alertas con lupa antes de dejarlo solo;
   excluir los eventos que causan los propios deploys.**
+
+### Tests que dependen del día de la semana explotan en el gate del CT a medianoche
+- `now − 3 días` caía en la semana ISO anterior de miércoles a domingo; el jueves 00:04Z el CT lo ejecutó y el weekly
+  PnL salió −30 en vez de 10. En local seguía en verde porque aún era 2 de septiembre UTC.
+- **LESSON: ventanas relativas en tests con márgenes que valgan CUALQUIER día (−8 días para "semana anterior",
+  −1 s para "hoy"), o `now` fijo si la lógica lo acepta.**
+
+### La UI "premium" se verifica con un script de contraste + capturas del target real, no con el informe del agente
+- `scripts/ui_contrast_audit.py` (alpha ≥ 0,70 y ratio WCAG ≥ 4,5 en cada nodo de texto visible) convierte "texto
+  blanco brillante" en un criterio medible: 0 offenders en 8 rutas × 2 tamaños, local y CT. Aun así, tres defectos
+  solo se vieron MIRANDO las capturas (recorte a 390, "no target" por clave de símbolo, fila vacía).
+- **LESSON: criterio automático + ojos propios sobre TODAS las capturas del target real. Las dos cosas.**
+
+### Lecciones del agente de frontend (segunda pasada)
+- La auditoría compone un ancestro blanco translúcido como blanco opaco → usar fondos opacos para resaltados de fila.
+- `scrollIntoView` desplaza TODOS los ancestros, incluido el contenedor de página → `block: "nearest"` o scroll manual.
+- `/api/data/catalog.datasets` es un objeto (claves `SYMBOL/type`), no un array → la página Data se rompía.

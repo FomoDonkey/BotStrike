@@ -129,3 +129,8 @@ el ufw y que el PC esté en la LAN o en la tailnet.
   `GET /api/activity` (timeline: fills, runs del trend, cambios de régimen, kills, riesgo, config, sistema;
   persistida en `data/activity.json`), `GET /api/market/{sym}/funding_history` (Binance fapi, caché 5 min),
   `GET /api/ops`, `GET /api/trades/export.csv`, `symbol_config` en `/api/market/{sym}`.
+- **UI v2.16 (Strike-grade)**: barra superior + footer con tickers (sin sidebar), Trade 1:1 con Strike (panel Bot en
+  lugar del formulario de orden), Portfolio sustituye a Dashboard y Performance (`/dashboard` y `/performance`
+  redirigen; `/orderflow` → `/trading`), Strategies tipo vault + ranking, engranaje con interruptores de layout,
+  Ctrl+K para cambiar de mercado, cajón de actividad. Criterio de aceptación: `py -3.12 scripts/ui_contrast_audit.py
+  http://192.168.1.204:9420 --width 1440` (y `--width 390 --height 844`) → `TOTAL offenders: 0`.

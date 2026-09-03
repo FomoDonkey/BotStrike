@@ -1,6 +1,6 @@
 # BotStrike — Tasks
 
-## Sesión 2026-09-02 (5ª) — vigilancia automática, reset de histórico, UI premium (Strike) — EN CURSO
+## Sesión 2026-09-02/03 (5ª) — vigilancia automática, reset de histórico, UI premium (Strike) — HECHO
 Edgar: "déjalo todo listo para tú mismo vigilarlo", "borra el histórico y deja solo las abiertas de hoy",
 "UI/UX al nivel premium de Strike Finance, texto blanco brillante en todas partes".
 ### Reset de histórico — HECHO (19:14Z)
@@ -20,11 +20,23 @@ Edgar: "déjalo todo listo para tú mismo vigilarlo", "borra el histórico y dej
 - [x] Estudio de Strike en Chrome pestaña por pestaña (Trade, Portfolio, Leaderboard, Vaults, Staking, Tools,
   settings, market picker, order book/trades, chart tabs, footer) → tokens medidos (#0A0A0A, IBM Plex Sans
   12.5/500, th 60 % blanco → nosotros ≥ 80 %, mint #4EFAB0, rose #F43F5E).
-### Frontend premium — EN CURSO (agente con `tasks/ui_premium_spec.md`)
-- [ ] Top nav + footer, Trade (Strike 1:1 con panel Bot), Portfolio (Dashboard+Performance), Strategies (vault cards +
-  leaderboard), Risk/Backtest/Data/Settings/System, gear popover, Ctrl+K, móvil. Criterio: `scripts/ui_contrast_audit.py`
-  0 offenders a 1440 y 390 en todas las rutas + tsc/lint/build + Playwright + 8 números = API.
-- [ ] Verificación propia (capturas completas), deploy, verificación en el CT, memoria.
+### Frontend premium — HECHO (9faa258 + cbb4427; CT en cbb4427, 234/234, PASS)
+- [x] Agente (cortado 2 veces por el límite, reanudado con contexto): top nav + footer ticker + barra inferior móvil (sin
+  sidebar), Trade 1:1 con Strike (cabecera, tabs Chart/Funding/Depth/Signals/Details, libro + cinta, columna Bot/Account,
+  panel inferior con contadores, filtros y Export CSV), Portfolio (sustituye Dashboard + Performance; `/dashboard`,
+  `/performance` → `/portfolio`; `/orderflow` → `/trading`), Strategies (vault cards + leaderboard + chip research),
+  Risk/Backtest/Data/Settings/System, popover del engranaje, cajón de actividad, Ctrl+K, heatmap calendario, funding.
+- [x] MI verificación (no la del agente): gates tsc/lint/build 0; bridge local aislado: 16 capturas (8 rutas × 1440/390)
+  0 px desborde, 0 errores, auditoría 0 offenders (300/228/341/121/54/125/103/110 nodos a 1440); en el CT real lo
+  mismo (0 offenders a 1440 y 390) y números = API: equity 1.003,29 / disponible 735,35 / margen 26,7 % / entrada BTC
+  76.571,65 / mark 77.161,70 / index 77.195,89 / funding +0,0071 % 07:48:42 / Positions 3 / Trade History 0.
+- [x] Defectos vistos en MIS capturas y corregidos: subtexto KPI recortado a 390 (Risk), panel Bot "no target" (targets
+  con clave BTCUSDT vs BTC-USD), fila "available" vacía en System. Deploy bloqueado 1 vez por el gate del CT: test de
+  persistencia dependiente del día de la semana (−3 días cae en la misma semana ISO los jueves) → determinista.
+- [x] Run automático del trend a las 00:05:30Z OK (late=false, 3 posiciones, sin cambios de objetivo); actividad lo refleja.
+### No verificado en vivo
+- [ ] Acciones mutantes desde la UI (Start/Stop/Restart, PUT config, slider) solo con token-gating comprobado; build Tauri;
+  breakpoint 1024–1279; modo daltónico; datos multi-día (calendario, puntos de días, sparklines) hasta que haya cierres.
 
 ## Sesión 2026-09-02 (4ª) — v2.15: estrategia de divergencias + terminal de trading premium — HECHO
 Edgar: "estrategia de divergencias con algo que sirva para verificarlas y puntos de entrada precisos" +
