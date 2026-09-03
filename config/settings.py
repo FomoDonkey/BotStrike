@@ -200,7 +200,10 @@ class TradingConfig:
     telegram_notify_signals: bool = True
     telegram_notify_regime: bool = False
     telegram_notify_portfolio: bool = True
-    telegram_portfolio_every_min: int = 60
+    # 60 min meant 24 "nothing changed" messages a day for a bot that trades once a day; the real
+    # alerts then drown in noise (Edgar 2026-09-02: "me llegan muchisimas notificaciones").
+    # Twice a day keeps the "still alive" signal. Editable from Settings.
+    telegram_portfolio_every_min: int = 720
     telegram_notify_daily_digest: bool = True
     telegram_digest_hour_utc: int = 7
     # Fees — Binance Futures defaults (VIP 0)
