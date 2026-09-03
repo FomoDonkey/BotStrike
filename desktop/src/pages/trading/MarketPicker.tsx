@@ -78,7 +78,9 @@ export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerPr
   const active = Math.min(cursor, Math.max(0, rows.length - 1));
 
   return (
-    <Modal open={open} onClose={onClose} bare width="max-w-3xl">
+    // Wider than it was: the list now carries every venue market, and long names plus their tags
+    // pushed the funding column off the right edge (2026-09-04).
+    <Modal open={open} onClose={onClose} bare width="max-w-5xl">
       <div className="flex items-center gap-2 h-12 px-3 border-b border-hairline shrink-0">
         <Search className="w-4 h-4 text-text shrink-0" />
         <input
@@ -101,7 +103,8 @@ export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerPr
               <th>24h Change</th>
               <th>24h Volume</th>
               <th>Open Interest</th>
-              <th>8H Funding</th>
+              {/* Not "8H": Strike settles hourly, and the interval is a venue fact. */}
+              <th>Funding</th>
             </tr>
           </thead>
           <tbody>
