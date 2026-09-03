@@ -2651,9 +2651,30 @@ def _run_backtest_sync(body: dict) -> dict:
 # API/WS route so /api/* and /ws/* always win; the app uses a HashRouter, so plain
 # StaticFiles(html=True) is enough (no history-fallback needed). When the directory
 # is absent (dev checkout without a web build) the bridge behaves exactly as before.
+class _SpaStatic(StaticFiles):
+    """StaticFiles that never lets a browser cache the entry document.
+
+    index.html was served with only an ETag, so Chrome kept a heuristically cached copy and went on
+    loading the PREVIOUS bundle after a deploy — the operator saw an outdated UI until a hard reload
+    (seen 2026-09-03). The asset filenames carry a content hash, so those stay immutable for a year;
+    only the document that points at them must be revalidated on every load.
+    """
+
+    async def get_response(self, path: str, scope):
+        resp = await super().get_response(path, scope)
+        # Starlette normalises "/" to "." and joins with the OS separator (a backslash on Windows),
+        # so normalise before matching: only content-hashed assets may be cached, everything else
+        # revalidates.
+        if path.replace("\\", "/").startswith("assets/"):
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return resp
+
+
 _WEBUI_DIR = Path(__file__).resolve().parent / "webui"
 if _WEBUI_DIR.is_dir():
-    app.mount("/", StaticFiles(directory=str(_WEBUI_DIR), html=True), name="webui")
+    app.mount("/", _SpaStatic(directory=str(_WEBUI_DIR), html=True), name="webui")
 
 
 # ── Main ─────────────────────────────────────────────────────────

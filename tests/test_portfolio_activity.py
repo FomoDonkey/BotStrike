@@ -225,3 +225,18 @@ def test_funding_history_prefers_the_venue_the_book_executes_on(st, monkeypatch)
     assert f["source"] == "strike" and seen == [("XAU-USD", 2)]
     assert [p["rate"] for p in f["points"]] == [1.25e-05, 0.0]
     assert f["cumulative"][-1]["value"] == pytest.approx(1.25e-05)
+
+
+def test_the_spa_entry_document_is_never_cached_but_hashed_assets_are():
+    """index.html carried only an ETag, so Chrome served a heuristically cached copy and kept loading
+    the previous bundle after a deploy: the operator saw an outdated UI (2026-09-03)."""
+    client = TestClient(bridge.app)
+    r = client.get("/")
+    if r.status_code != 200:
+        pytest.skip("no web build in this checkout")
+    assert "no-cache" in r.headers.get("cache-control", "")
+    import re as _re
+    m = _re.search(r"assets/(index-[A-Za-z0-9_-]+\.js)", r.text)
+    assert m, "the entry document must reference a hashed bundle"
+    a = client.get(f"/assets/{m.group(1)}")
+    assert a.status_code == 200 and "immutable" in a.headers.get("cache-control", "")
