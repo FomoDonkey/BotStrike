@@ -11,8 +11,10 @@ import { cn, formatClock, formatMoney, formatPct, formatSignedMoney } from "@/li
 
 /** Why funding exists and what it has cost historically — operator contract §3. */
 export const FUNDING_COPY =
-  "Perpetuals charge funding every 8 h. A long position pays when the rate is positive. Measured on " +
-  "Binance over 166 days, longs paid 1.2–3.2 %/yr of notional.";
+  "Perpetuals charge funding on a fixed clock — hourly on Strike. A long position pays when the " +
+  "rate is positive. Measured on " +
+  "Strike over 90 days, longs paid a median 8.1 %/yr of notional: from XAG at +15.1 % down to WTI " +
+  "at −15.7 %, where the longs are the ones being paid.";
 
 /**
  * Trade → Account tab block (§3): cumulative funding, the countdown to the next settlement and
@@ -30,7 +32,7 @@ export function FundingBlock({ funding }: { funding: EndpointState<FundingRespon
       <ListRow label="Funding paid" hint={HINTS.fundingTotal}>
         <Signed value={typeof f?.total_paid === "number" ? f.total_paid : undefined} format={(v) => formatSignedMoney(v, 4)} />
       </ListRow>
-      <ListRow label="Next settlement" hint={`Funding settles every ${interval} h (00:00 / 08:00 / 16:00 UTC).`}>
+      <ListRow label="Next settlement" hint={`Funding settles every ${interval} h on the UTC clock. Strike settles hourly; Binance-style venues every 8 h.`}>
         {left === null ? "---" : formatClock(left)}
       </ListRow>
       <ListRow label="Interval">{`${interval} h`}</ListRow>
@@ -70,6 +72,7 @@ export function FundingCostCard({ funding, className }: { funding: EndpointState
   let peak = 0;
   for (const [, v] of bySymbol) peak = Math.max(peak, Math.abs(v));
   const left = secondsToSettlement(f?.next_settlement_utc, now);
+  const interval = f?.interval_hours ?? 1;
 
   return (
     <Panel className={cn("flex flex-col", className)}>
@@ -90,7 +93,7 @@ export function FundingCostCard({ funding, className }: { funding: EndpointState
         </div>
         {bySymbol.length === 0 ? (
           <p className="text-[12.5px] font-medium text-text">
-            {funding.missing ? "GET /api/funding needs bridge ≥ 2.16" : "No funding settled yet — the first charge lands at the next 8 h mark."}
+            {funding.missing ? "GET /api/funding needs bridge ≥ 2.16" : `No funding settled yet — the first charge lands at the next ${interval} h mark.`}
           </p>
         ) : (
           <div className="flex flex-col gap-2">

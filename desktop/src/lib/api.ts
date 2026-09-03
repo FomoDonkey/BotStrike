@@ -246,7 +246,8 @@ export interface StrategiesResponse {
 }
 
 export interface TrendPosition {
-  symbol: string;
+  symbol: string;          // the venue key the engine trades (BTCUSDT)
+  ui_symbol?: string;      // the market name every table shows (BTC-USD)
   size: number;
   entry_price: number;
   mark_price: number;
@@ -479,7 +480,7 @@ export interface AccountResponse {
   engine?: boolean;
 }
 
-/** Live 8 h funding rate of one market and its annualised equivalent (a ratio: 0.0948 = 9.5 %/yr). */
+/** Live per-settlement funding rate of one market and its annualised equivalent (0.0948 = 9.5 %/yr). */
 export interface FundingRate {
   rate: number;
   annualized_pct: number;
@@ -579,7 +580,7 @@ export interface MarketInfoResponse {
   mark_price?: number | null;
   index_price?: number | null;
   funding_rate?: number | null;
-  /** seconds to the next 8 h UTC funding mark */
+  /** seconds to the venue's next funding settlement */
   funding_countdown_sec?: number | null;
   change_24h_pct?: number | null;
   high_24h?: number | null;

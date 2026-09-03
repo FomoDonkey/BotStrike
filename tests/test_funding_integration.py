@@ -97,7 +97,7 @@ def test_engine_prefers_the_venue_funding_rate_over_the_intraday_feed(monkeypatc
     from types import SimpleNamespace as NS
 
     eng = object.__new__(m.BotStrike)
-    eng.settings = NS(symbol_names=["BTC-USD", "ETH-USD"])
+    eng.settings = NS(symbol_names=["BTC-USD", "ETH-USD"], trading=NS(funding_interval_hours=8))
     eng.paper_sim = None
     eng.trend_engine = None
     eng._venue_funding = {"BTC-USD": 0.000098, "WTI-USD": -0.00018}      # Strike
@@ -108,7 +108,18 @@ def test_engine_prefers_the_venue_funding_rate_over_the_intraday_feed(monkeypatc
     rates = m.BotStrike._funding_rates(eng)
     assert rates["BTC-USD"] == pytest.approx(0.000098)   # venue wins over the feed's 0.000037
     assert rates["WTI-USD"] == pytest.approx(-0.00018)   # market outside the feed still charged
-    assert rates["ETH-USD"] == pytest.approx(0.000037)   # feed only fills the gap
+    assert rates["ETH-USD"] == pytest.approx(0.000037)   # feed only fills the gap, 8 h clock = no scaling
+
+    # On the venue's real HOURLY clock the feed's 8 h rate has to be scaled, or it charges 8x too much
+    eng.settings = NS(symbol_names=["BTC-USD", "ETH-USD"], trading=NS(funding_interval_hours=1))
+    hourly = m.BotStrike._funding_rates(eng)
+    assert hourly["ETH-USD"] == pytest.approx(0.000037 / 8)
+    assert hourly["BTC-USD"] == pytest.approx(0.000098)   # a venue rate is already per settlement
+
+    # a venue rate of exactly 0 is an answer, not a gap: XAU/XAG/SP500 price at 0 on many days
+    eng._venue_funding = {"XAU-USD": 0.0}
+    eng._funding_positions = lambda: [{"symbol": "XAU-USD"}]
+    assert m.BotStrike._funding_rates(eng)["XAU-USD"] == 0.0
 
 
 def test_alltime_pnl_and_equity_curve_include_funding():

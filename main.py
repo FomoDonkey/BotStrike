@@ -877,19 +877,23 @@ class BotStrike:
         # PAYS the longs on WTI (-15.7 %) and NAS100 (-3.7 %). Charging the intraday feed's rate to
         # a book that will execute on Strike would misprice the whole cost of carry.
         out = dict(self._venue_funding_rates(held)) if held else {}
-        for sym in self.settings.symbol_names:            # feed only fills gaps
-            if sym in out and out[sym]:
+        # The intraday feed quotes an EIGHT-HOUR rate; our clock runs at the venue's interval (1 h on
+        # Strike), so a raw feed rate would be 8x too big per settlement. Scale it, and only ever use
+        # it where the venue itself said nothing — a venue rate of exactly 0 is an answer, not a gap.
+        scale = max(1, int(getattr(self.settings.trading, "funding_interval_hours", 1) or 1)) / 8.0
+        for sym in self.settings.symbol_names:
+            if sym in out:
                 continue
             snap = self.market_data.get_snapshot(sym)
             if snap is not None and snap.funding_rate:
-                out[sym] = float(snap.funding_rate)
+                out[sym] = float(snap.funding_rate) * scale
         return out
 
     def _venue_funding_rates(self, symbols: set) -> dict:
         """Public premiumIndex from the venue for markets outside the intraday feed."""
         now = time.time()
         if self._venue_funding and now - self._venue_funding_ts < 600:
-            return {s: r for s, r in self._venue_funding.items() if s in symbols and r}
+            return {s: r for s, r in self._venue_funding.items() if s in symbols}
         try:
             import json as _json
             import urllib.request
@@ -905,7 +909,9 @@ class BotStrike:
         except Exception as e:  # noqa: BLE001 — missing rates simply mean no charge this period
             logger.warning("venue_funding_unavailable", error=str(e)[:160])
             return {}
-        return {s: r for s, r in self._venue_funding.items() if s in symbols and r}
+        # keep zeros: XAU, XAG and SP500 genuinely price at 0 funding on some days, and dropping them
+        # made four of six held markets disappear from the funding panel (audit 2026-09-03).
+        return {s: r for s, r in self._venue_funding.items() if s in symbols}
 
     async def _funding_loop(self) -> None:
         """Settle perpetual funding on open positions (paper). Live mode gets funding from the
@@ -924,7 +930,7 @@ class BotStrike:
                 # Record every market's rate at each settlement: no venue publishes a long funding
                 # history, so the only way to validate funding-aware sizing later is to build it now.
                 from analytics.funding import record_rates
-                record_rates(rates, now)
+                record_rates(rates, now, interval_hours=self.funding.interval_hours)
                 payments = self.funding.compute(self._funding_positions(), rates, now)
                 total = self.funding.mark_settled(payments, now)
                 if not payments:

@@ -17,16 +17,16 @@ def _pos(symbol="BTC-USD", side="BUY", notional=1000.0, strategy="TREND_DAILY", 
 
 
 def test_settlement_boundaries_are_utc_multiples_of_the_interval():
-    b = settlement_boundaries(DAY0 + 1, DAY0 + 9 * H)
+    b = settlement_boundaries(DAY0 + 1, DAY0 + 9 * H, 8)
     assert b == [DAY0 + 8 * H]
-    b = settlement_boundaries(DAY0 - 1, DAY0 + 17 * H)
+    b = settlement_boundaries(DAY0 - 1, DAY0 + 17 * H, 8)
     assert b == [DAY0, DAY0 + 8 * H, DAY0 + 16 * H]
-    assert settlement_boundaries(DAY0 + 1, DAY0 + 2) == []        # nothing crossed
-    assert settlement_boundaries(DAY0 + 9 * H, DAY0 + 3 * H) == []  # clock going backwards
+    assert settlement_boundaries(DAY0 + 1, DAY0 + 2, 8) == []        # nothing crossed
+    assert settlement_boundaries(DAY0 + 9 * H, DAY0 + 3 * H, 8) == []  # clock going backwards
 
 
 def test_longs_pay_when_rate_is_positive_and_receive_when_negative(tmp_path):
-    f = FundingAccrual(path=str(tmp_path / "f.json"))
+    f = FundingAccrual(path=str(tmp_path / "f.json"), interval_hours=8)
     f.start(DAY0 + 1)
     assert f.compute([_pos()], {"BTC-USD": 0.0001}, DAY0 + 2) == []      # no boundary crossed yet
     pays = f.compute([_pos()], {"BTC-USD": 0.0001}, DAY0 + 8 * H + 5)
@@ -38,7 +38,7 @@ def test_longs_pay_when_rate_is_positive_and_receive_when_negative(tmp_path):
 
 
 def test_downtime_charges_every_missed_settlement_once(tmp_path):
-    f = FundingAccrual(path=str(tmp_path / "f.json"))
+    f = FundingAccrual(path=str(tmp_path / "f.json"), interval_hours=8)
     f.start(DAY0 + 1)
     now = DAY0 + 25 * H                                                  # 3 boundaries crossed (8, 16, 24)
     pays = f.compute([_pos()], {"BTC-USD": 0.0001}, now)
@@ -51,7 +51,7 @@ def test_downtime_charges_every_missed_settlement_once(tmp_path):
 
 
 def test_zero_missing_and_absurd_rates_are_skipped(tmp_path):
-    f = FundingAccrual(path=str(tmp_path / "f.json"))
+    f = FundingAccrual(path=str(tmp_path / "f.json"), interval_hours=8)
     f.start(DAY0 + 1)
     now = DAY0 + 8 * H + 1
     assert f.compute([_pos()], {"BTC-USD": 0.0}, now) == []
@@ -63,11 +63,11 @@ def test_zero_missing_and_absurd_rates_are_skipped(tmp_path):
 
 def test_state_persists_and_never_double_charges_across_restart(tmp_path):
     p = str(tmp_path / "f.json")
-    f = FundingAccrual(path=p)
+    f = FundingAccrual(path=p, interval_hours=8)
     f.start(DAY0 + 1)
     now = DAY0 + 8 * H + 5
     f.mark_settled(f.compute([_pos()], {"BTC-USD": 0.0001}, now), now)
-    again = FundingAccrual.load(p)
+    again = FundingAccrual.load(p, interval_hours=8)
     assert again.last_settled_ts == now and again.total_paid == pytest.approx(-0.10)
     assert again.by_symbol["BTC-USD"] == pytest.approx(-0.10)
     assert again.compute([_pos()], {"BTC-USD": 0.0001}, now + 10) == []   # same period not charged twice
@@ -76,7 +76,7 @@ def test_state_persists_and_never_double_charges_across_restart(tmp_path):
 
 
 def test_first_run_arms_the_clock_without_charging(tmp_path):
-    f = FundingAccrual(path=str(tmp_path / "f.json"))
+    f = FundingAccrual(path=str(tmp_path / "f.json"), interval_hours=8)
     assert f.due(DAY0 + 40 * H) == []                                    # no state → never a retroactive charge
     f.start(DAY0)
     assert f.due(DAY0 + 9 * H) == [DAY0 + 8 * H]
@@ -85,7 +85,7 @@ def test_first_run_arms_the_clock_without_charging(tmp_path):
 
 
 def test_status_and_annualization(tmp_path):
-    f = FundingAccrual(path=str(tmp_path / "f.json"))
+    f = FundingAccrual(path=str(tmp_path / "f.json"), interval_hours=8)
     f.start(DAY0)
     now = DAY0 + 8 * H + 1
     f.mark_settled(f.compute([_pos(), _pos(symbol="ETH-USD", notional=500.0, mark=2000.0)],
@@ -93,19 +93,19 @@ def test_status_and_annualization(tmp_path):
     st = f.status()
     assert st["total_paid"] == pytest.approx(-0.20) and st["by_symbol"]["ETH-USD"] == pytest.approx(-0.10)
     assert st["last_settled_utc"].endswith("Z") and len(st["recent"]) == 2
-    assert annualized_pct(0.0001) == pytest.approx(0.1095)               # 0.01 %/8 h ≈ 10.95 %/yr
-    assert annualized_pct(0.0000168) == pytest.approx(0.0183, abs=1e-4)  # measured ADA rate ≈ 1.8 %/yr
+    assert annualized_pct(0.0001, 8) == pytest.approx(0.1095)               # 0.01 %/8 h ≈ 10.95 %/yr
+    assert annualized_pct(0.0000168, 8) == pytest.approx(0.0183, abs=1e-4)  # measured ADA rate ≈ 1.8 %/yr
 
 
 def test_record_rates_appends_a_csv_row_per_market(tmp_path):
     from analytics.funding import record_rates
     p = str(tmp_path / "rates.csv")
-    assert record_rates({"BTC-USD": 0.0001, "ETH-USD": -0.00002, "BAD": float("nan")}, DAY0, path=p) == 2
-    assert record_rates({"BTC-USD": 0.00015}, DAY0 + 8 * H, path=p) == 1
+    assert record_rates({"BTC-USD": 0.0001, "ETH-USD": -0.00002, "BAD": float("nan")}, DAY0, path=p, interval_hours=8) == 2
+    assert record_rates({"BTC-USD": 0.00015}, DAY0 + 8 * H, path=p, interval_hours=8) == 1
     lines = open(p, encoding="utf-8").read().strip().splitlines()
     assert lines[0] == "ts,utc,symbol,rate,annualized_pct" and len(lines) == 4
     assert lines[1].split(",")[2] == "BTC-USD" and lines[1].endswith("0.109500")   # 0.01 %/8 h ≈ 10.95 %/yr
-    assert record_rates({}, DAY0, path=p) == 0
+    assert record_rates({}, DAY0, path=p, interval_hours=8) == 0
 
 
 def test_funding_is_attributed_to_the_position_not_the_market_lifetime():
@@ -123,3 +123,29 @@ def test_funding_is_attributed_to_the_position_not_the_market_lifetime():
     assert acc.since("BTC-USD", 1500.0, 2500.0) == -2.0  # a closed position's window
     assert acc.since("BTC-USD", 0.0) == 0.0              # unknown open time: caller falls back
     assert acc.since("SOL-USD", 900.0) == 0.0
+
+
+def test_the_default_interval_is_the_venue_we_execute_on(tmp_path):
+    """Strike settles funding EVERY HOUR (verified 2026-09-03: 167 history rows for days=7, and
+    premiumIndex.nextFundingTime is always the top of the next hour). Charging its hourly rate on an
+    8-hour clock undercharged the carry by 8x, flattering exactly the cost the thesis depends on."""
+    from analytics.funding import DEFAULT_INTERVAL_HOURS
+    assert DEFAULT_INTERVAL_HOURS == 1
+    assert settlement_boundaries(DAY0 + 1, DAY0 + 3 * H) == [DAY0 + H, DAY0 + 2 * H, DAY0 + 3 * H]
+
+    f = FundingAccrual(path=str(tmp_path / "f.json"))          # default = hourly
+    f.start(DAY0)
+    pays = f.compute([_pos()], {"BTC-USD": 0.0000188}, DAY0 + H + 1)   # Strike's live BTC rate
+    assert pays[0].periods == 1 and pays[0].amount == pytest.approx(-0.0188)
+    assert annualized_pct(0.0000188, 1) == pytest.approx(0.1647, abs=1e-4)   # 16.5 %/yr, hourly
+
+
+def test_the_bad_tick_cap_scales_with_the_interval(tmp_path):
+    """0.75 % is the cap for 8 hours; an hourly clock must not accept 8x that."""
+    hourly = FundingAccrual(path=str(tmp_path / "h.json"), interval_hours=1)
+    eight = FundingAccrual(path=str(tmp_path / "e.json"), interval_hours=8)
+    assert hourly.max_abs_rate == pytest.approx(0.0075 / 8)
+    assert eight.max_abs_rate == pytest.approx(0.0075)
+    hourly.start(DAY0)
+    assert hourly.compute([_pos()], {"BTC-USD": 0.002}, DAY0 + H + 1) == []   # 0.2 %/h = bad tick
+    assert hourly.compute([_pos()], {"BTC-USD": 0.0005}, DAY0 + H + 1) != []  # 0.05 %/h is plausible

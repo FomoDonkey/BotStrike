@@ -1713,7 +1713,24 @@ async def get_portfolio():
 
 
 _FUNDING_CACHE: dict = {}
+STRIKE_STATS_BASE = os.getenv("BOTSTRIKE_STRIKE_STATS", "https://api.strikefinance.org/stat/v1/stats/coin")
 FUNDING_CACHE_SEC = 300
+
+
+async def _fetch_strike_funding_history(symbol: str, days: int) -> list:
+    """Strike's own funding history: [{ts_ms, funding_rate}] hourly, up to 90 days. Patched in tests.
+
+    This is the venue the book executes on, so it is the only history that describes what a position
+    actually pays. The stats host rejects a default User-Agent with 403.
+    """
+    import httpx
+    url = f"{STRIKE_STATS_BASE}/history/funding"
+    async with httpx.AsyncClient(timeout=15.0, headers={"User-Agent": "botstrike/1.0"}) as client:
+        r = await client.get(url, params={"symbol": symbol, "days": int(days)})
+        r.raise_for_status()
+        payload = r.json()
+    cols = payload.get("columns") or []
+    return [dict(zip(cols, row)) for row in (payload.get("data") or [])]
 
 
 async def _fetch_funding_history(binance_symbol: str, limit: int) -> list:
@@ -1728,7 +1745,12 @@ async def _fetch_funding_history(binance_symbol: str, limit: int) -> list:
 
 @app.get("/api/market/{symbol}/funding_history")
 async def get_funding_history(symbol: str, limit: int = 200):
-    """Funding-rate history for the Funding tab (spec v2.16 §5.3): every 8 h, positive = longs pay."""
+    """Funding-rate history for the Funding tab: the VENUE's own settlements, positive = longs pay.
+
+    Strike first, because that is where the book executes and its markets are not Binance's: asking
+    Binance for XAU-USD returned its own XAUUSDT perp (a different market with different funding),
+    and SP500-USD / WTI-USD returned nothing at all (audit 2026-09-03).
+    """
     from exchange.binance_client import SYMBOL_MAP as _BSYM
     limit = max(10, min(int(limit), 1000))
     bsym = _BSYM.get(symbol, symbol.replace("-", "").replace("USD", "USDT") if "USDT" not in symbol else symbol)
@@ -1736,28 +1758,42 @@ async def get_funding_history(symbol: str, limit: int = 200):
     cached = _FUNDING_CACHE.get((symbol, limit))
     if cached and now - cached["cached_at"] < FUNDING_CACHE_SEC:
         return cached
+    points, source, err = [], "strike", ""
     try:
-        raw = await _fetch_funding_history(bsym, limit)
+        days = max(1, min(90, -(-limit // 24)))          # the venue publishes hourly rows
+        for row in await _fetch_strike_funding_history(symbol, days):
+            try:
+                points.append({"ts": float(row["ts"]) / 1000.0, "rate": float(row["funding_rate"]),
+                               "mark_price": None})
+            except (KeyError, TypeError, ValueError):
+                continue
+        points = points[-limit:]
     except Exception as e:  # noqa: BLE001
-        logger.warning("funding_history_unavailable", symbol=symbol, error=str(e))
-        if cached:
-            return cached
-        return {"symbol": symbol, "points": [], "cumulative": [], "source": "binance_fapi", "cached_at": now,
-                "error": f"{type(e).__name__}"}
-    points = []
-    for row in raw:
+        logger.warning("strike_funding_history_unavailable", symbol=symbol, error=str(e))
+        err = f"{type(e).__name__}"
+    if not points:
+        source = "binance_fapi"
         try:
-            points.append({"ts": float(row["fundingTime"]) / 1000.0, "rate": float(row["fundingRate"]),
-                           "mark_price": float(row.get("markPrice") or 0.0) or None})
-        except (KeyError, TypeError, ValueError):
-            continue
+            raw = await _fetch_funding_history(bsym, limit)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("funding_history_unavailable", symbol=symbol, error=str(e))
+            if cached:
+                return cached
+            return {"symbol": symbol, "points": [], "cumulative": [], "source": source, "cached_at": now,
+                    "error": err or f"{type(e).__name__}"}
+        for row in raw:
+            try:
+                points.append({"ts": float(row["fundingTime"]) / 1000.0, "rate": float(row["fundingRate"]),
+                               "mark_price": float(row.get("markPrice") or 0.0) or None})
+            except (KeyError, TypeError, ValueError):
+                continue
     points.sort(key=lambda p: p["ts"])
     cum, cumulative = 0.0, []
     for p in points:
         cum += p["rate"]
         cumulative.append({"ts": p["ts"], "value": cum})
     out = {"symbol": symbol, "binance_symbol": bsym, "points": points, "cumulative": cumulative,
-           "source": "binance_fapi", "cached_at": now}
+           "source": source, "cached_at": now}
     _FUNDING_CACHE[(symbol, limit)] = out
     return out
 

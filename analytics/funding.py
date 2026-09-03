@@ -5,7 +5,8 @@ the measured venues is 53–75 % of the 8-hour periods (Binance 166 d: BTC +3.2 
 ADA +1.2 % of notional; +4–7.5 %/yr in the last 30 days). Paper equity ignored this entirely, so
 every paper result and the trend validation were optimistic by 1–4 % of equity per year.
 
-Model (matches Binance/Strike): every `interval_hours` the exchange settles
+Model (matches Binance/Strike): every `interval_hours` the exchange settles — ONE HOUR on Strike,
+eight on Binance-style venues, so the interval and the rate must always come from the same venue
     payment = position_notional * funding_rate       (positive = LONGS pay)
 so the cash flow for a position is `-payment` for a long and `+payment` for a short.
 
@@ -22,10 +23,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-DEFAULT_INTERVAL_HOURS = 8
-# Sanity cap: a single settlement above this is treated as a bad tick and skipped (0.75 % per 8 h
-# would be ~820 %/yr; real venues cap funding well below that).
-MAX_ABS_RATE = 0.0075
+DEFAULT_INTERVAL_HOURS = 1        # Strike settles hourly; Binance-style venues use 8
+# Sanity cap PER 8 HOURS: a settlement above this is treated as a bad tick and skipped (0.75 % per
+# 8 h is ~820 %/yr; real venues cap funding well below that). Scaled to the configured interval so
+# an hourly clock does not accept an 8x larger rate.
+MAX_ABS_RATE_PER_8H = 0.0075
+MAX_ABS_RATE = MAX_ABS_RATE_PER_8H          # kept for callers that import the old name
 
 
 def _f(x: Any, default: float = 0.0) -> float:
@@ -74,6 +77,11 @@ class FundingAccrual:
     history: List[Dict[str, Any]] = field(default_factory=list)
     max_history: int = 500
 
+    @property
+    def max_abs_rate(self) -> float:
+        """The bad-tick cap for ONE settlement of the configured length."""
+        return MAX_ABS_RATE_PER_8H * max(1, int(self.interval_hours)) / 8.0
+
     # ── pure logic ────────────────────────────────────────────────
     def due(self, now_ts: float) -> List[float]:
         """Settlement timestamps not yet charged. The first run charges nothing (no history)."""
@@ -91,7 +99,7 @@ class FundingAccrual:
         for p in positions:
             symbol = p.get("symbol") or ""
             rate = _f(rates.get(symbol), 0.0)
-            if rate == 0.0 or abs(rate) > MAX_ABS_RATE:
+            if rate == 0.0 or abs(rate) > self.max_abs_rate:
                 continue
             size = abs(_f(p.get("size") or p.get("positionAmt")))
             mark = _f(p.get("mark_price") or p.get("markPrice") or p.get("entry_price"))
@@ -193,7 +201,8 @@ def annualized_pct(rate_per_interval: float, interval_hours: int = DEFAULT_INTER
     return rate_per_interval * (24 / interval_hours) * 365
 
 
-def record_rates(rates: Dict[str, float], now_ts: float, path: Optional[str] = None) -> int:
+def record_rates(rates: Dict[str, float], now_ts: float, path: Optional[str] = None,
+                 interval_hours: int = DEFAULT_INTERVAL_HOURS) -> int:
     """Append one row per market to data/funding_rates.csv at every settlement.
 
     Needed to validate funding-aware sizing later: no venue publishes a long funding history for
@@ -215,7 +224,7 @@ def record_rates(rates: Dict[str, float], now_ts: float, path: Optional[str] = N
                 f.write("ts,utc,symbol,rate,annualized_pct\n")
             stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now_ts))
             for sym, rate in rows:
-                f.write(f"{now_ts:.0f},{stamp},{sym},{float(rate):.10f},{annualized_pct(float(rate)):.6f}\n")
+                f.write(f"{now_ts:.0f},{stamp},{sym},{float(rate):.10f},{annualized_pct(float(rate), interval_hours):.6f}\n")
         return len(rows)
     except Exception:  # noqa: BLE001
         return 0

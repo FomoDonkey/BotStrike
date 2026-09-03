@@ -89,9 +89,13 @@ class TradingConfig:
     # mode this also makes the risk manager start from the historical equity/peak.
     compounding_enabled: bool = True
     # Perpetual funding: charge open positions every `funding_interval_hours` at the venue rate.
-    # Measured on Binance (166 d): longs paid 1.2-3.2 %/yr of notional (4-7.5 %/yr in the last month).
+    # STRIKE SETTLES EVERY HOUR, not every 8 h (verified 2026-09-03: /stat/v1/stats/coin/history/funding
+    # returns 167 rows for days=7, and premiumIndex.nextFundingTime is always the top of the next hour,
+    # and its fundingRate is the HOURLY rate). Charging an hourly rate on an 8-hour clock undercharged
+    # the carry by ~8x, which flatters exactly the cost the multi-asset thesis depends on.
+    # Measured on Strike over 90 d: longs paid a median 8.1 %/yr of notional (XAG +15.1 %, WTI -15.7 %).
     funding_enabled: bool = True
-    funding_interval_hours: int = 8
+    funding_interval_hours: int = 1
     # Riesgo global — escalera de drawdown (research_sota_2026 §8.2, item 8):
     # -2% día / -5% semana / -10% desde el máximo histórico. Los tres se miden sobre
     # el histórico persistido en la trade DB, no sobre la sesión (audit 2026-09-02:

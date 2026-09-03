@@ -15,7 +15,13 @@ function pct(v: number, d = 4): string {
   return `${(v * 100).toFixed(d)}%`;
 }
 
-/** Funding tab: 8 h funding rate bars (mint positive / rose negative) + cumulative line, 24H / 1W / 1M. */
+/**
+ * Funding tab: one bar per venue settlement + the cumulative line, 24H / 1W / 1M.
+ *
+ * ROSE = the rate is positive = the long book PAYS; mint = negative = it is paid. This is the
+ * opposite of a price chart and matches the Account panel: the sign of the same quantity cannot
+ * mean "good" on one screen and "bad" on another (audit 2026-09-03).
+ */
 export function FundingChart({ symbol }: { symbol: string }) {
   const [range, setRange] = useState<Range>("1w");
   const fh = useEndpoint(() => api.fundingHistory(symbol, 200), POLL_MS, symbol);
@@ -56,9 +62,9 @@ export function FundingChart({ symbol }: { symbol: string }) {
     <div className="flex flex-col flex-1 min-h-0">
       <div className="flex items-center gap-4 px-3 h-10 border-b border-hairline shrink-0 overflow-x-auto scrollbar-none">
         <RangePills options={RANGES} value={range} onChange={setRange} />
-        <Stat label="Last 8h" value={last === null ? "---" : pct(last)} tone={last === null ? undefined : last >= 0 ? "mint" : "rose"} />
-        <Stat label={`Avg (${RANGES.find((r) => r.id === range)?.label})`} value={avg === null ? "---" : pct(avg)} tone={avg === null ? undefined : avg >= 0 ? "mint" : "rose"} />
-        <Stat label="Cumulative" value={cumLast === null ? "---" : pct(cumLast, 3)} tone={cumLast === null ? undefined : cumLast >= 0 ? "mint" : "rose"} />
+        <Stat label="Last settlement" value={last === null ? "---" : pct(last)} tone={last === null ? undefined : last > 0 ? "rose" : "mint"} />
+        <Stat label={`Avg (${RANGES.find((r) => r.id === range)?.label})`} value={avg === null ? "---" : pct(avg)} tone={avg === null ? undefined : avg > 0 ? "rose" : "mint"} />
+        <Stat label="Cumulative" value={cumLast === null ? "---" : pct(cumLast, 3)} tone={cumLast === null ? undefined : cumLast > 0 ? "rose" : "mint"} />
         {fh.data?.source && <span className="ml-auto text-[12px] font-medium text-text-2 whitespace-nowrap">{fh.data.source}</span>}
       </div>
       {fh.missing ? (
@@ -86,7 +92,7 @@ export function FundingChart({ symbol }: { symbol: string }) {
                   formatter={(v: unknown, name: unknown) => [pct(Number(v), name === "cum" ? 3 : 4), name === "cum" ? "Cumulative" : "Funding rate"]}
                 />
                 <Bar yAxisId="rate" dataKey="rate" isAnimationActive={false} maxBarSize={18} radius={[2, 2, 0, 0]}>
-                  {data.map((r) => <Cell key={r.ts} fill={r.rate >= 0 ? COLOR_UP : COLOR_DOWN} fillOpacity={0.75} />)}
+                  {data.map((r) => <Cell key={r.ts} fill={r.rate > 0 ? COLOR_DOWN : COLOR_UP} fillOpacity={0.75} />)}
                 </Bar>
                 {hasCum && <Line yAxisId="cum" type="monotone" dataKey="cum" stroke="#FFFFFF" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />}
               </ComposedChart>

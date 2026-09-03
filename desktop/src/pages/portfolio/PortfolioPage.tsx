@@ -127,7 +127,7 @@ export function PortfolioPage() {
         <ListRow label="Maker (paper)">{p ? formatPct(p.fees_maker, 2) : "---"}</ListRow>
       </ListSection>
       <ListSection title="Analysis">
-        <ListRow label="Longest win streak" hint="Consecutive UTC days with positive realised PnL">{p ? `${p.analysis.longest_win_streak_days} days` : "---"}</ListRow>
+        <ListRow label="Longest win streak" hint="Consecutive UTC days with positive realised PnL">{p ? `${p.analysis.longest_win_streak_days} ${p.analysis.longest_win_streak_days === 1 ? "day" : "days"}` : "---"}</ListRow>
         <ListRow label="Trading style">{p ? p.analysis.trading_style : "---"}</ListRow>
         <ListRow label="Avg trade duration">{p ? (p.analysis.avg_hold_sec > 0 ? formatDurationShort(p.analysis.avg_hold_sec) : "---") : "---"}</ListRow>
         <ListRow label="Median trade duration">{p ? (p.analysis.median_hold_sec > 0 ? formatDurationShort(p.analysis.median_hold_sec) : "---") : "---"}</ListRow>
@@ -235,7 +235,9 @@ export function PortfolioPage() {
 
 function TrendBookTable({ rows, loaded }: { rows: TrendPosition[]; loaded: boolean }) {
   const columns: Column<TrendPosition>[] = [
-    { id: "symbol", label: "Symbol", align: "l", sortValue: (r) => r.symbol, render: (r) => <span className="font-semibold">{r.symbol}</span> },
+    // The engine's own symbol is the venue key (BTCUSDT); every other table on this page shows the
+    // market name (BTC-USD). Two names for one asset on one page is a bug, not a detail.
+    { id: "symbol", label: "Symbol", align: "l", sortValue: (r) => r.ui_symbol ?? r.symbol, render: (r) => <span className="font-semibold">{r.ui_symbol ?? r.symbol}</span> },
     { id: "size", label: "Size", sortValue: (r) => r.size, render: (r) => <span className="num">{formatSize(r.size)}</span> },
     { id: "entry", label: "Entry", sortValue: (r) => r.entry_price, render: (r) => <span className="num">{formatPrice(r.entry_price)}</span> },
     { id: "mark", label: "Mark", sortValue: (r) => r.mark_price, render: (r) => <span className="num">{formatPrice(r.mark_price)}</span> },

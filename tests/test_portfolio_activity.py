@@ -181,9 +181,14 @@ def test_funding_history_endpoint_parses_and_caches(st, monkeypatch):
         return [{"symbol": bsym, "fundingTime": 1788336000000, "fundingRate": "0.00010000", "markPrice": "77120.5"},
                 {"symbol": bsym, "fundingTime": 1788307200000, "fundingRate": "-0.00005000", "markPrice": "77000.0"}]
 
+    async def no_strike(symbol, days):
+        raise RuntimeError("stats offline")
+
+    monkeypatch.setattr(bridge, "_fetch_strike_funding_history", no_strike)
     monkeypatch.setattr(bridge, "_fetch_funding_history", fake)
     client = TestClient(bridge.app)
     f = client.get("/api/market/BTC-USD/funding_history?limit=50").json()
+    assert f["source"] == "binance_fapi"                            # only as a fallback
     assert f["binance_symbol"] == "BTCUSDT" and [p["rate"] for p in f["points"]] == [-0.00005, 0.0001]
     assert f["points"][0]["ts"] == 1788307200.0 and f["cumulative"][-1]["value"] == pytest.approx(0.00005)
     client.get("/api/market/BTC-USD/funding_history?limit=50")
@@ -196,3 +201,27 @@ def test_funding_history_endpoint_parses_and_caches(st, monkeypatch):
     bridge._FUNDING_CACHE.clear()
     e = client.get("/api/market/ETH-USD/funding_history").json()
     assert e["points"] == [] and e["error"] == "RuntimeError"
+
+
+def test_funding_history_prefers_the_venue_the_book_executes_on(st, monkeypatch):
+    """Binance was asked for XAU-USD and answered with its OWN gold perp, a different market with
+    different funding; SP500-USD and WTI-USD returned nothing (audit 2026-09-03)."""
+    st.engine, st.running = _engine([]), True
+    seen = []
+
+    async def strike(symbol, days):
+        seen.append((symbol, days))
+        return [{"ts": 1788307200000, "funding_rate": 1.25e-05},
+                {"ts": 1788310800000, "funding_rate": 0.0}]          # hourly, and a real zero
+
+    async def binance(bsym, limit):
+        raise AssertionError("Binance must not be asked when the venue answers")
+
+    monkeypatch.setattr(bridge, "_fetch_strike_funding_history", strike)
+    monkeypatch.setattr(bridge, "_fetch_funding_history", binance)
+    bridge._FUNDING_CACHE.clear()
+    client = TestClient(bridge.app)
+    f = client.get("/api/market/XAU-USD/funding_history?limit=48").json()
+    assert f["source"] == "strike" and seen == [("XAU-USD", 2)]
+    assert [p["rate"] for p in f["points"]] == [1.25e-05, 0.0]
+    assert f["cumulative"][-1]["value"] == pytest.approx(1.25e-05)
