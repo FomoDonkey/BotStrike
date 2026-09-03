@@ -25,16 +25,16 @@ Script: `scripts/trend_multi_research.py` · data: `scripts/download_daily.py` (
 | Execution | signal at close t → **open of t+1** (shift 2 in returns), 8 bps/side |
 | Funding | 3 %/yr crypto, 4 %/yr TradFi on long exposure (crypto figure measured on Binance) |
 | Universe | 14 markets with ≥ 365 d of history: 9 crypto + XAU, XAG, SP500, NAS100, WTI |
-| Selection | monthly, one market per asset class first, then longest history; correlation cap 0.85 over 120 d; **never ranked by past returns** |
+| Selection | the ENGINE's `select_universe`: monthly, hysteresis on current members, one market per asset class, then longest history; correlation cap 0.85 over 120 d; venue liquidity floor; **never ranked by past returns** |
 | N held | 6 |
 | Span | 2016-09-02 → 2026-09-03 (3 654 days) |
 | Signal source | Yahoo daily (Strike's own klines start 2026-03 and are far too short) |
 | Execution source | Strike marks (paper), never Yahoo |
 
 **Single stocks are excluded by default.** Strike lists today's winners (NVDA, MU, COIN, SNDK…), so
-including them imports hindsight selection. Measured both ways: with stocks Sharpe 1.76 / DD 6.9 %,
-without stocks Sharpe 1.81 / DD 8.8 %. **The result does not depend on them**, so the shipped
-configuration is the one without.
+including them imports hindsight selection. Measured both ways with the research rule: with stocks
+Sharpe 1.76 / DD 6.9 %, without stocks 1.81 / 8.8 %. **The result does not depend on them**, so the
+shipped configuration is the one without — and most of them fail the venue liquidity floor anyway.
 
 ## 2. Headline
 
@@ -45,37 +45,40 @@ configuration is the one without.
 | Crypto only, N=3 (current) | 1.37 | 13.0 % | 9.2 % | 11.9 % | +1.29 | 425 |
 | Multi-asset incl. single stocks | 1.76 | 9.6 % | 5.3 % | 6.9 % | +0.67 | 948 |
 
-Funding cost over the sample: 11.8 points of equity (≈ 1.1 %/yr). Turnover 10.8×/yr.
+Funding cost over the sample: 10.6 points of equity (≈ 1.0 %/yr). Turnover 9.6×/yr.
 
-Markets actually held: BTC and XAG and NAS100 and WTI (3 260 days each), XAU (2 683), ADA (2 533),
-with BNB, SP500 and ZEC entering briefly.
+Markets actually held (engine rule): BTC, XAG, NAS100 and WTI (3 260 days each), ZEC (2 347),
+XAU (2 044), ADA (1 218), with BNB (425) and SP500 (151) entering briefly.
 
 ## 3. Robustness (every line is a recorded trial)
 
-| Stress | Sharpe |
-|---|---|
-| 8 bps/side (base) | 1.81 |
-| 15 bps/side | 1.65 |
-| 25 bps/side | 1.42 |
-| 50 bps/side | 0.85 |
-| funding off | 1.99 |
-| funding ×2 | 1.63 |
-| funding ×3 | 1.46 |
-| target vol 0.10 / 0.30 | 1.81 / 1.80 |
-| vol window 45 / 135 | 1.90 / 1.84 |
-| lookbacks ×0.5 / ×1.5 | 1.95 / 1.71 |
-| N = 3 / 8 / 10 | 1.52 / 2.05 / 2.09 |
-| correlation cap 0.6 / off | 1.84 / 1.80 |
-| long/short | 1.44 |
-| 2022+ / 2024+ | 1.71 / 2.20 |
-| first half / second half | 1.88 / 1.67 |
+| Stress | Sharpe | maxDD |
+|---|---|---|
+| 8 bps/side (base) | 1.76 | 7.8 % |
+| 15 bps/side | 1.59 | 9.3 % |
+| 25 bps/side | 1.34 | 11.3 % |
+| 50 bps/side | 0.72 | 16.2 % |
+| funding off | 1.95 | 7.4 % |
+| funding ×2 | 1.58 | 8.8 % |
+| funding ×3 | 1.39 | 9.8 % |
+| target vol 0.10 / 0.30 | 1.78 / 1.77 | 4.2 % / 11.3 % |
+| vol window 45 / 135 | 1.86 / 1.78 | 7.8 % / 8.0 % |
+| lookbacks ×0.5 / ×1.5 | 1.89 / 1.70 | 8.0 % / 8.2 % |
+| N = 3 / 8 / 10 | 1.44 / 1.81 / 1.83 | 9.1 % / 7.9 % / 7.9 % |
+| correlation cap 0.6 / off | 1.91 / 1.58 | 8.2 % / 7.8 % |
+| long/short | 1.49 | 6.5 % |
+| 2022+ / 2024+ | 1.80 / 2.60 | — |
+| first half / second half | 1.87 / 1.66 | — |
 
-Look-ahead audit: shift 1 (forbidden, uses the signal too early) 5.49 → shift 2 (spec) 1.93 → shift
-3 (one extra day) 1.68. Stability under an EXTRA delay is the signature of a real edge; a timing
+At 50 bps/side the drawdown breaches the 15 % gate, so that column is the honest limit of the
+configuration: it tolerates 25 bps/side comfortably and dies somewhere before 50.
+
+Look-ahead audit: shift 1 (forbidden, uses the signal too early) 5.52 → shift 2 (spec) 1.95 → shift
+3 (one extra day) 1.74. Stability under an EXTRA delay is the signature of a real edge; a timing
 artefact collapses.
 
-Contribution by class (gross points over the sample): crypto 35.1, metals 44.9, indices 24.5,
-energy 14.4. No single class carries the result.
+Contribution by class (gross points over the sample): crypto 46.0, metals 35.9, indices 24.7,
+energy 14.3. No single class carries the result.
 
 ## 4. GO/NO-GO — 11/11
 
@@ -84,17 +87,17 @@ validated crypto study, so the two numbers are comparable).
 
 | Check | Result |
 |---|---|
-| Sharpe net ≥ 0.8 | PASS (1.81) |
-| CAGR > 0 | PASS (10.9 %) |
-| maxDD < 15 % | PASS (8.8 %) |
-| maxDD lower than crypto-only | PASS (8.8 % vs 11.9 %) |
-| Sharpe ≥ crypto-only | PASS (1.81 vs 1.37) |
-| skew > −0.5 | PASS (+0.35) |
+| Sharpe net ≥ 0.8 | PASS (1.76) |
+| CAGR > 0 | PASS (10.2 %) |
+| maxDD < 15 % | PASS (7.8 %) |
+| maxDD lower than crypto-only | PASS (7.8 % vs 11.9 %) |
+| Sharpe ≥ crypto-only | PASS (1.76 vs 1.37) |
+| skew > −0.5 | PASS (+0.43) |
 | DSR ≥ 0.95 | PASS (1.00) |
-| survives 25 bps/side | PASS (1.42) |
-| survives funding ×3 | PASS (1.46) |
+| survives 25 bps/side | PASS (1.34) |
+| survives funding ×3 | PASS (1.39) |
 | no look-ahead artefact | PASS |
-| 2022+ Sharpe ≥ 0.5 | PASS (1.71) |
+| 2022+ Sharpe ≥ 0.5 | PASS (1.80) |
 
 ## 5. Honest limitations
 
@@ -107,11 +110,8 @@ validated crypto study, so the two numbers are comparable).
    NAS100 4.0 k, GOOGL 0. The engine therefore requires a market to show at least 50× the notional
    of one position in 24 h (hard minimum 5 000 $), so the universe shrinks automatically as the
    account grows: at 1 000 $ of equity NAS100 is already excluded.
-4. **Original note on liquidity.** Measured 24 h quote volume: BTC 1.09 M $, ADA 658 k,
-   ETH 388 k, SOL 360 k, XAU 199 k, WTI 151 k, SP500 80 k, and single stocks as low as 94 $ (GOOGL).
-   The live universe must carry a hard liquidity floor and cap position size against depth.
-4. **Selection rule is deterministic, not liquidity-ranked.** It never uses past returns (no
-   look-ahead) but it does fix the basket early; the live version should rank by Strike liquidity.
+4. **Selection is deterministic, never return-ranked.** No look-ahead, but it does fix the basket
+   early; only liquidity and correlation can evict a market.
 5. **10 years is one regime sample** for TradFi (a bull decade for indices) and two cycles for crypto.
 
 ## 6. What ships
