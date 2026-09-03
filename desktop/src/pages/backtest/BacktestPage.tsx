@@ -12,9 +12,12 @@ import { getBridgeUrl, useBridgeConfig } from "@/lib/config";
 import { useExchangeStore } from "@/stores/exchangeStore";
 import { INPUT_CLS } from "@/components/settings/FieldInput";
 
+// Both runnable strategies were FROZEN by the research (MR: no gross edge over 2,284 trades,
+// t -5 to -8.7; Fibonacci: no evidence). The dropdown said nothing, so the page invited a run of a
+// strategy the bot will never trade — say the verdict here as the Strategies page does.
 const AVAILABLE_STRATEGIES = [
-  { value: "MEAN_REVERSION", label: "Mean Reversion", active: true },
-  { value: "FIBONACCI_RETRACEMENT", label: "Fibonacci Retracement", active: true },
+  { value: "MEAN_REVERSION", label: "Mean Reversion (research: no edge)", active: true },
+  { value: "FIBONACCI_RETRACEMENT", label: "Fibonacci Retracement (research: frozen)", active: true },
   { value: "ORDER_FLOW_MOMENTUM", label: "Order Flow Momentum (archived)", active: false },
   { value: "TREND_FOLLOWING", label: "Trend Following (archived)", active: false },
   { value: "MARKET_MAKING", label: "Market Making (archived)", active: false },
@@ -23,7 +26,7 @@ const AVAILABLE_STRATEGIES = [
 /** Backtest (spec §3.5): restyle only — no logic changes. */
 export function BacktestPage() {
   const [symbol, setSymbol] = useState("BTC-USD");
-  const [strategy, setStrategy] = useState("MEAN_REVERSION");
+  const [strategy, setStrategy] = useState("MEAN_REVERSION");   // the only 1m engine the backtester runs
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -90,7 +93,7 @@ export function BacktestPage() {
 
         <Panel className="lg:col-span-2 flex flex-col">
           <PanelHeader title="Results" />
-          {!result && !running && <EmptyState sub="Runs the strategy over the local 1m history of the symbol">Configure and run a backtest to see results</EmptyState>}
+          {!result && !running && <EmptyState sub="Runs the strategy over the local 1m history of the symbol. The daily trend book is validated in the research, not here.">Configure and run a backtest to see results</EmptyState>}
           {running && <EmptyState sub={`${elapsed}s`}>Running backtest…</EmptyState>}
           {result && (
             <div className="p-3 space-y-3">

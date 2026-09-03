@@ -204,7 +204,8 @@ def evaluate(now: datetime, health: Optional[dict], trend: Optional[dict], risk:
             alert("restart_loop", f"El bridge se ha reiniciado {journal_15['restarts']} veces en {WINDOW_MIN} min"
                                   + (" (durante un despliegue)" if in_maint else ""))
     if in_maint:
-        rep.facts["deploy"] = f"{maintenance.get('commit', '?')} hace {age:.0f} min"
+        # Alerts are Spanish because they go to Edgar's Telegram; facts are rendered in the English UI.
+        rep.facts["deploy"] = f"{maintenance.get('commit', '?')} · {age:.0f} min ago"
     if journal_60.get("available") and journal_60.get("regime_changed", 0) > MAX_REGIME_FLIPS_PER_HOUR:
         alert("regime_flood", f"{journal_60['regime_changed']} cambios de régimen en la última hora "
                               f"(umbral {MAX_REGIME_FLIPS_PER_HOUR})")

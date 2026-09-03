@@ -16,13 +16,17 @@ import { useNow } from "@/hooks/useNow";
 import { useBotControl, type BotAction } from "@/components/layout/useBotControl";
 import { api } from "@/lib/api";
 import { EXCHANGE_LABELS } from "@/lib/constants";
-import { cn, formatAge, formatDuration, formatLocalDateTime, formatMoney, formatSignedMoney } from "@/lib/utils";
+import { cn, formatAge, formatDateTime, formatDuration, formatLocalDateTime, formatMoney, formatSignedMoney } from "@/lib/utils";
 
 /** System (spec §3.8): health, ops monitor, feed status, version, uptime, Telegram, recent logs. */
 /** Never print "[object Object]": the monitor can add nested facts at any time (2026-09-03). */
 function factValue(v: unknown): string {
   if (v === null || v === undefined || v === "") return "---";
   if (typeof v === "boolean") return v ? "yes" : "no";
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) {
+    const d = new Date(v.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(v) ? v : `${v}Z`);
+    if (!Number.isNaN(d.getTime())) return formatDateTime(d.getTime());   // one date format on the page
+  }
   if (typeof v === "object") {
     const entries = Object.entries(v as Record<string, unknown>);
     return entries.length ? entries.map(([k, x]) => `${k.replace(/_/g, " ")} ${String(x)}`).join(" · ") : "none";
