@@ -73,10 +73,13 @@ GROUPS: List[Dict[str, Any]] = [
            help="Size positions on the all-time equity (initial capital + realized PnL) so gains are reinvested. "
                 "Off = always size on the fixed initial capital."),
         _t("funding_enabled", "Charge perpetual funding", "bool",
-           help="Every 8 h, open positions pay (or receive) the venue funding rate on their notional. Measured "
-                "on Binance over 166 days: longs paid 1.2-3.2 %/yr of notional. Off = paper ignores funding."),
+           help="At every settlement, open positions pay (or receive) the venue funding rate on their notional. "
+                "Measured on Strike over 90 days: longs paid a median 8.1 %/yr of notional, from XAG +15.1 % to "
+                "WTI -15.7 %, where the longs are paid. Off = paper ignores funding."),
         _t("funding_interval_hours", "Funding interval (hours)", "int", min=1, max=24, step=1, unit="h",
-           help="Settlement period of the venue. Binance and Strike both use 8 h."),
+           help="Settlement period of the venue. STRIKE SETTLES EVERY HOUR (verified 2026-09-03: its funding "
+                "history returns 167 rows for 7 days and the next settlement is always the top of the hour). "
+                "Binance-style venues use 8 h. An hourly rate charged on an 8 h clock undercharges the carry 8x."),
         _t("max_drawdown_pct", "Max drawdown from peak", "percent", min=0.01, max=0.5, step=0.005,
            help="Halt and flatten when equity falls this far below its all-time peak (persisted across restarts)."),
         _t("max_daily_loss_pct", "Max daily loss", "percent", min=0.005, max=0.5, step=0.005,
@@ -88,7 +91,9 @@ GROUPS: List[Dict[str, Any]] = [
         _t("max_total_exposure_pct", "Max total exposure", "percent", min=0.05, max=1.0, step=0.05,
            help="Cap on the sum of open notionals as a share of equity × max leverage."),
         _t("max_leverage", "Max leverage", "int", min=1, max=20, step=1, unit="x"),
-        _t("max_open_positions", "Max open positions", "int", min=1, max=20, step=1),
+        _t("max_open_positions", "Max open positions", "int", min=1, max=20, step=1,
+           help="Cap for the intraday strategies. The daily trend book is sized by its own 'n assets' "
+                "instead, so it can hold more markets than this number."),
         _t("close_positions_on_shutdown", "Flatten on shutdown", "bool",
            help="Close every open position before the engine stops (recommended)."),
         _t("vol_target_annual", "Portfolio vol target", "percent", min=0.05, max=0.6, step=0.01, restart=True),
@@ -134,11 +139,15 @@ GROUPS: List[Dict[str, Any]] = [
         _t("trend_execution_hour_utc", "Execution hour (UTC)", "int", min=0, max=23, step=1, unit="h"),
         _t("trend_execution_delay_min", "Execution delay", "int", min=1, max=600, step=1, unit="min"),
         _t("trend_min_order_usd", "Min order", "number", min=1, max=10_000, step=1, unit="$",
-           help="Rebalances smaller than this notional are skipped (venue minimums: Binance 5-100 $, Hyperliquid 10 $)."),
+           help="Rebalances smaller than this notional are skipped (venue minimums: Strike and Hyperliquid 10 $, "
+                "Binance 5-100 $)."),
         _t("trend_min_listing_days", "Min listing age", "int", min=30, max=2000, step=1, unit="days"),
         _t("trend_liq_enter_usd", "Liquidity to enter", "number", min=0, max=1e10, step=100_000, unit="$/day"),
         _t("trend_liq_exit_usd", "Liquidity to stay", "number", min=0, max=1e10, step=100_000, unit="$/day"),
-        _t("trend_pool", "Candidate pool", "list", help="Binance spot symbols, comma-separated."),
+        _t("trend_pool", "Candidate pool", "list",
+           help="Comma-separated markets the daily run may pick from: Binance spot symbols (BTCUSDT) and/or "
+                "Strike markets (XAU-USD, SP500-USD, WTI-USD). A pool spanning more than one asset class "
+                "switches the selection to class diversity + longest history + correlation cap."),
     ]},
     {"id": "divergence", "label": "Divergence", "fields": [
         _t("div_timeframe_min", "Bar timeframe", "select", options=[
@@ -176,12 +185,20 @@ GROUPS: List[Dict[str, Any]] = [
     ]},
     {"id": "execution", "label": "Execution", "fields": [
         _t("exchange_venue", "Venue", "select", restart=True,
-           options=[{"value": "binance", "label": "Binance Futures"}, {"value": "hyperliquid", "label": "Hyperliquid"}]),
+           help="Where orders execute. Strike is the target venue (config/settings.py knows it as 'strike'); "
+                "the intraday price feed stays on Binance either way.",
+           options=[{"value": "binance", "label": "Binance Futures"}, {"value": "strike", "label": "Strike Finance"},
+                    {"value": "hyperliquid", "label": "Hyperliquid"}]),
         _t("maker_fee", "Maker fee", "percent", min=0, max=0.01, step=0.0001),
         _t("taker_fee", "Taker fee", "percent", min=0, max=0.01, step=0.0001),
         _t("slippage_bps", "Slippage model", "number", min=0, max=50, step=0.5, unit="bps"),
-        _t("funding_rate_warn", "Funding warn", "number", min=0, max=0.01, step=0.00005, unit="/8h"),
-        _t("funding_rate_block", "Funding block", "number", min=0, max=0.01, step=0.00005, unit="/8h"),
+        # Compared against the SIGNAL's market snapshot, which quotes an 8 h rate, so the unit stays
+        # 8-hourly even though the accrual clock follows the venue (1 h on Strike).
+        _t("funding_rate_warn", "Funding warn", "number", min=0, max=0.01, step=0.00005, unit="/8h",
+           help="Reduce size when a new intraday entry would pay at least this 8 h funding rate. "
+                "Does not apply to the daily trend book, which executes directly."),
+        _t("funding_rate_block", "Funding block", "number", min=0, max=0.01, step=0.00005, unit="/8h",
+           help="Refuse a new intraday entry that would pay at least this 8 h funding rate."),
         _t("microstructure_enabled", "Microstructure analytics", "bool",
            help="VPIN / Hawkes / Kyle λ / order-book imbalance. Zero measured predictive power (audit R2); "
                 "costs ~16% CPU. Off unless a strategy needs it."),

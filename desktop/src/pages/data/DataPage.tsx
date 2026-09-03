@@ -32,7 +32,6 @@ export function DataPage() {
   const columns: Column<DatasetInfo>[] = [
     { id: "dataset", label: "Dataset", align: "l", sortValue: (d) => d.symbol, render: (d) => <span className="inline-flex items-center gap-2"><span className="font-semibold">{d.symbol}</span><Chip tone="neutral" size="xs" uppercase={false}>{d.type ?? d.data_type ?? "---"}{d.timeframe ? ` ${d.timeframe}` : ""}</Chip></span> },
     { id: "rows", label: "Rows", sortValue: (d) => d.records ?? d.total_rows ?? 0, render: (d) => <span className="num">{formatInt(d.records ?? d.total_rows ?? 0)}</span> },
-    { id: "files", label: "Files", sortValue: (d) => d.file_count ?? 0, render: (d) => <span className="num">{d.file_count ?? "---"}</span> },
     { id: "size", label: "Size", sortValue: (d) => d.size_mb ?? 0, render: (d) => <span className="num">{typeof d.size_mb === "number" ? `${d.size_mb.toFixed(2)} MB` : "---"}</span> },
     { id: "range", label: "Range", align: "l", render: (d) => d.date_range || (d.date_start ? `${d.date_start} → ${d.date_end ?? "…"}` : "---") },
   ];
