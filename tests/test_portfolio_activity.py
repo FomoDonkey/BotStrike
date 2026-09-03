@@ -1,4 +1,5 @@
 """v2.16 backend for the Strike-style UI: portfolio analytics, activity feed, funding history, ops, CSV."""
+import asyncio
 import json
 import time
 from types import SimpleNamespace
@@ -240,3 +241,31 @@ def test_the_spa_entry_document_is_never_cached_but_hashed_assets_are():
     assert m, "the entry document must reference a hashed bundle"
     a = client.get(f"/assets/{m.group(1)}")
     assert a.status_code == 200 and "immutable" in a.headers.get("cache-control", "")
+
+
+def test_every_open_market_reaches_the_socket_and_closures_are_cleared(monkeypatch):
+    """Read off the live socket on 2026-09-03: only 4 of 6 markets were ever broadcast, because the
+    feed symbols were skipped on the assumption that the intraday tick loop streams them — it does
+    not when no intraday strategy runs. The Portfolio page reads the socket, so it showed 4 of 6."""
+    sent = []
+
+    class _Ch:
+        async def broadcast(self, channel, msg):
+            sent.append((msg["symbol"], len(msg["data"])))
+
+    rows = [{"symbol": s} for s in ("BTC-USD", "SOL-USD", "SP500-USD", "WTI-USD")]
+    monkeypatch.setattr(bridge, "_paper_position_rows", lambda eng: rows)
+    monkeypatch.setattr(bridge.state, "engine", type("E", (), {"trend_engine": object()})())
+    monkeypatch.setattr(bridge.state, "channels", _Ch())
+    bridge._trend_symbols_sent.clear()
+
+    asyncio.get_event_loop_policy().new_event_loop().run_until_complete(bridge._broadcast_trend_positions())
+    assert sorted(sent) == [("BTC-USD", 1), ("SOL-USD", 1), ("SP500-USD", 1), ("WTI-USD", 1)]
+    assert bridge._trend_symbols_sent == {"BTC-USD", "SOL-USD", "SP500-USD", "WTI-USD"}
+
+    # WTI closes: the socket must say so, or it stays on screen until a reload
+    sent.clear()
+    rows.pop()
+    asyncio.get_event_loop_policy().new_event_loop().run_until_complete(bridge._broadcast_trend_positions())
+    assert ("WTI-USD", 0) in sent
+    assert "WTI-USD" not in bridge._trend_symbols_sent

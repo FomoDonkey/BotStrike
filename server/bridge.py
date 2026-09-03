@@ -1082,22 +1082,32 @@ def _paper_position_rows(engine) -> list:
 
 
 async def _broadcast_trend_positions() -> None:
-    """TREND_DAILY positions on symbols the intraday loop does not stream (BNB-USD…):
-    broadcast them here, and clear the ones that closed."""
+    """Push every open position over the trading channel, and clear the ones that closed.
+
+    Two bugs lived here (found 2026-09-03 by reading the socket in the browser: only 4 of 6 markets
+    ever arrived, and the Portfolio page, which reads the socket rather than REST, showed 4):
+
+    * symbols in the intraday feed were SKIPPED on the assumption that the tick loop streams them.
+      It does not when no intraday strategy is running, so BTC-USD and SOL-USD were never sent.
+      Every symbol is broadcast here now, with the same rows the tick loop would send
+      (`_paper_position_rows` = paper positions + the trend book), so the two writers agree.
+    * `_trend_symbols_sent` was cleared instead of being set to what had just been sent, so it was
+      always empty and the "this symbol closed" broadcast never fired: a closed position stayed on
+      screen until a reload.
+    """
     engine = state.engine
     trend = getattr(engine, "trend_engine", None) if engine else None
     if trend is None:
         return
-    configured = set(engine.settings.symbol_names)
     by_symbol: Dict[str, list] = {}
-    for row in _trend_position_rows(engine):
-        if row["symbol"] not in configured:
-            by_symbol.setdefault(row["symbol"], []).append(row)
+    for row in _paper_position_rows(engine):
+        by_symbol.setdefault(row["symbol"], []).append(row)
     for sym, rows in by_symbol.items():
         await state.channels.broadcast("trading", {"type": "positions", "symbol": sym, "data": rows})
-    for sym in list(_trend_symbols_sent - set(by_symbol)):
+    for sym in sorted(_trend_symbols_sent - set(by_symbol)):
         await state.channels.broadcast("trading", {"type": "positions", "symbol": sym, "data": []})
     _trend_symbols_sent.clear()
+    _trend_symbols_sent.update(by_symbol)
     _trend_symbols_sent.update(by_symbol)
 
 
