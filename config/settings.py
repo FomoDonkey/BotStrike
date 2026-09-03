@@ -175,6 +175,13 @@ class TradingConfig:
     trend_min_listing_days: int = 365
     trend_liq_enter_usd: float = 2_000_000.0     # 30d median dollar volume to enter the universe
     trend_liq_exit_usd: float = 1_000_000.0      # ... and to stay
+    # Mixed (multi-asset) pools: dollar volume is NOT comparable across asset classes, so the
+    # universe is picked by class diversity + history with a correlation cap, and liquidity is
+    # enforced with the VENUE's own 24 h volume (Strike: BTC 1.1M$, XAU 199k$, SP500 80k$/24h).
+    trend_corr_window: int = 120
+    trend_corr_cap: float = 0.85
+    trend_liq_venue_usd: float = 5_000.0        # hard minimum 24 h volume at the venue
+    trend_liq_venue_multiple: float = 50.0      # and >= 50x the notional of one position
     trend_pool: str = ("BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,LTCUSDT,TRXUSDT,"
                        "ETCUSDT,EOSUSDT,XLMUSDT,NEOUSDT,IOTAUSDT,ZECUSDT,DASHUSDT,SOLUSDT,"
                        "AVAXUSDT,DOTUSDT,LINKUSDT,ATOMUSDT")

@@ -4,9 +4,15 @@
 (crypto + gold, silver, S&P 500, Nasdaq 100, WTI) beat running it on crypto alone, after costs and
 after funding?
 
-**Answer. YES — 11/11 GO.** Sharpe 1.81 net vs 1.37 crypto-only, drawdown 8.8 % vs 11.9 %, CAGR
-10.9 % vs 13.0 %. Same model, same code path, no parameter tuning: the improvement comes from
+**Answer. YES — 11/11 GO.** Sharpe 1.76 net vs 1.37 crypto-only, drawdown 7.8 % vs 11.9 %, CAGR
+10.2 % vs 13.0 %. Same model, same code path, no parameter tuning: the improvement comes from
 diversification, which is exactly what 40 years of managed-futures evidence predicts.
+
+**Re-run 2026-09-03 (final).** The first pass used a selection rule written inside the research
+script. It has been replaced by a direct call to the ENGINE's own `select_universe`, so what is
+validated here is literally what the bot executes; the numbers above are that re-run (the
+research-only rule gave 1.81 / 8.8 %). The engine's rule adds monthly hysteresis (a market already
+held is kept) and the venue liquidity floor.
 
 Script: `scripts/trend_multi_research.py` · data: `scripts/download_daily.py` (Yahoo daily, 10 years,
 23 markets) · funding: measured on Binance (166 days) and applied as a cost.
@@ -34,7 +40,8 @@ configuration is the one without.
 
 | Configuration | Sharpe | CAGR | vol | maxDD | skew | trades |
 |---|---|---|---|---|---|---|
-| **Multi-asset (shipped)** | **1.81** | **10.9 %** | 5.8 % | **8.8 %** | +0.35 | 874 |
+| **Multi-asset (shipped, engine rule)** | **1.76** | **10.2 %** | 5.6 % | **7.8 %** | +0.43 | 878 |
+| Multi-asset (research-only rule) | 1.81 | 10.9 % | 5.8 % | 8.8 % | +0.35 | 874 |
 | Crypto only, N=3 (current) | 1.37 | 13.0 % | 9.2 % | 11.9 % | +1.29 | 425 |
 | Multi-asset incl. single stocks | 1.76 | 9.6 % | 5.3 % | 6.9 % | +0.67 | 948 |
 
@@ -95,7 +102,12 @@ validated crypto study, so the two numbers are comparable).
    Strike's perp can deviate. The paper stage must track model↔Strike divergence per market.
 2. **TradFi calendars.** Weekends are held with zero return in the model; a Strike perp keeps
    trading. This is conservative for the signal but not for the risk: a weekend gap is real.
-3. **Strike liquidity is thin in TradFi.** Measured 24 h quote volume: BTC 1.09 M $, ADA 658 k,
+3. **Strike liquidity is thin in TradFi — measured, and now enforced.** 24 h quote volume on
+   2026-09-03: BTC 1.45 M$, ETH 261 k, ZEC 217 k, XAU 197 k, WTI 65 k, SP500 40 k, XAG 19.5 k,
+   NAS100 4.0 k, GOOGL 0. The engine therefore requires a market to show at least 50× the notional
+   of one position in 24 h (hard minimum 5 000 $), so the universe shrinks automatically as the
+   account grows: at 1 000 $ of equity NAS100 is already excluded.
+4. **Original note on liquidity.** Measured 24 h quote volume: BTC 1.09 M $, ADA 658 k,
    ETH 388 k, SOL 360 k, XAU 199 k, WTI 151 k, SP500 80 k, and single stocks as low as 94 $ (GOOGL).
    The live universe must carry a hard liquidity floor and cap position size against depth.
 4. **Selection rule is deterministic, not liquidity-ranked.** It never uses past returns (no

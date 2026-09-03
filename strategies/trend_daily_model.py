@@ -28,6 +28,12 @@ class TrendParams:
     min_listing_days: int = 365
     liq_enter_usd: float = 2_000_000.0
     liq_exit_usd: float = 1_000_000.0
+    # mixed-pool selection (multi-asset): correlation cap and the VENUE liquidity floor
+    corr_window: int = 120
+    corr_cap: float = 0.85
+    liq_exit_usd_venue: float = 5_000.0      # hard minimum 24 h volume at the venue
+    liq_venue_multiple: float = 50.0         # ... and at least 50x one position's notional
+    position_notional: float = 0.0           # set per run from equity/leverage/n_assets
 
     @classmethod
     def from_config(cls, tc) -> "TrendParams":
@@ -42,6 +48,10 @@ class TrendParams:
             min_listing_days=int(tc.trend_min_listing_days),
             liq_enter_usd=float(tc.trend_liq_enter_usd),
             liq_exit_usd=float(tc.trend_liq_exit_usd),
+            corr_window=int(getattr(tc, "trend_corr_window", 120) or 120),
+            corr_cap=float(getattr(tc, "trend_corr_cap", 0.85) or 0.85),
+            liq_exit_usd_venue=float(getattr(tc, "trend_liq_venue_usd", 5_000.0) or 0.0),
+            liq_venue_multiple=float(getattr(tc, "trend_liq_venue_multiple", 50.0) or 0.0),
         )
 
     @property
@@ -92,28 +102,116 @@ def asset_weight(close: pd.Series, p: TrendParams) -> pd.Series:
     return w.fillna(0.0)
 
 
+# Asset class of each market, for the diversified selection rule. Anything not listed (every
+# BINANCE USDT pair) is crypto.
+ASSET_CLASS: Dict[str, str] = {
+    "XAU-USD": "metal", "XAG-USD": "metal", "WTI-USD": "energy",
+    "SP500-USD": "index", "NAS100-USD": "index",
+    "NVDA-USD": "equity", "TSLA-USD": "equity", "GOOGL-USD": "equity", "COIN-USD": "equity",
+    "MU-USD": "equity", "SNDK-USD": "equity", "CRCL-USD": "equity", "AAOI-USD": "equity",
+    "SKHYNIX-USD": "equity",
+}
+
+
+def asset_class(symbol: str) -> str:
+    return ASSET_CLASS.get(symbol.upper(), "crypto")
+
+
 def select_universe(data: Dict[str, pd.DataFrame], as_of: pd.Timestamp, p: TrendParams,
-                    current: Optional[List[str]] = None) -> List[str]:
-    """Point-in-time universe at `as_of`: top-N by 30-day median dollar volume with
-    liquidity hysteresis (enter >= liq_enter, stay >= liq_exit) and a minimum listing
-    age. Uses only rows <= as_of."""
+                    current: Optional[List[str]] = None,
+                    venue_volume: Optional[Dict[str, float]] = None) -> List[str]:
+    """Point-in-time universe at `as_of`. Uses only rows <= as_of.
+
+    Two rules, chosen by whether the pool is single-class or mixed:
+
+    * **Crypto-only pool** (the original, validated in research §11.2): top-N by 30-day median
+      dollar volume with liquidity hysteresis.
+    * **Mixed pool** (validated 2026-09-03, tasks/research_trend_multi_2026-09-03.md): rank one
+      market per asset class first and then by longest history, applying a correlation cap. Dollar
+      volume canNOT be compared across classes — an index reports the summed share volume of its
+      constituents (NAS100 measured 227e12 on Yahoo) while a silver future reports contracts
+      (1 590), so a volume ranking would always pick the indices and always drop the metals.
+      Liquidity is instead enforced with the VENUE's own 24 h volume when the caller provides it.
+
+    `venue_volume` is {symbol: 24 h quote volume at the venue}; markets below `liq_exit_usd` there
+    are dropped. Without it (research, tests) only history and correlation apply.
+    """
     current = list(current or [])
-    scores: Dict[str, float] = {}
+    eligible: List[str] = []
+    hist: Dict[str, pd.DataFrame] = {}
     for sym, df in data.items():
         d = df[df.index <= as_of]
         if len(d) < 30 or (as_of - d.index[0]).days < p.min_listing_days:
             continue
-        med = float(d["quote_volume"].tail(30).median())
-        if not np.isnan(med):
-            scores[sym] = med
-    eligible = [s for s, v in scores.items() if v >= p.liq_enter_usd]
-    ranked = sorted(eligible, key=lambda s: scores[s], reverse=True)
-    keep = [s for s in current if s in scores and scores[s] >= p.liq_exit_usd and s in eligible]
-    for s in ranked:
+        hist[sym] = d
+        eligible.append(sym)
+    if not eligible:
+        return []
+
+    mixed = len({asset_class(s) for s in eligible}) > 1
+    if not mixed:
+        scores = {}
+        for sym in eligible:
+            med = float(hist[sym]["quote_volume"].tail(30).median())
+            if not np.isnan(med):
+                scores[sym] = med
+        ok = [s for s, v in scores.items() if v >= p.liq_enter_usd]
+        ranked = sorted(ok, key=lambda s: scores[s], reverse=True)
+        keep = [s for s in current if s in scores and scores[s] >= p.liq_exit_usd and s in ok]
+        for s in ranked:
+            if len(keep) >= p.n_assets:
+                break
+            if s not in keep:
+                keep.append(s)
+        return keep[:p.n_assets]
+
+    # ── mixed pool: venue liquidity floor, then class diversity, then correlation cap ──
+    if venue_volume:
+        # The floor scales with what we would actually trade: a market must show at least
+        # `liq_venue_multiple` times the notional of one position in 24 h. A 1 000 $ account can
+        # use a market that a 100 000 $ account must skip, and thin markets drop out on their own
+        # as the account grows. `liq_exit_usd_venue` is the hard minimum below which we never trade.
+        per_position = float(getattr(p, "position_notional", 0.0) or 0.0)
+        floor = max(float(getattr(p, "liq_exit_usd_venue", 0.0) or 0.0),
+                    float(getattr(p, "liq_venue_multiple", 0.0) or 0.0) * per_position)
+        eligible = [s for s in eligible if float(venue_volume.get(s, 0.0)) >= floor]
+        if not eligible:
+            return []
+
+    first_seen = {s: hist[s].index[0] for s in eligible}
+    by_class: Dict[str, List[str]] = {}
+    for s in eligible:
+        by_class.setdefault(asset_class(s), []).append(s)
+    pools = {k: sorted(v, key=lambda x: first_seen[x]) for k, v in by_class.items()}
+    order: List[str] = []
+    while any(pools.values()):
+        for k in sorted(pools):
+            if pools[k]:
+                order.append(pools[k].pop(0))
+
+    window = int(getattr(p, "corr_window", 120) or 120)
+    cap = float(getattr(p, "corr_cap", 0.85) or 0.85)
+    rets = {s: hist[s]["close"].pct_change(fill_method=None).tail(window) for s in eligible}
+
+    def too_correlated(a: str, b: str) -> bool:
+        ra, rb = rets.get(a), rets.get(b)
+        if ra is None or rb is None:
+            return False
+        joined = pd.concat([ra, rb], axis=1).dropna()
+        if len(joined) < 20:
+            return False
+        c = joined.iloc[:, 0].corr(joined.iloc[:, 1])
+        return bool(c is not None and not np.isnan(c) and abs(c) > cap)
+
+    keep: List[str] = []
+    for s in [x for x in current if x in eligible] + [x for x in order if x not in current]:
         if len(keep) >= p.n_assets:
             break
-        if s not in keep:
-            keep.append(s)
+        if s in keep:
+            continue
+        if any(too_correlated(s, t) for t in keep):
+            continue
+        keep.append(s)
     return keep[:p.n_assets]
 
 

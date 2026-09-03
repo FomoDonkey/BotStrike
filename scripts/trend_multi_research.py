@@ -32,6 +32,7 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scripts.download_daily import OUT_DIR, load_daily  # noqa: E402
+from strategies.trend_daily_model import TrendParams, select_universe  # noqa: E402
 
 # ── Specification (identical to the validated crypto study unless stated) ──
 LOOKBACKS = [5, 10, 20, 30, 60, 90]
@@ -147,52 +148,27 @@ def asset_weight(close: pd.Series, lookbacks: List[int], target_vol: float, vol_
 
 def monthly_universe(data: Dict[str, pd.DataFrame], dates: pd.DatetimeIndex, n_assets: int,
                      corr_cap: float) -> pd.DataFrame:
-    """Point-in-time universe rebalanced monthly: rank by 60-day realized-return momentum-free
-    criteria (recent dollar volume where meaningful, else availability), then drop candidates whose
-    120-day return correlation with an already-selected market exceeds `corr_cap`.
-
-    Only data <= the decision date is used. Ranking prefers, in order: asset-class diversity, then
-    longer history — never past returns, so the selection itself carries no look-ahead edge."""
-    closes = pd.DataFrame({s: d["close"] for s, d in data.items()}).reindex(dates).ffill()
-    rets = closes.pct_change(fill_method=None)
-    first_seen = {s: d.index[0] for s, d in data.items()}
+    """Point-in-time universe rebalanced monthly, using the ENGINE's own selection function
+    (strategies/trend_daily_model.select_universe) so that what is validated here is exactly what
+    the bot executes. Only data <= the decision date is used, and the ranking never looks at past
+    returns."""
+    p = TrendParams(n_assets=n_assets, min_listing_days=MIN_HISTORY_DAYS)
+    p.corr_cap = corr_cap
+    p.corr_window = CORR_WINDOW
+    frames = {s: d.copy() for s, d in data.items()}
+    for d in frames.values():
+        if "quote_volume" not in d.columns:
+            d["quote_volume"] = d["close"] * d["volume"]
     selected = pd.DataFrame(0.0, index=dates, columns=list(data.keys()))
     current: List[str] = []
     month = None
     for dt in dates:
         if month != (dt.year, dt.month):
             month = (dt.year, dt.month)
-            eligible = [s for s in data if (dt - first_seen[s]).days >= MIN_HISTORY_DAYS]
-            if eligible:
-                window = rets.loc[:dt].tail(CORR_WINDOW)
-                # one market per class first (diversification), then fill by longest history
-                by_class: Dict[str, List[str]] = {}
-                for s in eligible:
-                    by_class.setdefault(ASSET_CLASS.get(s, "other"), []).append(s)
-                order: List[str] = []
-                pools = {k: sorted(v, key=lambda x: first_seen[x]) for k, v in by_class.items()}
-                while any(pools.values()) and len(order) < len(eligible):
-                    for k in sorted(pools):
-                        if pools[k]:
-                            order.append(pools[k].pop(0))
-                keep: List[str] = []
-                for s in order:
-                    if len(keep) >= n_assets:
-                        break
-                    ok = True
-                    for t in keep:
-                        if s in window and t in window:
-                            c = window[s].corr(window[t])
-                            if c is not None and not np.isnan(c) and abs(c) > corr_cap:
-                                ok = False
-                                break
-                    if ok:
-                        keep.append(s)
-                current = keep[:n_assets]
+            current = select_universe(frames, dt, p, current=current)
         for s in current:
             selected.loc[dt, s] = 1.0 / max(len(current), 1)
     return selected
-
 
 def backtest(data: Dict[str, pd.DataFrame], cost_bps: float = COST_BPS, lookbacks: Optional[List[int]] = None,
              target_vol: float = TARGET_VOL, vol_window: int = VOL_WINDOW, n_assets: int = N_ASSETS,

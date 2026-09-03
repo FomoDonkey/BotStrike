@@ -245,6 +245,8 @@ class TrendDailyEngine:
         self._running = False
         self._run_lock = asyncio.Lock()
         self.last_marks: Dict[str, float] = {}
+        self._venue_vol: Dict[str, float] = {}
+        self._venue_vol_day: str = ""
         # Edge-monitor kill: no entries; every target is 0 so the book is closed at the
         # next daily run (a killed strategy must not keep capital at risk).
         self.killed: bool = False
@@ -325,6 +327,37 @@ class TrendDailyEngine:
     def pool(self) -> List[str]:
         return [s.strip().upper() for s in str(self.config.trend_pool).split(",") if s.strip()]
 
+    def _venue_volumes(self, symbols: List[str]) -> Dict[str, float]:
+        """24 h quote volume per market AT THE VENUE, used as the liquidity floor for mixed pools.
+
+        Yahoo/Binance dollar volume cannot be compared across asset classes (an index reports the
+        summed share volume of its constituents), and what actually limits us is how much can be
+        traded on Strike: measured 2026-09-03, BTC 1.09 M$/24 h but GOOGL 94 $/24 h. Cached for the
+        day; on any error the floor is simply not applied (returns {}), never blocking a run.
+        """
+        today_key = self._today().strftime("%Y-%m-%d")
+        if self._venue_vol_day == today_key and self._venue_vol:
+            return self._venue_vol
+        out: Dict[str, float] = {}
+        try:
+            import urllib.request
+            url = os.getenv("BOTSTRIKE_VENUE_TICKER_URL",
+                            "https://api.strikefinance.org/price/v2/ticker/24hr")
+            req = urllib.request.Request(url, headers={"User-Agent": "botstrike/1.0"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                rows = json.loads(r.read())
+            by_ui = {str(x.get("symbol", "")).upper(): float(x.get("quoteVolume") or 0.0) for x in rows}
+            for sym in symbols:
+                v = by_ui.get(to_ui_symbol(sym))
+                if v is not None:
+                    out[sym] = v
+        except Exception as e:  # noqa: BLE001 — liquidity data is an extra filter, never a blocker
+            logger.warning("trend_venue_volume_unavailable", error=str(e)[:160])
+            return {}
+        self._venue_vol, self._venue_vol_day = out, today_key
+        logger.info("trend_venue_volume_loaded", markets=len(out))
+        return out
+
     async def run_once(self, now: Optional[float] = None) -> Dict[str, Any]:
         async with self._run_lock:
             return await self._run_once_locked(now)
@@ -342,7 +375,15 @@ class TrendDailyEngine:
             decision = today - pd.Timedelta(days=1)
             month_key = today.strftime("%Y-%m")
             if st.universe_month != month_key or not st.universe:
-                st.universe = select_universe(data, decision, params, current=st.universe)
+                # what one position would be worth, so the liquidity floor scales with the account
+                try:
+                    eq_now = float(self._equity_provider() or 0.0)
+                except Exception:  # noqa: BLE001
+                    eq_now = 0.0
+                params.position_notional = (eq_now * float(params.leverage_cap)
+                                            / max(int(params.n_assets), 1))
+                st.universe = select_universe(data, decision, params, current=st.universe,
+                                              venue_volume=self._venue_volumes(list(data)))
                 st.universe_month = month_key
                 logger.info("trend_universe_selected", month=month_key, universe=st.universe)
             raw_targets = target_weights(data, st.universe, decision, params)
