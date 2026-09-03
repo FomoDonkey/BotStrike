@@ -94,3 +94,42 @@ def test_venue_floor_scales_with_position_size():
     # hard minimum still applies when no multiple is configured
     hard = _params(n_assets=4, liq_exit_usd_venue=100_000.0, liq_venue_multiple=0.0, position_notional=0.0)
     assert set(select_universe(data, AS_OF, hard, venue_volume=venue)) == {"BTCUSDT", "XAU-USD"}
+
+
+def test_universe_is_repicked_when_the_pool_changes(tmp_path, monkeypatch):
+    """A pool/n_assets change must take effect at the next daily run, not at the next month."""
+    import asyncio
+    import json as _json
+    from config.settings import Settings
+    from strategies.trend_daily import DailyDataStore, TrendDailyEngine
+
+    frames = {"BTCUSDT": _frame(900, 900e6, 1), "ETHUSDT": _frame(900, 400e6, 2),
+              "XAU-USD": _frame(900, 3e6, 3), "WTI-USD": _frame(900, 21e6, 4)}
+
+    class FakeStore(DailyDataStore):
+        def __init__(self):
+            self.data_dir = str(tmp_path)
+
+        def load(self, symbols, today, refresh=True, min_days=30):
+            return {s: frames[s] for s in symbols if s in frames}
+
+    s = Settings()
+    s.trading.trend_pool = "BTCUSDT,ETHUSDT"
+    s.trading.trend_n_assets = 2
+    s.trading.trend_min_listing_days = 365
+    s.trading.trend_min_order_usd = 1e12          # never actually trade in this test
+
+    async def on_fill(t):
+        return None
+
+    eng = TrendDailyEngine(s, on_fill, lambda: 1000.0, data_store=FakeStore(),
+                           state_path=str(tmp_path / "state.json"))
+    monkeypatch.setattr(eng, "_venue_volumes", lambda syms: {})
+    asyncio.run(eng.run_once(now=AS_OF.timestamp()))
+    assert eng.state.universe == ["BTCUSDT", "ETHUSDT"] and eng.state.universe_key.endswith("|2")
+
+    s.trading.trend_pool = "BTCUSDT,ETHUSDT,XAU-USD,WTI-USD"
+    s.trading.trend_n_assets = 4
+    asyncio.run(eng.run_once(now=(AS_OF + pd.Timedelta(days=1)).timestamp()))
+    assert set(eng.state.universe) == {"BTCUSDT", "XAU-USD", "WTI-USD", "ETHUSDT"}, eng.state.universe
+    assert _json.load(open(str(tmp_path / "state.json"), encoding="utf-8"))["universe_key"].endswith("|4")

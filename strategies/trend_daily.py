@@ -198,6 +198,7 @@ class TrendState:
     weights: Dict[str, float] = field(default_factory=dict)      # executed weights
     universe: List[str] = field(default_factory=list)
     universe_month: str = ""                                     # YYYY-MM of the last universe pick
+    universe_key: str = ""                                       # pool+n_assets the pick was made with
     targets: Dict[str, float] = field(default_factory=dict)
     last_run_date: str = ""
     last_run_ts: float = 0.0
@@ -219,7 +220,7 @@ class TrendState:
         st = cls()
         for k, v in (d.get("positions") or {}).items():
             st.positions[k] = BookPosition(**{f: v.get(f, 0.0) for f in BookPosition.__dataclass_fields__})
-        for k in ("weights", "universe", "universe_month", "targets", "last_run_date", "last_run_ts",
+        for k in ("weights", "universe", "universe_month", "universe_key", "targets", "last_run_date", "last_run_ts",
                   "last_run_status", "last_error", "equity_basis", "opens_prev", "tracking", "candidates",
                   "last_run_late"):
             if k in d:
@@ -374,7 +375,11 @@ class TrendDailyEngine:
             st.candidates = len(data)
             decision = today - pd.Timedelta(days=1)
             month_key = today.strftime("%Y-%m")
-            if st.universe_month != month_key or not st.universe:
+            # The universe is re-picked monthly, but ALSO whenever the pool or the number of
+            # assets changes: a config change must take effect at the next daily run, not four
+            # weeks later (found on the CT 2026-09-03 switching to the multi-asset pool).
+            universe_key = f"{','.join(self.pool())}|{params.n_assets}"
+            if st.universe_month != month_key or not st.universe or st.universe_key != universe_key:
                 # what one position would be worth, so the liquidity floor scales with the account
                 try:
                     eq_now = float(self._equity_provider() or 0.0)
@@ -385,6 +390,7 @@ class TrendDailyEngine:
                 st.universe = select_universe(data, decision, params, current=st.universe,
                                               venue_volume=self._venue_volumes(list(data)))
                 st.universe_month = month_key
+                st.universe_key = universe_key
                 logger.info("trend_universe_selected", month=month_key, universe=st.universe)
             raw_targets = target_weights(data, st.universe, decision, params)
             alloc = 0.0 if self.killed else float(self.config.allocation_trend_daily)
