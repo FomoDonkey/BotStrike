@@ -1609,3 +1609,17 @@ Edgar, con las dos terminales abiertas, tenía razón en las tres cosas:
 - [x] Verificado siguiendo los 31 mercados en el tiempo: 26/31 imprimen los mismos 4 decimales en
       todas las muestras; los 5 más volátiles difieren como mucho 1,6 unidades del último decimal,
       que es el desfase de muestreo de un valor que cambia cada segundo
+
+## Cortos y frecuencia de rebalanceo — investigación (2026-09-04, ronda 6)
+- [x] `scripts/trend_shorts_and_speed.py` + `tasks/research_shorts_and_speed_2026-09-04.md`: 16
+      configuraciones sobre el mismo panel, costes y funding que validaron el libro actual
+- [x] Umbral de ruido calculado primero: con 10 años el error estándar del Sharpe es ±0,53, así que
+      hacen falta 1,48 de diferencia para distinguir dos configuraciones
+- [x] **Rebalancear más veces: NO.** Umbrales 0,00-0,30 dentro de 0,06 de Sharpe; y vigilar el stop
+      intradía (proxy: mínimo del día) cuesta 1,7 puntos de CAGR
+- [x] **Señales más rápidas: NO.** Deterioro monótono: ×0,75 → 2,05, ×0,5 → 1,56, ×0,25 → 0,61
+- [x] **Cortos a media posición: SÍ, como opción apagada.** Sharpe igual, caída 7,6 % → 5,6 % en los
+      diez escenarios de estrés, y mejora con funding caro (×3: 1,93 vs 1,87) porque el corto lo cobra
+- [x] Implementado en el modelo + `trend_allow_shorts` / `trend_short_size` + UI de Ajustes, por defecto OFF
+- [ ] PENDIENTE si algún día se activa: la ruta de EJECUCIÓN sigue escrita para un libro largo
+      (escalera de salida, signo del funding, fills del simulador)
