@@ -3,7 +3,7 @@
 // wins, otherwise the value is derived and the caller labels it as such.
 import type { ExitLadder, ExitLadderLevel, PositionData, TradeRecord } from "@/lib/api";
 import type { Candle } from "@/stores/marketStore";
-import { FUNDING_INTERVAL_SEC, SYMBOL_LABELS } from "@/lib/constants";
+import { SYMBOL_LABELS } from "@/lib/constants";
 
 /** "BTC" from "BTC-USD" — works for the non-crypto markets of the multi-asset pool too. */
 export function marketLabel(symbol: string): string {
@@ -112,15 +112,19 @@ export function spanLabel(spanSec: number): string {
   return h >= 1 ? `${Math.round(h)}h` : `${Math.max(1, Math.round(spanSec / 60))}m`;
 }
 
-/** Seconds until the next 8 h UTC funding mark (00:00 / 08:00 / 16:00 UTC). */
-export function fundingCountdownSec(nowMs: number): number {
-  const sec = Math.floor(nowMs / 1000);
-  return FUNDING_INTERVAL_SEC - (sec % FUNDING_INTERVAL_SEC);
+/**
+ * The venue's settlement cadence is a SERVER fact (Strike settles hourly, Binance every 8 h), so the
+ * client never guesses it. While the market payload is still in flight this returns null and the UI
+ * shows "---": the old hard-coded 8 h fallback displayed a confident "04:27:03" on an hourly venue
+ * for the first seconds after every page load (audit 2026-09-03).
+ */
+export function fundingCountdownSec(): number | null {
+  return null;
 }
 
 /** "HH:MM:SS" countdown. */
-export function formatCountdown(sec: number): string {
-  if (!Number.isFinite(sec) || sec < 0) return "--:--:--";
+export function formatCountdown(sec: number | null | undefined): string {
+  if (sec === null || sec === undefined || !Number.isFinite(sec) || sec < 0) return "--:--:--";
   const s = Math.floor(sec);
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);

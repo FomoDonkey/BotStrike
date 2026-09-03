@@ -15,7 +15,7 @@ export interface MarketView {
   mark: number;
   index: number;
   funding: number | null;
-  countdownSec: number;
+  countdownSec: number | null;
   change: number | null;
   high: number | null;
   low: number | null;
@@ -68,7 +68,7 @@ export function useMarketInfo(symbol: string): MarketView {
       ? Math.max(0, rest.funding_countdown_sec - restAgeSec)
       : typeof info?.funding_countdown_sec === "number" && info.updated
         ? Math.max(0, info.funding_countdown_sec - (nowSec - info.updated))
-        : fundingCountdownSec(now);
+        : fundingCountdownSec();
     const change = rest?.change_24h_pct ?? info?.change_24h_pct ?? derivedChange;
     const high = rest?.high_24h ?? info?.high_24h ?? (winStats.high !== null ? Math.max(winStats.high, price) : null);
     const lowRaw = rest?.low_24h ?? info?.low_24h ?? (winStats.low !== null ? Math.min(winStats.low, price || Infinity) : null);
