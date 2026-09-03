@@ -441,6 +441,35 @@ class PaperTradingSimulator:
             )
         return trades
 
+    def close_symbol(self, symbol: str, reason: str = "manual") -> List[Trade]:
+        """Close every open position of ONE symbol at the current price (operator override).
+
+        Same fill model as close_all_positions (taker + adverse slippage) so a manual close is not
+        cheaper than a real one. Returns the exit Trades for the engine to record.
+        """
+        trades: List[Trade] = []
+        target = str(symbol).upper()
+        for key, pos in list(self._positions.items()):
+            if pos.symbol.upper() != target:
+                continue
+            price = self._last_prices.get(pos.symbol, pos.entry_price) or pos.entry_price
+            slip = self.config.slippage_bps * price / 10_000
+            exit_price = price - slip if pos.side == Side.BUY else price + slip
+            pnl, fee = pos.close(exit_price, self.config.taker_fee)
+            close_side = Side.SELL if pos.side == Side.BUY else Side.BUY
+            hold_time = time.time() - pos.open_time if pos.open_time > 0 else 0
+            trades.append(Trade(
+                symbol=pos.symbol, side=close_side, price=exit_price, quantity=pos.size, fee=fee,
+                order_id=f"paper_manual_{uuid.uuid4().hex[:8]}", strategy=pos.strategy, pnl=pnl,
+                expected_price=pos.entry_price,
+                signal_features=_build_exit_features(pos, exit_price, hold_time, f"exit_{reason}", reason.upper()),
+            ))
+            del self._positions[key]
+            self._trade_count += 1
+            logger.warning("paper_position_closed_manually", symbol=pos.symbol, reason=reason,
+                           strategy=pos.strategy.value, price=round(exit_price, 4), pnl=round(pnl, 2))
+        return trades
+
     @property
     def position_count(self) -> int:
         return len(self._positions)

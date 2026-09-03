@@ -262,3 +262,51 @@ def model_daily_return(weights_prev: Dict[str, float], open_prev: Dict[str, floa
         if w and o0 and o1 and o0 > 0:
             g += w * (o1 / o0 - 1.0)
     return g - turnover * cost_bps / 10_000.0
+
+
+def exit_ladder(close: pd.Series, p: TrendParams) -> Dict[str, Any]:
+    """Where this position actually exits, and how much leaves at each level.
+
+    A trend book has no single stop-loss: the weight is the average of `len(p.lookbacks)`
+    sub-strategies, each with its own never-falling trailing stop at the Donchian mid. As price
+    falls, sub-strategies drop out one by one and the position shrinks in steps. Taking a fixed
+    profit instead would destroy the edge — the whole return comes from the few long trends — so
+    what the operator needs is not a TP but VISIBILITY of this ladder.
+
+    Returns
+        {"price", "active", "total", "levels": [{"lookback", "stop", "distance_pct",
+         "share_exiting", "weight_after"}], "full_exit", "first_exit", "worst_case_pct"}
+    where the levels are ordered from the nearest stop (the first to trigger) downwards.
+    """
+    out: Dict[str, Any] = {"price": None, "active": 0, "total": len(p.lookbacks), "levels": [],
+                           "full_exit": None, "first_exit": None, "worst_case_pct": None}
+    if close is None or len(close) == 0:
+        return out
+    price = float(close.iloc[-1])
+    out["price"] = price
+    levels = []
+    for n in p.lookbacks:
+        pos, stop = sub_strategy_positions(close, n)
+        if len(pos) == 0 or float(pos.iloc[-1]) <= 0:
+            continue
+        s = float(stop.iloc[-1])
+        if np.isnan(s):
+            continue
+        levels.append((int(n), s))
+    if not levels:
+        return out
+    levels.sort(key=lambda x: -x[1])                       # nearest stop first
+    out["active"] = len(levels)
+    share = 1.0 / len(levels)                              # of the CURRENT position, not of the max
+    remaining = 1.0
+    for n, s in levels:
+        remaining = max(0.0, remaining - share)
+        out["levels"].append({
+            "lookback": n, "stop": round(s, 8),
+            "distance_pct": round(s / price - 1.0, 6) if price else None,
+            "share_exiting": round(share, 6), "weight_after": round(remaining, 6),
+        })
+    out["first_exit"] = out["levels"][0]["stop"]
+    out["full_exit"] = out["levels"][-1]["stop"]
+    out["worst_case_pct"] = round(out["full_exit"] / price - 1.0, 6) if price else None
+    return out

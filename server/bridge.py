@@ -1006,6 +1006,12 @@ def _trend_position_rows(engine) -> list:
     rows = []
     if trend is None:
         return rows
+    try:
+        ladders = trend.exit_ladders()
+    except Exception:  # noqa: BLE001
+        ladders = {}
+    acc = getattr(engine, "funding", None)
+    funding_by_symbol = dict(getattr(acc, "by_symbol", {}) or {}) if acc is not None else {}
     for p in trend.status().get("positions", []):
         mark = p["mark_price"] or p["entry_price"]
         pos_st = trend.state.positions.get(p["symbol"])
@@ -1019,8 +1025,10 @@ def _trend_position_rows(engine) -> list:
             "strategy": StrategyType.TREND_DAILY.value,
             "opened_ts": getattr(pos_st, "opened_ts", 0.0), "hold_sec": max(0.0, time.time() - getattr(pos_st, "opened_ts", time.time())),
             "mae_bps": None, "mfe_bps": None, "entry_fee_rate": getattr(pos_st, "entry_fee_rate", 0.0),
-            "fees_paid": p["entry_price"] * p["size"] * getattr(pos_st, "entry_fee_rate", 0.0), "funding_paid": 0.0,
+            "fees_paid": p["entry_price"] * p["size"] * getattr(pos_st, "entry_fee_rate", 0.0),
+            "funding_paid": round(float(funding_by_symbol.get(p["ui_symbol"], 0.0)), 6),
             "order_id": "", "order_type": "MARKET", "trigger": "donchian_ensemble", "weight": p["weight"],
+            "exit_ladder": ladders.get(p["symbol"]),
             "timestamp": getattr(pos_st, "opened_ts", 0.0),
         })
     return rows
@@ -1029,12 +1037,17 @@ def _trend_position_rows(engine) -> list:
 def _paper_position_rows(engine) -> list:
     """Intraday paper positions (rich) + trend book positions, one list."""
     rows = []
+    acc = getattr(engine, "funding", None)
+    funding_by_symbol = dict(getattr(acc, "by_symbol", {}) or {}) if acc is not None else {}
     sim = getattr(engine, "paper_sim", None)
     if sim is not None and hasattr(sim, "get_position_details"):
         try:
             rows += sim.get_position_details(leverage_of=_leverage_of(engine))
         except Exception as e:
             logger.debug("position_details_error", error=str(e))
+    for r in rows:
+        # funding is accounted per market; a position inherits what its market has paid while open
+        r["funding_paid"] = round(float(funding_by_symbol.get(r.get("symbol"), 0.0)), 6)
     rows += _trend_position_rows(engine)
     return rows
 
@@ -1726,6 +1739,67 @@ async def get_funding_history(symbol: str, limit: int = 200):
     return out
 
 
+@app.get("/api/risk/profiles")
+async def get_risk_profiles():
+    """Risk profiles: the validated way to trade the same strategy harder or softer.
+
+    Leverage does not create edge — the Sharpe is flat across profiles while return and drawdown
+    scale together (config/risk_profiles.py has the measured numbers). Each profile moves the
+    target volatility AND the loss ladder, so raising risk does not make the circuit breaker halt
+    the bot on an ordinary losing streak.
+    """
+    from config import risk_profiles as rp
+    engine = state.engine
+    s = engine.settings if engine else _config_settings()
+    equity = 0.0
+    if engine is not None:
+        try:
+            equity = float(engine.risk_manager.current_equity)
+        except Exception:  # noqa: BLE001
+            equity = float(s.trading.initial_capital)
+    else:
+        equity = float(s.trading.initial_capital)
+    return _json_safe({
+        "current": rp.profile_of(s.trading),
+        "equity": round(equity, 2),
+        "validated_target_vol_range": list(rp.VALIDATED_RANGE),
+        "profiles": rp.catalog(equity),
+        "current_values": {"trend_target_vol": float(s.trading.trend_target_vol),
+                           "max_drawdown_pct": float(s.trading.max_drawdown_pct),
+                           "max_daily_loss_pct": float(s.trading.max_daily_loss_pct),
+                           "max_weekly_loss_pct": float(s.trading.max_weekly_loss_pct)},
+        "source": "tasks/research_trend_multi_2026-09-03.md",
+    })
+
+
+@app.post("/api/risk/profile", dependencies=[Depends(require_token_when_remote)])
+async def set_risk_profile(body: dict):
+    """Apply a risk profile (conservative | balanced | aggressive). Persisted like any other
+    config change and applied live; the new target volatility takes effect at the next daily run."""
+    from config import risk_profiles as rp
+    name = str((body or {}).get("profile") or "").strip().lower()
+    if name not in rp.PROFILES:
+        raise HTTPException(status_code=400, detail=f"unknown profile '{name}' (use {list(rp.PROFILES)})")
+    patch = {"trading": dict(rp.PROFILES[name])}
+    s = _config_settings()
+    try:
+        applied, restart_now = cfg_overrides.validate_and_apply(s, patch)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    merged = cfg_overrides.merge_overrides(cfg_overrides.load_overrides(), patch)
+    cfg_overrides.save_overrides(merged)
+    if state.engine is not None:
+        _after_live_config_change(applied)
+    logger.info("risk_profile_applied", profile=name, applied=applied)
+    try:
+        get_activity_log().add("config", f"Risk profile: {name}",
+                               ", ".join(f"{k.split('.')[-1]}={v}" for k, v in rp.PROFILES[name].items()))
+    except Exception:  # noqa: BLE001
+        pass
+    return _json_safe({"status": "ok", "profile": name, "applied": applied,
+                       "restart_required": bool(restart_now), "describe": rp.describe(name)})
+
+
 @app.get("/api/funding")
 async def get_funding():
     """Perpetual funding accrued on the paper book (analytics/funding.py): cumulative cost, per
@@ -1840,6 +1914,48 @@ def _symbol_config_view(engine, symbol: str) -> dict:
                 "risk_per_trade_pct": float(getattr(t, "risk_per_trade_pct", 0.0))}
     except Exception:  # noqa: BLE001
         return {}
+
+
+@app.post("/api/positions/close", dependencies=[Depends(require_token_when_remote)])
+async def close_position(body: dict):
+    """Operator override: close ONE open position now, at the current price.
+
+    The trend book normally exits through its trailing ladder (GET /api/positions ->
+    `exit_ladder`), and intraday strategies through their own stop/target; this is the manual
+    brake. Paper only for now: in live mode the venue client must place the reduce-only order,
+    which is gated behind the canary (roadmap P2).
+    """
+    engine = state.engine
+    if not engine:
+        raise HTTPException(status_code=409, detail="engine not running")
+    symbol = str((body or {}).get("symbol") or "").upper()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="symbol required")
+    if not getattr(engine, "paper", True):
+        raise HTTPException(status_code=409, detail="manual close is paper-only until the live canary lands")
+    out = {"symbol": symbol, "closed": False}
+    sim = getattr(engine, "paper_sim", None)
+    if sim is not None and hasattr(sim, "close_symbol"):
+        try:
+            res = sim.close_symbol(symbol, reason="manual")
+            if res:
+                out.update({"closed": True, "source": "paper", "detail": res})
+        except Exception as e:  # noqa: BLE001
+            logger.warning("manual_close_paper_failed", symbol=symbol, error=str(e))
+    if not out["closed"]:
+        trend = getattr(engine, "trend_engine", None)
+        if trend is not None:
+            res = await trend.close_symbol(symbol, reason="manual")
+            out.update({"closed": bool(res.get("closed")), "source": "trend", "detail": res})
+    if not out["closed"]:
+        raise HTTPException(status_code=404, detail=f"no open position for {symbol}")
+    try:
+        get_activity_log().add("fill", f"Manual close {symbol}", "closed by the operator from the UI",
+                               symbol=symbol, level="warning")
+    except Exception:  # noqa: BLE001
+        pass
+    logger.warning("position_closed_manually", symbol=symbol, source=out.get("source"))
+    return _json_safe(out)
 
 
 @app.post("/api/trend/run", dependencies=[Depends(require_token_when_remote)])

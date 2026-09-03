@@ -40,7 +40,7 @@ import structlog
 
 from core.types import Position, Side, StrategyType, Trade
 from strategies.trend_daily_model import (
-    TrendParams, apply_rebalance_threshold, model_daily_return, select_universe,
+    TrendParams, apply_rebalance_threshold, exit_ladder, model_daily_return, select_universe,
     target_weights,
 )
 
@@ -561,6 +561,32 @@ class TrendDailyEngine:
             logger.warning("trend_book_flattened", reason=reason, closed=closed)
             return closed
 
+    async def close_symbol(self, ui_or_pool_symbol: str, reason: str = "manual") -> Dict[str, Any]:
+        """Close ONE book position now, at the latest known price (operator override).
+
+        The daily model would normally exit through its trailing ladder; this is the manual brake
+        for when the operator wants out. The market is also removed from today's targets so the
+        next daily run does not immediately re-enter it (it can re-enter tomorrow if the signal is
+        still on, which is the honest behaviour: this is an override, not a permanent ban).
+        """
+        async with self._run_lock:
+            st = self.state
+            sym = next((k for k in st.positions
+                        if k == ui_or_pool_symbol or to_ui_symbol(k) == ui_or_pool_symbol), None)
+            if sym is None:
+                return {"closed": False, "reason": "position not found", "symbol": ui_or_pool_symbol}
+            await self.mark_positions()
+            pos = st.positions[sym]
+            price = pos.mark_price or pos.entry_price
+            now = self._clock()
+            equity = float(self._equity_provider())
+            await self._execute_symbol(sym, 0.0, price, equity, self._today(now).strftime("%Y-%m-%d"), now)
+            st.targets.pop(sym, None)
+            st.weights.pop(sym, None)
+            self.save_state()
+            logger.warning("trend_position_closed_manually", symbol=sym, price=price, reason=reason)
+            return {"closed": True, "symbol": to_ui_symbol(sym), "price": price, "reason": reason}
+
     # ── marking / views ──
     async def mark_positions(self, data: Optional[Dict[str, pd.DataFrame]] = None) -> None:
         st = self.state
@@ -578,6 +604,31 @@ class TrendDailyEngine:
                 continue
             pos.mark_price = float(df["close"].iloc[-1])
             self.last_marks[sym] = pos.mark_price
+
+    def exit_ladders(self) -> Dict[str, Dict[str, Any]]:
+        """Exit ladder per held market: the price levels at which each Donchian sub-strategy drops
+        out and how much of the position leaves with it. A trend book has no single stop; this is
+        what the operator needs to see instead (strategies/trend_daily_model.exit_ladder).
+
+        Uses the cached daily frames — never a network call, so it is safe on every API request.
+        """
+        out: Dict[str, Dict[str, Any]] = {}
+        if not self.state.positions:
+            return out
+        params = TrendParams.from_config(self.config)
+        try:
+            today = self._today()
+            data = self.store.load(list(self.state.positions), today, refresh=False,
+                                   min_days=params.min_history_days)
+        except Exception as e:  # noqa: BLE001 — visibility must never break the API
+            logger.warning("trend_exit_ladder_unavailable", error=str(e)[:160])
+            return out
+        for sym, df in data.items():
+            try:
+                out[sym] = exit_ladder(df["close"], params)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("trend_exit_ladder_failed", symbol=sym, error=str(e)[:120])
+        return out
 
     def positions_as_positions(self) -> List[Position]:
         out = []
