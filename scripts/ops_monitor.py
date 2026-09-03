@@ -175,8 +175,7 @@ def evaluate(now: datetime, health: Optional[dict], trend: Optional[dict], risk:
     if minutes >= TREND_DEADLINE_MIN and state.get("last_summary_date") != today:
         rep.summary = _summary(today, trend, risk, account, journal_24h)
     rep.consecutive = counts                    # anything not seen this run resets to zero
-    rep.facts["pending"] = rep.pending
-    return rep
+    return rep                                  # `pending` travels as its own field, not inside facts
 
 
 def _money(x) -> str:

@@ -19,6 +19,17 @@ import { EXCHANGE_LABELS } from "@/lib/constants";
 import { cn, formatAge, formatDuration, formatLocalDateTime, formatMoney, formatSignedMoney } from "@/lib/utils";
 
 /** System (spec §3.8): health, ops monitor, feed status, version, uptime, Telegram, recent logs. */
+/** Never print "[object Object]": the monitor can add nested facts at any time (2026-09-03). */
+function factValue(v: unknown): string {
+  if (v === null || v === undefined || v === "") return "---";
+  if (typeof v === "boolean") return v ? "yes" : "no";
+  if (typeof v === "object") {
+    const entries = Object.entries(v as Record<string, unknown>);
+    return entries.length ? entries.map(([k, x]) => `${k.replace(/_/g, " ")} ${String(x)}`).join(" · ") : "none";
+  }
+  return String(v);
+}
+
 export function SystemPage() {
   const now = useNow();
   const system = useSystemStore(useShallow((s) => ({ engineRunning: s.engineRunning, mode: s.mode, uptimeSec: s.uptimeSec, wsConnected: s.wsConnected, clientsConnected: s.clientsConnected, bridgeConnected: s.bridgeConnected, openChannels: s.openChannels })));
@@ -92,7 +103,7 @@ export function SystemPage() {
                 <ListRow label="Last check">{formatLocalDateTime(opsData.last_check ?? null)}</ListRow>
                 {opsData.next_timer && <ListRow label="Next timer">{formatLocalDateTime(opsData.next_timer)}</ListRow>}
                 <ListRow label="Daily summary">{opsData.summary_sent ? "sent" : "pending"}{opsData.state?.last_summary_date ? <span className="text-text-2 font-medium"> · {opsData.state.last_summary_date}</span> : null}</ListRow>
-                {Object.entries(facts).map(([k, v]) => <ListRow key={k} label={k.replace(/_/g, " ")}>{String(v ?? "---")}</ListRow>)}
+                {Object.entries(facts).map(([k, v]) => <ListRow key={k} label={k.replace(/_/g, " ")}>{factValue(v)}</ListRow>)}
               </ListSection>
               {Object.keys(journal).length > 0 && (
                 <ListSection title="Journal · last 15 min">
