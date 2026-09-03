@@ -5,7 +5,7 @@ import { useEndpoint } from "@/hooks/useEndpoint";
 import { useMicroStore } from "@/stores/microStore";
 import { useExchangeStore } from "@/stores/exchangeStore";
 import { useMarketStore } from "@/stores/marketStore";
-import { ListRow, ListSection, Signed } from "@/components/ui/ListRow";
+import { ListRow, ListSection } from "@/components/ui/ListRow";
 import { StrategyTag } from "@/components/ui/Chip";
 import { HINTS } from "@/lib/hints";
 import { EXCHANGE_LABELS, STRATEGY_DESCRIPTIONS, SYMBOL_LABELS } from "@/lib/constants";

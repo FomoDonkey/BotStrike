@@ -240,3 +240,25 @@ export function tradeHoldSec(t: TradeRecord): number | null {
   if (t.entry_ts && t.exit_ts && t.exit_ts > t.entry_ts) return t.exit_ts - t.entry_ts;
   return null;
 }
+
+/**
+ * What the position returns AGAINST ITS ENTRY if every remaining leg trails out at today's stops.
+ *
+ * The ladder's own `worst_case_pct` is measured from the CURRENT price, which answers "how far can
+ * it still fall" but not the question an operator actually asks: "if this trails out from here, do
+ * I keep a profit?" A position can show +6.5 % unrealised and still have every stop below its entry
+ * (BTC on 2026-09-03: entry 76,571.65, full exit 69,437.15).
+ */
+export function ladderOutcomeVsEntry(ladder: ExitLadder, entry: number | null | undefined): number | null {
+  const levels = ladder.levels ?? [];
+  if (!entry || entry <= 0 || levels.length === 0) return null;
+  let weight = 0;
+  let acc = 0;
+  for (const lv of levels) {
+    const share = lv.share_exiting ?? 0;
+    if (!(share > 0) || !(lv.stop > 0)) continue;
+    weight += share;
+    acc += share * (lv.stop / entry - 1);
+  }
+  return weight > 0 ? acc / weight : null;
+}
