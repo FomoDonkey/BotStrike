@@ -47,10 +47,22 @@ MIN_HISTORY_DAYS = 365
 CORR_WINDOW = 120
 CORR_CAP = 0.85              # drop a candidate correlated above this with an already-picked market
 
-# Annualized funding drag applied to LONG exposure, by asset class. Crypto = measured on Binance
-# (166 d): BTC +3.2 %, ETH +2.3 %, ADA +1.2 %, SOL -0.2 %/yr; we use a conservative 3 % for crypto.
-# TradFi perps carry an interest component of roughly the risk-free rate; 4 % is conservative.
-FUNDING_ANNUAL = {"crypto": 0.03, "metal": 0.04, "index": 0.04, "energy": 0.04, "equity": 0.04}
+# Annualized funding applied to LONG exposure. Class fallback only: the real numbers come from the
+# VENUE itself (data/strike_costs.json, scripts/strike_market_stats.py — Strike's own 90-day funding
+# history). Measured 2026-09-03: BTC +8.6 %, ETH +7.8 %, SOL +7.1 %, ADA +10.9 %, XAG +15.1 %,
+# SP500 +8.4 %, XAU +0.9 %/yr paid by longs, while NAS100 -3.7 % and WTI -15.7 % PAY the longs.
+# The old class averages (3-4 %) were guesses from Binance and understated the crypto cost by ~2x.
+FUNDING_ANNUAL = {"crypto": 0.08, "metal": 0.08, "index": 0.04, "energy": -0.05, "equity": 0.06}
+
+
+def measured_funding() -> Dict[str, float]:
+    """Per-market annualized funding measured on Strike; {} when the file has not been generated."""
+    try:
+        from scripts.strike_market_stats import load_costs
+        data = load_costs().get("markets", {})
+        return {m: float(v["funding"]["annualized_pct"]) for m, v in data.items() if "funding" in v}
+    except Exception:  # noqa: BLE001
+        return {}
 
 ASSET_CLASS = {
     "BTC-USD": "crypto", "ETH-USD": "crypto", "SOL-USD": "crypto", "ADA-USD": "crypto",
@@ -202,8 +214,9 @@ def backtest(data: Dict[str, pd.DataFrame], cost_bps: float = COST_BPS, lookback
     costs = turnover * (cost_bps / 10_000.0)
     fund = pd.Series(0.0, index=dates)
     if funding:
-        daily_rate = {s: FUNDING_ANNUAL.get(ASSET_CLASS.get(s, "crypto"), 0.03) * funding_mult / ANNUALIZATION
-                      for s in W_exec.columns}
+        venue = measured_funding()
+        daily_rate = {s: (venue.get(s, FUNDING_ANNUAL.get(ASSET_CLASS.get(s, "crypto"), 0.08))
+                          * funding_mult / ANNUALIZATION) for s in W_exec.columns}
         # longs pay, shorts receive
         fund = sum(W_exec[s].shift(2).fillna(0.0) * daily_rate[s] for s in W_exec.columns)
     net = (gross - costs - fund).fillna(0.0)
@@ -286,7 +299,13 @@ def main() -> int:
     classes: Dict[str, int] = {}
     for s in data:
         classes[ASSET_CLASS.get(s, "other")] = classes.get(ASSET_CLASS.get(s, "other"), 0) + 1
+    venue = measured_funding()
     print(f"== universe: {len(data)} markets with >= {MIN_HISTORY_DAYS} d of daily history {classes}")
+    if venue:
+        shown = {k: f"{v*100:+.1f}%" for k, v in sorted(venue.items()) if k in data}
+        print(f"== funding: MEASURED on Strike (90 d) {shown}")
+    else:
+        print("== funding: class averages (run scripts/strike_market_stats.py for venue-measured rates)")
     span = pd.DatetimeIndex(sorted(set().union(*[d.index for d in data.values()])))
     print(f"== span: {span[0].date()} -> {span[-1].date()} ({len(span)} days)")
 

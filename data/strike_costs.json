@@ -1,0 +1,226 @@
+{
+ "generated": "2026-09-03T16:49:58Z",
+ "days": 90,
+ "taker_bps": 4.5,
+ "median_cost_per_side_bps": 6.69,
+ "worst_cost_per_side_bps": 8.5,
+ "median_funding_annual": 0.0807,
+ "markets": {
+  "BTC-USD": {
+   "funding": {
+    "periods": 2153,
+    "days": 90.0,
+    "annualized_pct": 0.085606,
+    "median": 1.25e-05,
+    "p90": 1.25e-05,
+    "share_positive": 0.9577
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 0.228,
+    "p90_bps": 0.659,
+    "worst_bps": 0.991,
+    "half_spread_bps": 0.114,
+    "cost_per_side_bps": 4.61
+   }
+  },
+  "ETH-USD": {
+   "funding": {
+    "periods": 2153,
+    "days": 90.0,
+    "annualized_pct": 0.077821,
+    "median": 1.25e-05,
+    "p90": 1.25e-05,
+    "share_positive": 0.9656
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 3.966,
+    "p90_bps": 4.133,
+    "worst_bps": 4.178,
+    "half_spread_bps": 1.983,
+    "cost_per_side_bps": 6.48
+   }
+  },
+  "SOL-USD": {
+   "funding": {
+    "periods": 2153,
+    "days": 90.0,
+    "annualized_pct": 0.070714,
+    "median": 1.25e-05,
+    "p90": 1.25e-05,
+    "share_positive": 0.9206
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 3.968,
+    "p90_bps": 4.006,
+    "worst_bps": 4.193,
+    "half_spread_bps": 1.984,
+    "cost_per_side_bps": 6.48
+   }
+  },
+  "ADA-USD": {
+   "funding": {
+    "periods": 2153,
+    "days": 90.0,
+    "annualized_pct": 0.109295,
+    "median": 1.25e-05,
+    "p90": 1.25e-05,
+    "share_positive": 0.9234
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 7.836,
+    "p90_bps": 8.232,
+    "worst_bps": 9.363,
+    "half_spread_bps": 3.918,
+    "cost_per_side_bps": 8.42
+   }
+  },
+  "XRP-USD": {
+   "funding": {
+    "periods": 2153,
+    "days": 90.0,
+    "annualized_pct": 0.089242,
+    "median": 1.25e-05,
+    "p90": 1.25e-05,
+    "share_positive": 0.9851
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 5.855,
+    "p90_bps": 6.028,
+    "worst_bps": 7.491,
+    "half_spread_bps": 2.928,
+    "cost_per_side_bps": 7.43
+   }
+  },
+  "BNB-USD": {
+   "funding": {
+    "periods": 165,
+    "days": 6.9,
+    "annualized_pct": 0.108739,
+    "median": 1.25e-05,
+    "p90": 1.25e-05,
+    "share_positive": 1.0
+   },
+   "spread": {
+    "days": 8,
+    "median_bps": 3.495,
+    "p90_bps": 3.997,
+    "worst_bps": 3.997,
+    "half_spread_bps": 1.747,
+    "cost_per_side_bps": 6.25
+   }
+  },
+  "ZEC-USD": {
+   "funding": {
+    "periods": 2153,
+    "days": 90.0,
+    "annualized_pct": 0.027186,
+    "median": 1.25e-05,
+    "p90": 1.25e-05,
+    "share_positive": 0.9071
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 4.808,
+    "p90_bps": 6.0,
+    "worst_bps": 8.049,
+    "half_spread_bps": 2.404,
+    "cost_per_side_bps": 6.9
+   }
+  },
+  "XAU-USD": {
+   "funding": {
+    "periods": 2153,
+    "days": 90.0,
+    "annualized_pct": 0.008707,
+    "median": 0.0,
+    "p90": 0.0,
+    "share_positive": 0.0372
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 8.0,
+    "p90_bps": 8.038,
+    "worst_bps": 9.026,
+    "half_spread_bps": 4.0,
+    "cost_per_side_bps": 8.5
+   }
+  },
+  "XAG-USD": {
+   "funding": {
+    "periods": 2153,
+    "days": 90.0,
+    "annualized_pct": 0.15084,
+    "median": 0.0,
+    "p90": 5.126362e-06,
+    "share_positive": 0.104
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 7.696,
+    "p90_bps": 8.022,
+    "worst_bps": 8.729,
+    "half_spread_bps": 3.848,
+    "cost_per_side_bps": 8.35
+   }
+  },
+  "SP500-USD": {
+   "funding": {
+    "periods": 428,
+    "days": 17.8,
+    "annualized_pct": 0.083563,
+    "median": 1.25e-05,
+    "p90": 1.25e-05,
+    "share_positive": 0.7664
+   },
+   "spread": {
+    "days": 19,
+    "median_bps": 2.999,
+    "p90_bps": 3.002,
+    "worst_bps": 3.007,
+    "half_spread_bps": 1.5,
+    "cost_per_side_bps": 6.0
+   }
+  },
+  "NAS100-USD": {
+   "funding": {
+    "periods": 1139,
+    "days": 47.5,
+    "annualized_pct": -0.036681,
+    "median": 0.0,
+    "p90": 0.0,
+    "share_positive": 0.0061
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 2.991,
+    "p90_bps": 3.01,
+    "worst_bps": 4.733,
+    "half_spread_bps": 1.496,
+    "cost_per_side_bps": 6.0
+   }
+  },
+  "WTI-USD": {
+   "funding": {
+    "periods": 2153,
+    "days": 90.0,
+    "annualized_pct": -0.156649,
+    "median": 0.0,
+    "p90": 0.0,
+    "share_positive": 0.0627
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 5.995,
+    "p90_bps": 6.585,
+    "worst_bps": 8.878,
+    "half_spread_bps": 2.998,
+    "cost_per_side_bps": 7.5
+   }
+  }
+ }
+}

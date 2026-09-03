@@ -4,11 +4,22 @@
 (crypto + gold, silver, S&P 500, Nasdaq 100, WTI) beat running it on crypto alone, after costs and
 after funding?
 
-**Answer. YES — 11/11 GO.** Sharpe 1.76 net vs 1.37 crypto-only, drawdown 7.8 % vs 11.9 %, CAGR
-10.2 % vs 13.0 %. Same model, same code path, no parameter tuning: the improvement comes from
+**Answer. YES — 11/11 GO.** Sharpe 1.92 net vs 1.37 crypto-only, drawdown 7.6 % vs 11.9 %, CAGR
+11.2 % vs 13.0 %, with Strike's own measured funding and spreads. Same model, same code path, no parameter tuning: the improvement comes from
 diversification, which is exactly what 40 years of managed-futures evidence predicts.
 
-**Re-run 2026-09-03 (final).** The first pass used a selection rule written inside the research
+**Re-run 2026-09-03 (with the venue's own costs).** Strike publishes 90 days of funding and spread
+history per market (`/stat/v1/stats/coin/history/...`, a base path the old client had wrong). Feeding
+the MEASURED rates in instead of class averages, the result IMPROVES: **Sharpe 1.92, CAGR 11.2 %,
+maxDD 7.6 %**, and the total funding cost over ten years drops from 10.6 to **1.5 points of equity**.
+The reason is structural and worth understanding: on Strike the TradFi perps pay the longs
+(WTI −15.7 %/yr, NAS100 −3.7 %/yr) while crypto charges them (BTC +8.6 %, ADA +10.9 %, XAG +15.1 %),
+so a diversified long-only book is close to funding-neutral. Measured spreads also confirm the cost
+assumption: median 0.2–8 bps, so 4.6–8.5 bps per side including the 4.5 bps taker fee against the
+8 bps/side the study assumes. Caveat: 90 days of funding is a short sample to project over ten
+years, which is why the ×2 and ×3 funding stresses (Sharpe 1.90 and 1.87) still matter.
+
+**Re-run 2026-09-03 (selection rule).** The first pass used a selection rule written inside the research
 script. It has been replaced by a direct call to the ENGINE's own `select_universe`, so what is
 validated here is literally what the bot executes; the numbers above are that re-run (the
 research-only rule gave 1.81 / 8.8 %). The engine's rule adds monthly hysteresis (a market already
@@ -23,7 +34,7 @@ Script: `scripts/trend_multi_research.py` · data: `scripts/download_daily.py` (
 |---|---|
 | Model | Donchian ensemble [5,10,20,30,60,90], never-falling trailing stop, 20 % vol target on 90 d, leverage cap 2 |
 | Execution | signal at close t → **open of t+1** (shift 2 in returns), 8 bps/side |
-| Funding | 3 %/yr crypto, 4 %/yr TradFi on long exposure (crypto figure measured on Binance) |
+| Funding | per market, MEASURED on Strike over 90 d (data/strike_costs.json): BTC +8.6 %, ETH +7.8 %, SOL +7.1 %, ADA +10.9 %, XAG +15.1 %, SP500 +8.4 %, XAU +0.9 % paid by longs; NAS100 −3.7 % and WTI −15.7 % paid TO longs |
 | Universe | 14 markets with ≥ 365 d of history: 9 crypto + XAU, XAG, SP500, NAS100, WTI |
 | Selection | the ENGINE's `select_universe`: monthly, hysteresis on current members, one market per asset class, then longest history; correlation cap 0.85 over 120 d; venue liquidity floor; **never ranked by past returns** |
 | N held | 6 |
@@ -40,7 +51,8 @@ shipped configuration is the one without — and most of them fail the venue liq
 
 | Configuration | Sharpe | CAGR | vol | maxDD | skew | trades |
 |---|---|---|---|---|---|---|
-| **Multi-asset (shipped, engine rule)** | **1.76** | **10.2 %** | 5.6 % | **7.8 %** | +0.43 | 878 |
+| **Multi-asset (shipped, venue-measured costs)** | **1.92** | **11.2 %** | 5.6 % | **7.6 %** | +0.44 | 878 |
+| Multi-asset, class-average funding guess | 1.76 | 10.2 % | 5.6 % | 7.8 % | +0.43 | 878 |
 | Multi-asset (research-only rule) | 1.81 | 10.9 % | 5.8 % | 8.8 % | +0.35 | 874 |
 | Crypto only, N=3 (current) | 1.37 | 13.0 % | 9.2 % | 11.9 % | +1.29 | 425 |
 | Multi-asset incl. single stocks | 1.76 | 9.6 % | 5.3 % | 6.9 % | +0.67 | 948 |
