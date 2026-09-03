@@ -4,7 +4,7 @@ import { HINTS } from "@/lib/hints";
 import { Chip, SideChip, StrategyTag } from "@/components/ui/Chip";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { PnlCell } from "@/components/shared/TradeChips";
-import { cn, formatDateTime, formatPrice, formatSize, formatUSD } from "@/lib/utils";
+import { cn, formatDateTime, formatPrice, formatSize, formatUSD, formatSignedMoney} from "@/lib/utils";
 import { isClosedTrade } from "./useTradeHistory";
 
 /** One fill (ENTRY or EXIT) derived from the trade DB rows. */
@@ -38,7 +38,8 @@ function orderRows(trades: TradeRecord[]): OrderRow[] {
         key: `f-${t.trade_id ?? t.id ?? ""}-${t.entry_ts ?? t.entry_time}`,
         ts: t.entry_ts || t.entry_time,
         symbol: t.symbol, kind: "FUNDING", side: "FUNDING", price: t.entry_price, size: 0,
-        orderType: "funding", strategy: t.strategy, fee: 0, pnl: t.pnl, trigger: "8h settlement",
+        // Not "8h settlement": the venue's cadence is configurable and Strike settles hourly.
+        orderType: "funding", strategy: t.strategy, fee: 0, pnl: t.pnl, trigger: "funding settlement",
       });
       continue;
     }
@@ -101,7 +102,11 @@ export function OrderHistoryTable({ trades, symbol, loading, filter }: OrderHist
     { id: "slip", label: "Slippage", hint: HINTS.slippage, render: (r) => typeof r.slippageBps === "number" ? <span className={cn("num", r.slippageBps > 0 ? "text-rose" : "text-text")}>{r.slippageBps.toFixed(1)} bps</span> : <span className="text-text-3">---</span> },
     { id: "spread", label: "Spread", hint: HINTS.spread, render: (r) => typeof r.spreadBps === "number" ? <span className="num">{r.spreadBps.toFixed(2)} bps</span> : <span className="text-text-3">---</span> },
     { id: "fee", label: "Fee", render: (r) => <span className="num">{formatUSD(r.fee)}</span> },
-    { id: "pnl", label: "PNL", render: (r) => typeof r.pnl === "number" ? <PnlCell pnl={r.pnl} inline /> : <span className="text-text-3">---</span> },
+    // A funding settlement is cents: at two decimals every row read "-$0.00", a signed zero.
+    { id: "pnl", label: "PNL", render: (r) => typeof r.pnl !== "number" ? <span className="text-text-3">---</span>
+        : r.kind === "FUNDING"
+          ? <span className={cn("num", r.pnl < 0 ? "text-rose" : r.pnl > 0 ? "text-mint" : "text-text")}>{formatSignedMoney(r.pnl, 4)}</span>
+          : <PnlCell pnl={r.pnl} inline /> },
     { id: "reason", label: "Trigger / exit", align: "l", render: (r) => <span className="font-medium">{r.kind === "EXIT" ? (r.exitReason ?? "---") : (r.trigger ?? "---")}</span> },
     { id: "strategy", label: "Strategy", align: "l", render: (r) => <StrategyTag strategy={r.strategy} /> },
     { id: "regime", label: "Regime", align: "l", render: (r) => r.regime ? r.regime.replace(/_/g, " ") : "---" },
