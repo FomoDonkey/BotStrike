@@ -1227,3 +1227,16 @@
   parecía un error.
 - **LESSON: una convención propia que se aparta de la del venue de referencia necesita leyenda en el
   propio panel, no una explicación fuera de la interfaz.**
+
+### Un control deshabilitado tiene que decir por qué, en su cara
+- Edgar preguntó por qué el botón de cierre manual "había dejado de funcionar". No había dejado: el
+  token del puente es fijo en el .env del CT y el endpoint responde 401 correctamente; su navegador
+  simplemente no tiene token guardado para ese origen, así que el botón salía deshabilitado. El único
+  motivo visible estaba en un `title`, que no se ve hasta que pasas el ratón.
+- **LESSON: si un control se deshabilita por configuración, el motivo va en el propio control y una
+  línea visible junto a él, con el sitio exacto donde se arregla. Un botón gris sin explicación se lee
+  como una avería.**
+- **Diagnóstico previo equivocado que casi reporto:** busqué `BOTSTRIKE_TOKEN` en el .env y salió 0,
+  así que asumí que el token se regeneraba en cada reinicio y que mis despliegues lo habían roto. La
+  variable se llama `BOTSTRIKE_AUTH_TOKEN`. **Comprobar el nombre exacto antes de construir una teoría
+  sobre una ausencia.**
