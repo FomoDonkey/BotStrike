@@ -125,7 +125,7 @@ class BotStrike:
         self._venue_funding: dict = {}
         self._venue_funding_ts: float = 0.0
         self.funding = FundingAccrual.load(
-            interval_hours=int(getattr(settings.trading, "funding_interval_hours", 8) or 8))
+            interval_hours=int(getattr(settings.trading, "funding_interval_hours", 1) or 1))
         self.trade_db = TradeDBAdapter(
             self.trade_repo, source="paper" if self.paper else "live"
         )
@@ -918,12 +918,18 @@ class BotStrike:
         exchange itself, so this only runs in paper/dry-run."""
         if not getattr(self.settings.trading, "funding_enabled", True) or not self.paper:
             return
-        self.funding.interval_hours = int(getattr(self.settings.trading, "funding_interval_hours", 8) or 8)
+        self.funding.interval_hours = int(getattr(self.settings.trading, "funding_interval_hours", 1) or 1)
         self.funding.start()
         while self._running:
             await asyncio.sleep(60)
             try:
                 now = time.time()
+                # Refresh the venue rates on every pass, not only at a settlement: the funding panel
+                # reads this cache, and between hourly settlements it was empty, so the UI fell back
+                # to the intraday feed and showed 0 %/yr for gold, silver, the S&P and oil. The fetch
+                # is cached for 10 min and runs in a thread: urllib is synchronous and would otherwise
+                # block the whole event loop for up to 20 s when the venue is slow.
+                await asyncio.to_thread(self._funding_rates)
                 if not self.funding.due(now):
                     continue
                 rates = self._funding_rates()
