@@ -662,6 +662,11 @@ class TrendDailyEngine:
                     since = df.tail(1)
                 low = float(since["low"].min()) if "low" in since else float(since["close"].min())
                 high = float(since["high"].max()) if "high" in since else float(since["close"].max())
+                # Fold in the LIVE mark: a position opened today has a daily bar that does not yet
+                # contain today's move, so MFE read 0.0 beside a position showing +0.5 % on screen.
+                mark = float(pos.mark_price or 0.0)
+                if mark > 0:
+                    low, high = min(low, mark), max(high, mark)
                 # a long position: adverse = the low, favourable = the high
                 out[sym] = {"mae_bps": round((min(low, entry) / entry - 1.0) * 10_000, 1),
                             "mfe_bps": round((max(high, entry) / entry - 1.0) * 10_000, 1),

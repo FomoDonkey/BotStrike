@@ -283,3 +283,13 @@ def test_excursions_reports_mae_and_mfe_against_the_entry(tmp_path, monkeypatch)
     ex2 = eng.excursions()["BTCUSDT"]
     assert ex2["mae_bps"] == pytest.approx((101.0 / 110.0 - 1) * 10_000, abs=0.2)
     assert ex2["mfe_bps"] == pytest.approx((112.0 / 110.0 - 1) * 10_000, abs=0.2)
+
+    # A position opened today has a daily bar that does not carry today's move yet: the live mark has
+    # to count, or MFE reads 0.0 beside a position the screen shows in profit (seen 2026-09-03).
+    eng.state.positions["BTCUSDT"].entry_price = 100.0
+    eng.state.positions["BTCUSDT"].opened = "2026-09-03"
+    eng.state.positions["BTCUSDT"].mark_price = 130.0
+    ex3 = eng.excursions()["BTCUSDT"]
+    assert ex3["mfe_bps"] == pytest.approx(3000.0)       # the live mark, above every daily high
+    eng.state.positions["BTCUSDT"].mark_price = 90.0
+    assert eng.excursions()["BTCUSDT"]["mae_bps"] == pytest.approx(-1000.0)
