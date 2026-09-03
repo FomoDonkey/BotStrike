@@ -867,7 +867,7 @@ class BotStrike:
                 logger.warning("funding_trend_positions_unavailable", error=str(e))
         return rows
 
-    def _funding_rates(self) -> dict:
+    def _funding_rates(self, force: bool = False) -> dict:
         """Funding rate per symbol. The intraday feed only covers the configured symbols, but the
         trend book can hold any Strike market (gold, S&P 500, oil...), so anything missing is read
         from the venue's public premiumIndex. Cached for the settlement period."""
@@ -876,7 +876,7 @@ class BotStrike:
         # crypto (measured 2026-09-03 over 90 d: BTC +8.6 %/yr on Strike vs +3.2 % on Binance) and
         # PAYS the longs on WTI (-15.7 %) and NAS100 (-3.7 %). Charging the intraday feed's rate to
         # a book that will execute on Strike would misprice the whole cost of carry.
-        out = dict(self._venue_funding_rates(held)) if held else {}
+        out = dict(self._venue_funding_rates(held, force=force)) if held else {}
         # The intraday feed quotes an EIGHT-HOUR rate; our clock runs at the venue's interval (1 h on
         # Strike), so a raw feed rate would be 8x too big per settlement. Scale it, and only ever use
         # it where the venue itself said nothing — a venue rate of exactly 0 is an answer, not a gap.
@@ -889,10 +889,15 @@ class BotStrike:
                 out[sym] = float(snap.funding_rate) * scale
         return out
 
-    def _venue_funding_rates(self, symbols: set) -> dict:
-        """Public premiumIndex from the venue for markets outside the intraday feed."""
+    def _venue_funding_rates(self, symbols: set, force: bool = False) -> dict:
+        """Public premiumIndex from the venue for markets outside the intraday feed.
+
+        `force` skips the cache. The rate moves continuously (BTC went 0.0020 % -> 0.0027 % in four
+        minutes on 2026-09-03), so a cached rate is fine for the panel but not for the CHARGE: the
+        settlement must be priced with the rate that is live at the settlement instant.
+        """
         now = time.time()
-        if self._venue_funding and now - self._venue_funding_ts < 600:
+        if not force and self._venue_funding and now - self._venue_funding_ts < 600:
             return {s: r for s, r in self._venue_funding.items() if s in symbols}
         try:
             import json as _json
@@ -932,7 +937,8 @@ class BotStrike:
                 await asyncio.to_thread(self._funding_rates)
                 if not self.funding.due(now):
                     continue
-                rates = self._funding_rates()
+                # Price the settlement with the rate live AT the settlement, not a cached one.
+                rates = await asyncio.to_thread(self._funding_rates, True)
                 # Record every market's rate at each settlement: no venue publishes a long funding
                 # history, so the only way to validate funding-aware sizing later is to build it now.
                 from analytics.funding import record_rates

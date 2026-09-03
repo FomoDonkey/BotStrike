@@ -213,3 +213,27 @@ def test_the_socket_quotes_the_same_funding_as_rest(monkeypatch):
     snap = eng.market_data.get_snapshot("BTC-USD")
     assert bridge._market_funding_rate(eng, "BTC-USD", snap) == pytest.approx(1.6e-05)   # venue, not feed
     assert bridge._funding_countdown_sec(3600 * 10 + 1500, 1) == 3600 - 1500             # hourly clock
+
+
+def test_the_settlement_is_priced_with_a_fresh_rate_not_a_cached_one():
+    """BTC moved 0.0020 % -> 0.0027 % in four minutes on Strike. A ten-minute cache is fine for the
+    panel and wrong for the charge, so the settlement forces a fetch (2026-09-03)."""
+    import main as m
+    from types import SimpleNamespace as NS
+
+    calls = []
+    eng = object.__new__(m.BotStrike)
+    eng.settings = NS(symbol_names=[], trading=NS(funding_interval_hours=1))
+    eng._venue_funding = {"BTC-USD": 1.0e-05}
+    eng._venue_funding_ts = 9e18                      # a very fresh cache
+    eng.market_data = NS(get_snapshot=lambda s: None)
+    eng._funding_positions = lambda: [{"symbol": "BTC-USD"}]
+
+    def _fetch(self, symbols, force=False):
+        calls.append(force)
+        return {"BTC-USD": 2.7e-05} if force else {"BTC-USD": 1.0e-05}
+
+    eng._venue_funding_rates = lambda symbols, force=False: _fetch(eng, symbols, force)
+    assert m.BotStrike._funding_rates(eng)["BTC-USD"] == pytest.approx(1.0e-05)          # panel: cached
+    assert m.BotStrike._funding_rates(eng, force=True)["BTC-USD"] == pytest.approx(2.7e-05)  # charge: live
+    assert calls == [False, True]
