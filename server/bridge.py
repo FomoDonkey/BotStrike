@@ -1001,6 +1001,28 @@ def _leverage_of(engine):
     return _f
 
 
+def _opened_ts_of(row: dict) -> float:
+    """When this position opened: explicit stamp, else derived from how long it has been held."""
+    try:
+        ts = float(row.get("opened_ts") or 0.0)
+        if ts > 0:
+            return ts
+        hold = float(row.get("hold_sec") or 0.0)
+        return (time.time() - hold) if hold > 0 else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _position_funding(acc, symbol: str, opened_ts: float, lifetime: dict) -> float:
+    """Per-operation funding, falling back to the market lifetime total when the open time is unknown."""
+    if acc is not None and opened_ts:
+        try:
+            return round(float(acc.since(symbol, float(opened_ts))), 6)
+        except Exception:  # noqa: BLE001 - a display figure must never break the positions feed
+            pass
+    return round(float(lifetime.get(symbol, 0.0)), 6)
+
+
 def _trend_position_rows(engine) -> list:
     trend = getattr(engine, "trend_engine", None)
     rows = []
@@ -1026,7 +1048,8 @@ def _trend_position_rows(engine) -> list:
             "opened_ts": getattr(pos_st, "opened_ts", 0.0), "hold_sec": max(0.0, time.time() - getattr(pos_st, "opened_ts", time.time())),
             "mae_bps": None, "mfe_bps": None, "entry_fee_rate": getattr(pos_st, "entry_fee_rate", 0.0),
             "fees_paid": p["entry_price"] * p["size"] * getattr(pos_st, "entry_fee_rate", 0.0),
-            "funding_paid": round(float(funding_by_symbol.get(p["ui_symbol"], 0.0)), 6),
+            "funding_paid": _position_funding(acc, p["ui_symbol"], getattr(pos_st, "opened_ts", 0.0),
+                                              funding_by_symbol),
             "order_id": "", "order_type": "MARKET", "trigger": "donchian_ensemble", "weight": p["weight"],
             "exit_ladder": ladders.get(p["symbol"]),
             "timestamp": getattr(pos_st, "opened_ts", 0.0),
@@ -1046,8 +1069,8 @@ def _paper_position_rows(engine) -> list:
         except Exception as e:
             logger.debug("position_details_error", error=str(e))
     for r in rows:
-        # funding is accounted per market; a position inherits what its market has paid while open
-        r["funding_paid"] = round(float(funding_by_symbol.get(r.get("symbol"), 0.0)), 6)
+        # what THIS position paid since it opened, not what the market has paid since the bot started
+        r["funding_paid"] = _position_funding(acc, r.get("symbol"), _opened_ts_of(r), funding_by_symbol)
     rows += _trend_position_rows(engine)
     return rows
 

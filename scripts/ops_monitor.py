@@ -41,6 +41,14 @@ MAX_REGIME_FLIPS_PER_HOUR = 8    # after the 15-min/30-min fix we measure 1-2/h 
 # perfectly healthy bot. A false alarm teaches the operator to ignore the real ones.
 CONFIRM_CHECKS = 2
 TRANSIENT = ("bridge_down", "engine_down", "ws_down", "stale_ticks", "degraded")
+# A deploy restarts the bridge twice (update.sh + install.sh); two deploys inside the 15-min window
+# tripped the restart-loop alert on 2026-09-03 17:48Z on a bot that was perfectly fine. update.sh
+# stamps MAINT_PATH before restarting, so planned restarts are not read as a crash loop. A real
+# crash loop is not hidden: systemd retries every 10 s, so it clears the higher bar within minutes.
+MAINT_PATH = os.path.join(APP_DIR, "data", "maintenance.json")
+MAINT_GRACE_MIN = 20
+MAX_RESTARTS = 3
+MAX_RESTARTS_MAINT = 6
 SERVICE = "botstrike-bridge"
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -96,11 +104,35 @@ def journal_stats(since_min: int) -> Dict:
 
 # ── pure logic ───────────────────────────────────────────────────
 
+def read_maintenance() -> Optional[Dict]:
+    """The deploy marker, or None. Never raises: a missing/corrupt file just means "no deploy"."""
+    try:
+        with open(MAINT_PATH, encoding="utf-8") as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) and d.get("ts") else None
+    except Exception:
+        return None
+
+
+def maintenance_age_min(maint: Optional[Dict], now: datetime) -> Optional[float]:
+    if not maint:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(maint["ts"]).replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return (now - ts).total_seconds() / 60.0
+    except Exception:
+        return None
+
+
 def evaluate(now: datetime, health: Optional[dict], trend: Optional[dict], risk: Optional[dict],
              account: Optional[dict], journal_15: Dict, journal_60: Dict, journal_24h: Dict,
-             state: Dict) -> Report:
+             state: Dict, maintenance: Optional[Dict] = None) -> Report:
     rep = Report()
     today = now.strftime("%Y-%m-%d")
+    age = maintenance_age_min(maintenance, now)
+    in_maint = age is not None and 0 <= age <= MAINT_GRACE_MIN
     minutes = now.hour * 60 + now.minute
     prev_counts: Dict[str, int] = dict(state.get("consecutive") or {})
     counts: Dict[str, int] = {}
@@ -164,9 +196,15 @@ def evaluate(now: datetime, health: Optional[dict], trend: Optional[dict], risk:
         if journal_15.get("errors", 0) > 0:
             alert("journal_errors", f"{journal_15['errors']} errores/tracebacks en los últimos {WINDOW_MIN} min"
                                     + (f": {journal_15['first_error']}" if journal_15.get("first_error") else ""))
-        # deploys restart once (twice when install.sh re-enables); a loop is 3+ in the window
-        if journal_15.get("restarts", 0) >= 3:
-            alert("restart_loop", f"El bridge se ha reiniciado {journal_15['restarts']} veces en {WINDOW_MIN} min")
+        # deploys restart once (twice when install.sh re-enables); a loop is 3+ in the window,
+        # or 6+ while a deploy is in flight, when a couple of planned restarts are expected
+        limit = MAX_RESTARTS_MAINT if in_maint else MAX_RESTARTS
+        if journal_15.get("restarts", 0) >= limit:
+            rep.facts["restart_limit"] = limit
+            alert("restart_loop", f"El bridge se ha reiniciado {journal_15['restarts']} veces en {WINDOW_MIN} min"
+                                  + (" (durante un despliegue)" if in_maint else ""))
+    if in_maint:
+        rep.facts["deploy"] = f"{maintenance.get('commit', '?')} hace {age:.0f} min"
     if journal_60.get("available") and journal_60.get("regime_changed", 0) > MAX_REGIME_FLIPS_PER_HOUR:
         alert("regime_flood", f"{journal_60['regime_changed']} cambios de régimen en la última hora "
                               f"(umbral {MAX_REGIME_FLIPS_PER_HOUR})")
@@ -278,7 +316,7 @@ def main() -> int:
     j15 = journal_stats(WINDOW_MIN)
     j60 = journal_stats(60)
     j24 = journal_stats(24 * 60)
-    rep = evaluate(now, health, trend, risk, account, j15, j60, j24, state)
+    rep = evaluate(now, health, trend, risk, account, j15, j60, j24, state, read_maintenance())
 
     sent = []
     last_alerts: Dict[str, float] = state.get("last_alerts") or {}

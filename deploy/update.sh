@@ -36,6 +36,8 @@ fi
 
 cp $APP_DIR/deploy/botstrike-bridge.service /etc/systemd/system/botstrike-bridge.service
 systemctl daemon-reload
+# Tell the ops monitor these restarts are planned, so a deploy cannot look like a crash loop.
+su - botstrike -c "cd $APP_DIR && printf '{\"ts\": \"%s\", \"commit\": \"%s\"}'   \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \"$(git rev-parse --short HEAD)\" > data/maintenance.json"
 systemctl restart botstrike-bridge
 sleep 6
 curl -sf localhost:9420/api/health && echo && systemctl --no-pager --lines=5 status botstrike-bridge

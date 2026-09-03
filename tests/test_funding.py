@@ -106,3 +106,20 @@ def test_record_rates_appends_a_csv_row_per_market(tmp_path):
     assert lines[0] == "ts,utc,symbol,rate,annualized_pct" and len(lines) == 4
     assert lines[1].split(",")[2] == "BTC-USD" and lines[1].endswith("0.109500")   # 0.01 %/8 h ≈ 10.95 %/yr
     assert record_rates({}, DAY0, path=p) == 0
+
+
+def test_funding_is_attributed_to_the_position_not_the_market_lifetime():
+    """A symbol closed and reopened must not inherit the previous position's carry."""
+    acc = FundingAccrual(path=None)
+    acc.history = [
+        {"symbol": "BTC-USD", "amount": -1.0, "ts": 1000.0},   # first position
+        {"symbol": "BTC-USD", "amount": -2.0, "ts": 2000.0},   # first position
+        {"symbol": "BTC-USD", "amount": -0.5, "ts": 5000.0},   # second position, opened at 4000
+        {"symbol": "ETH-USD", "amount": -9.0, "ts": 5000.0},   # another market entirely
+    ]
+    acc.by_symbol = {"BTC-USD": -3.5, "ETH-USD": -9.0}
+    assert acc.since("BTC-USD", 4000.0) == -0.5          # only the open position's window
+    assert acc.since("BTC-USD", 900.0) == -3.5           # the whole lifetime when asked for it
+    assert acc.since("BTC-USD", 1500.0, 2500.0) == -2.0  # a closed position's window
+    assert acc.since("BTC-USD", 0.0) == 0.0              # unknown open time: caller falls back
+    assert acc.since("SOL-USD", 900.0) == 0.0

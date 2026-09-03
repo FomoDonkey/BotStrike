@@ -133,3 +133,32 @@ def test_non_transient_faults_still_alert_on_the_first_check():
                       {**J_OK, "errors": 3, "first_error": "boom"}, J_OK, J_OK, {"last_summary_date": "2026-09-03"})
     keys = {a["key"] for a in rep.alerts}
     assert {"trend_missing", "circuit_breaker", "journal_errors"} <= keys and rep.pending == {}
+
+
+def test_planned_deploy_restarts_do_not_alert_but_a_crash_loop_still_does():
+    """Two deploys in the window restart the bridge 4x; that is maintenance, not a crash loop."""
+    j = {**J_OK, "restarts": 4}
+    maint = {"ts": "2026-09-03T11:55:00Z", "commit": "abc1234"}
+    quiet = om.evaluate(_now(12, 0), HEALTH, TREND, RISK, ACCOUNT, j, J_OK, J_OK,
+                        {"last_summary_date": "2026-09-03"}, maint)
+    assert [a["key"] for a in quiet.alerts] == []
+    assert "abc1234" in quiet.facts.get("deploy", "")
+
+    # same journal without a deploy marker: that IS a loop and must alert
+    loud = om.evaluate(_now(12, 0), HEALTH, TREND, RISK, ACCOUNT, j, J_OK, J_OK,
+                       {"last_summary_date": "2026-09-03"})
+    assert [a["key"] for a in loud.alerts] == ["restart_loop"]
+
+    # systemd retries every 10 s, so a real crash loop clears the higher bar even during a deploy
+    crash = om.evaluate(_now(12, 0), HEALTH, TREND, RISK, ACCOUNT, {**J_OK, "restarts": 9}, J_OK, J_OK,
+                        {"last_summary_date": "2026-09-03"}, maint)
+    assert [a["key"] for a in crash.alerts] == ["restart_loop"]
+
+
+def test_stale_maintenance_marker_is_ignored():
+    """A marker from a deploy an hour ago must not silence tonight's crash loop."""
+    old = {"ts": "2026-09-03T10:00:00Z", "commit": "abc1234"}
+    rep = om.evaluate(_now(12, 0), HEALTH, TREND, RISK, ACCOUNT, {**J_OK, "restarts": 4}, J_OK, J_OK,
+                      {"last_summary_date": "2026-09-03"}, old)
+    assert [a["key"] for a in rep.alerts] == ["restart_loop"]
+    assert "deploy" not in rep.facts

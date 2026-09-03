@@ -121,6 +121,25 @@ class FundingAccrual:
         self.save()
         return total
 
+    def since(self, symbol: str, start_ts: float, end_ts: Optional[float] = None) -> float:
+        """Funding charged on `symbol` while ONE position was open — not the market's lifetime total.
+
+        `by_symbol` accumulates forever, so a symbol that is closed and reopened would show the old
+        position's carry on the new one (audit 2026-09-03). Every settlement is stamped in `history`,
+        so the honest per-operation figure is the sum of the rows inside the position's own window.
+        """
+        if not start_ts:
+            return 0.0
+        total = 0.0
+        for r in self.history:
+            if r.get("symbol") != symbol:
+                continue
+            ts = _f(r.get("ts"))
+            if ts < start_ts or (end_ts is not None and ts > end_ts):
+                continue
+            total += _f(r.get("amount"))
+        return round(total, 8)
+
     def start(self, now_ts: Optional[float] = None) -> None:
         """Arm the clock without charging anything (first run / fresh install)."""
         if not self.last_settled_ts:

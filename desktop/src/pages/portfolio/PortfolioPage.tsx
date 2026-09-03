@@ -115,7 +115,7 @@ export function PortfolioPage() {
         <ListRow label="All Time PNL"><Signed value={alltimePnl} format={formatSignedMoney} /></ListRow>
         <ListRow label="All Time Volume" hint="Sum of entry and exit notionals">{p ? formatMoney(p.alltime_volume) : "---"}</ListRow>
         <ListRow label="Fees paid">{formatMoney(fees)}</ListRow>
-        <ListRow label="Funding paid" hint={HINTS.fundingPaid}>
+        <ListRow label="Funding paid" hint={HINTS.fundingTotal}>
           <Signed value={fundingTotal ?? undefined} format={(v) => formatSignedMoney(v, 4)} />
         </ListRow>
       </ListSection>
