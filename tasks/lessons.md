@@ -1153,3 +1153,29 @@
   surte efecto en el despliegue SIGUIENTE. Verifiqué el marcador dos veces creyendo que estaba roto.
 - **LESSON: al tocar el script que se ejecuta a sí mismo, verificar el bloque nuevo ejecutándolo aparte,
   no esperando que el despliegue en curso ya lo use.**
+
+### El reloj del venue es un dato, no una convención
+- Todo el mundo asume que un perpetuo liquida cada 8 horas. Strike liquida CADA HORA: su historial
+  devuelve 167 filas para 7 días y `nextFundingTime` cae siempre en punto. El bot cobraba la tasa
+  horaria una vez cada 8 horas, infracobrando el coste de carry unas 8 veces.
+- **LESSON: cuando un coste depende de una cadencia, medir la cadencia en el venue antes de codificarla.
+  Y si el intervalo es configurable, TODO lo que dependa de él (tope de sanidad, anualización, cuenta
+  atrás, textos de ayuda) tiene que leerlo, no repetir el número.**
+
+### Un cero no es "sin dato"
+- Filtrar las tasas del venue con `if r` borró oro, plata, S&P y petróleo del panel de funding: los
+  cuatro cotizaban exactamente 0 % ese día. Cuatro de seis posiciones desaparecieron por una verdad.
+- **LESSON: distinguir "no hay respuesta" de "la respuesta es cero". `is None`, nunca truthiness.**
+
+### La pantalla tiene que citar la misma fuente que el motor
+- El panel de funding, la cabecera de mercado y el detalle construían cada uno su propia tasa desde el
+  feed intradía, mientras el motor cobraba la del venue. Tres pantallas, tres números para un dato.
+- **LESSON: un valor que el motor calcula se sirve desde el motor, no se recalcula en el endpoint.**
+
+### Verificar en el navegador de verdad encuentra lo que un script no ve
+- La cuenta atrás inventada de 8 h solo aparecía durante los segundos previos a que llegara el REST:
+  invisible en una captura tomada tras esperar, evidente al abrir la página y mirarla.
+- Y al revés: "Loading strategies…" que no terminaba nunca NO era un fallo — `usePolling` salta los
+  ticks con la pestaña oculta, y la pestaña de la extensión lo está siempre.
+- **LESSON: mirar la carga, no solo el estado final; y antes de declarar un fallo visto en automación,
+  comprobar si es un artefacto del entorno de automación.**

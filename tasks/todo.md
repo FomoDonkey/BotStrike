@@ -1510,3 +1510,37 @@ toda la UI al milímetro". Todo lo de abajo está verificado en el CT 104, no de
       tipo de fila propio ("carry", ámbar) y el gráfico ignora los asentamientos
 - [x] Barrida de las 8 rutas a 1440 y 390: 0 desbordes, 0 errores de consola, 0 [object Object], contraste 0 infractores
 - [x] 287 tests en verde en local y en el CT; despliegues afc8991 y siguientes con RESULT PASS
+
+## Revisión milimétrica de la UI: datos, métricas y textos (2026-09-03, ronda 2)
+Petición: "revisa la UI del bot todos los datos, metricas, etc. y verifica que sean todos reales,
+correctos y perfectos... visualmente que todo se entienda". Recorrido de las 8 rutas y de TODAS sus
+pestañas, cruzando cada número contra la API. Encontrado y corregido:
+- [x] **Strike liquida el funding CADA HORA, no cada 8**: 167 filas de historial para 7 días y
+      `nextFundingTime` siempre en punto. Cobrar la tasa horaria en un reloj de 8 h infracobraba el
+      carry ~8x. Intervalo por defecto = 1 h, tope de tick malo escalado, `record_rates` anualiza con
+      su propio intervalo, y la tasa del feed (8 h) se escala al intervalo al rellenar huecos
+- [x] Una tasa de venue igual a 0 se descartaba por falsy: desaparecían XAU, XAG, SP500 y WTI del panel
+- [x] `/api/funding` construía las tasas solo con el feed: anualizaba la tasa de Binance en reloj
+      horario (87 %/yr para BTC) y omitía 4 de los 6 mercados en cartera
+- [x] El historial de funding venía de Binance: para XAU-USD era el perp de oro de Binance, otro
+      mercado; SP500-USD y WTI-USD salían vacíos. Ahora sirve Strike, con Binance solo de reserva
+- [x] Una tasa positiva (coste para un libro largo) se pintaba en verde en cabecera y detalles
+- [x] "Current funding" leía el feed: +0,0100 % frente al +0,0016 % real del venue
+- [x] "Next payment" contaba a la marca de 8 h: 4h55 cuando faltaban 55 min
+- [x] El cliente inventaba la cuenta atrás con una constante de 8 h hasta que llegaba el REST
+- [x] El mercado listaba Fibonacci y Divergence (ambas apagadas) y omitía TREND_DAILY, la que tiene
+      la posición
+- [x] "Venue Binance" cuando Binance es el feed de precios y la ejecución es Strike
+- [x] La descripción de Trend daily anunciaba "top-6 by 30d volume" (regla eliminada) y "universe (monthly)"
+- [x] Profit factor: "---" en la tarjeta y 99.00 en el edge monitor para lo mismo
+- [x] BTCUSDT junto a WTI-USD: dos nomenclaturas para un mismo libro
+- [x] Riesgo: perfiles tarifados sobre la equity realizada (1.009,64) junto a una tarjeta con 1.016,07,
+      y "Peak" por debajo del valor actual sin decir que es el pico realizado
+- [x] Ajustes: el texto decía "Binance y Strike usan 8 h", el pool "símbolos spot de Binance", el
+      selector de venue no ofrecía Strike, y "Max open positions 4" sin decir que no aplica al libro diario
+- [x] Sistema: "UI 2.13.1" con el puente en 2.16.0, "hace 0 min" en una interfaz en inglés, ISO cruda
+- [x] Backtest: ofrecía Mean Reversion y Fibonacci sin decir que la investigación las congeló
+- [x] Data: columna "Files" que la API nunca rellena
+- [x] Gráfico en UTC y tablas en hora local: el mismo fill se leía 19:07 y 21:07
+- [x] Verificado: 8/8 rutas limpias a 1440 y 390, contraste 0 infractores, 292 tests, 0 discrepancias
+      entre pantalla y API
