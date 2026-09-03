@@ -47,20 +47,20 @@ export function FundingBlock({ funding }: { funding: EndpointState<FundingRespon
           <p className="text-[12px] font-medium text-text-2">Annualised rate per market: this settlement extrapolated to a year, next to the 90-day median measured on the venue. Outlined = open position; the rest are candidates the daily run may buy.</p>
           {/* Strike paints every funding figure in its brand mint, sign or not. Ours takes the side of
               a long-only book, so the colour must say what it means where the numbers are. */}
+          {/* Coloured by SIGN, like the venue. What it means for a long-only book is in the words. */}
           <p className="text-[12px] font-medium text-text-2 flex items-center gap-2 flex-wrap">
-            <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-rose" />the book pays</span>
-            <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-mint" />the book is paid</span>
-            <span className="opacity-70">the venue shows the same rate without a sign colour</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-mint" />positive: long pays short — the book pays</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-rose" />negative: short pays long — the book is paid</span>
           </p>
           <div className="flex flex-wrap gap-1.5">
             {rates.map(([sym, r]) => (
               <span key={sym} className={cn("inline-flex items-baseline gap-1 rounded-[6px] px-2 py-1",
                                             r.held ? "bg-panel-2 ring-1 ring-hairline-strong" : "bg-panel-2")}
-                    title={r.held ? "Open position — the book is paying this rate"
+                    title={r.held ? `Open position — ${(r.annualized_pct ?? 0) > 0 ? "the book pays this rate" : (r.annualized_pct ?? 0) < 0 ? "the book is paid this rate" : "nothing changes hands"}`
                                   : r.candidate ? "In the candidate pool — this is what holding it would cost"
                                   : "Reference: no open position"}>
                 <span className="text-[12px] font-semibold text-text">{marketLabel(sym)}</span>
-                <span className={cn("num text-[12px] font-semibold", (r.annualized_pct ?? 0) > 0 ? "text-rose" : (r.annualized_pct ?? 0) < 0 ? "text-mint" : "text-text")}>
+                <span className={cn("num text-[12px] font-semibold", (r.annualized_pct ?? 0) > 0 ? "text-mint" : (r.annualized_pct ?? 0) < 0 ? "text-rose" : "text-text")}>
                   {formatPct(r.annualized_pct ?? 0, 1)}
                 </span>
                 <span className="text-[11.5px] font-medium text-text-2">/yr now</span>

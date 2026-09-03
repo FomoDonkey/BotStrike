@@ -16,7 +16,7 @@ import { MORE_TIMEFRAMES, TIMEFRAMES, type Timeframe } from "@/components/charts
 import { divergenceOverlays, positionPriceLines, type PriceLineSpec } from "@/components/charts/chartOverlays";
 import { exitLadderOf } from "@/lib/market";
 import { formatPrice, formatSignedPct } from "@/lib/utils";
-import { COLOR_BLUE, COLOR_DOWN, COLOR_DOWN_CB, COLOR_UP, COLOR_UP_CB } from "@/lib/constants";
+import { COLOR_BLUE, COLOR_DOWN, COLOR_DOWN_CB, COLOR_UP, COLOR_UP_CB, SYMBOLS} from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { SignalsFeed } from "./SignalsFeed";
 import { DepthChart } from "./DepthChart";
@@ -52,6 +52,7 @@ interface Elements {
 /** Chart · Funding · Depth · Signals · Details with Strike's toolbar (spec §3.1). */
 export function ChartArea({ market, timeframe, onTimeframe, markers, positions, signals }: ChartAreaProps) {
   const symbol = market.symbol;
+  const hasFeed = (SYMBOLS as readonly string[]).includes(symbol);
   const [tab, setTab] = useState<ChartTab>("chart");
   const [indicator, setIndicator] = useState<Indicator>("macd");
   const [priceMode, setPriceMode] = useState<PriceMode>("last");
@@ -173,6 +174,15 @@ export function ChartArea({ market, timeframe, onTimeframe, markers, positions, 
         <div className="md:hidden flex items-center h-9 px-2 border-b border-hairline-soft overflow-x-auto scrollbar-none shrink-0">{toolbar}</div>
       )}
 
+      {/* A market with no intraday stream renders an empty chart. Say why instead of leaving a void:
+          the daily trend book prices these from daily bars, and funding still applies (2026-09-04). */}
+      {tab === "chart" && !hasFeed && (
+        <div className="px-3 py-2 border-b border-hairline-soft text-[12.5px] font-medium text-text-2 shrink-0">
+          <span className="text-text font-semibold">{symbol}</span> has no intraday stream on this bridge —
+          no chart, order book or tape. It trades in the daily trend book, priced from daily bars; its funding,
+          exit ladder and position are live on the panels beside this.
+        </div>
+      )}
       {tab === "chart" && (
         <div className="flex flex-col flex-1 min-h-0">
           <ErrorBoundary fallback={<div className="flex flex-1 items-center justify-center text-text text-[13px] font-medium">Chart unavailable</div>}>

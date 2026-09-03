@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/shallow";
 import { Search, Star } from "lucide-react";
 import { useMarketStore } from "@/stores/marketStore";
+import { useEndpoint } from "@/hooks/useEndpoint";
+import { api, type VenueMarket } from "@/lib/api";
+import { fundingDirection, fundingMeaning } from "@/lib/market";
 import { useNow } from "@/hooks/useNow";
 import { useSymbolChanges } from "@/hooks/useSymbolChanges";
 import { FAVORITE_SYMBOLS, SYMBOLS, SYMBOL_COLORS, SYMBOL_LABELS } from "@/lib/constants";
@@ -17,8 +20,12 @@ interface MarketPickerProps {
   onSelect: (symbol: string) => void;
 }
 
-type Tab = "favorites" | "all";
-const TABS = [{ id: "favorites" as const, label: "Favorites" }, { id: "all" as const, label: "All" }];
+type Tab = "favorites" | "live" | "all";
+// "All" is every market the venue lists — the picker used to stop at four crypto while the trend book
+// held gold, silver, the S&P and oil (2026-09-04).
+const TABS = [{ id: "favorites" as const, label: "Favorites" },
+              { id: "live" as const, label: "Live feed" },
+              { id: "all" as const, label: "All markets" }];
 
 /** Strike's market picker (Ctrl+K): search, Favorites / All, dense columns, ↑↓ Enter Esc. */
 export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerProps) {
@@ -31,11 +38,27 @@ export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerPr
   const info = useMarketStore(useShallow((s) => s.marketInfo));
   const changes = useSymbolChanges(now / 1000);
 
+  const venue = useEndpoint(() => api.markets(), 60_000, "", open);
+  const byMarket = useMemo(() => {
+    const m = new Map<string, VenueMarket>();
+    for (const v of venue.data?.markets ?? []) m.set(v.symbol, v);
+    return m;
+  }, [venue.data]);
+
   const rows = useMemo(() => {
-    const base = tab === "favorites" ? SYMBOLS.filter((s) => FAVORITE_SYMBOLS.includes(s)) : [...SYMBOLS];
+    const all = venue.data?.markets?.length ? venue.data.markets.map((v) => v.symbol) : [...SYMBOLS];
+    const base = tab === "favorites" ? all.filter((s) => FAVORITE_SYMBOLS.includes(s))
+      : tab === "live" ? all.filter((s) => byMarket.get(s)?.feed ?? SYMBOLS.includes(s as (typeof SYMBOLS)[number]))
+      : all;
     const q = query.trim().toLowerCase();
-    return base.filter((s) => !q || s.toLowerCase().includes(q) || (SYMBOL_LABELS[s] ?? "").toLowerCase().includes(q));
-  }, [tab, query]);
+    const filtered = base.filter((s) => !q || s.toLowerCase().includes(q) || (SYMBOL_LABELS[s] ?? "").toLowerCase().includes(q));
+    // held first, then the ones the daily run may buy, then the rest — alphabetical inside each group
+    const rank = (s: string) => {
+      const v = byMarket.get(s);
+      return v?.held ? 0 : v?.feed ? 1 : v?.pool ? 2 : 3;
+    };
+    return filtered.sort((x, y) => rank(x) - rank(y) || x.localeCompare(y));
+  }, [tab, query, venue.data, byMarket]);
 
   useEffect(() => {
     if (open) inputRef.current?.focus();
@@ -103,15 +126,26 @@ export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerPr
                       <span className="w-2 h-2 rounded-full" style={{ backgroundColor: SYMBOL_COLORS[s] ?? "#FFFFFF" }} />
                       <span className="font-semibold text-text">{s}</span>
                       {s === symbol && <span className="text-[11px] font-medium text-mint">current</span>}
+                      {byMarket.get(s)?.held && <span className="text-[11px] font-medium text-mint">open</span>}
+                      {byMarket.get(s) && !byMarket.get(s)!.feed && (
+                        <span className="text-[11px] font-medium text-text-2" title="No intraday stream: this market trades in the daily trend book, priced from daily bars">daily only</span>
+                      )}
                     </span>
                   </td>
                   <td className="num">{p > 0 ? formatPrice(p) : "---"}</td>
                   <td><SignedPct value={changes[s]} /></td>
                   <td className="num">{formatCompactUSD(mi?.volume_24h ?? 0)}</td>
                   <td className="num">{mi?.open_interest ? `${formatCompact(mi.open_interest)} ${SYMBOL_LABELS[s] ?? ""}` : "---"}</td>
-                  <td className={cn("num", typeof f === "number" ? (f > 0 ? "text-mint" : f < 0 ? "text-rose" : "text-text") : "text-text-3")}>
-                    {typeof f === "number" ? formatSignedPct(f, 4) : "---"}
-                  </td>
+                  {(() => {
+                    // The venue's rate is the truth for every market; the feed only covers four.
+                    const rate = byMarket.get(s)?.funding_rate ?? f;
+                    return (
+                      <td className={cn("num", typeof rate === "number" ? (rate > 0 ? "text-mint" : rate < 0 ? "text-rose" : "text-text") : "text-text-3")}
+                          title={typeof rate === "number" ? `${fundingDirection(rate)} — ${fundingMeaning(rate)}` : undefined}>
+                        {typeof rate === "number" ? formatSignedPct(rate, 4) : "---"}
+                      </td>
+                    );
+                  })()}
                 </tr>
               );
             })}

@@ -10,7 +10,7 @@ import { StrategyTag } from "@/components/ui/Chip";
 import { HINTS } from "@/lib/hints";
 import { EXCHANGE_LABELS, STRATEGY_DESCRIPTIONS, SYMBOL_LABELS } from "@/lib/constants";
 import { cn, formatCompact, formatCompactUSD, formatPct, formatPrice, formatSignedPct, formatUSD } from "@/lib/utils";
-import { formatCountdown, PAPER_MAINTENANCE_MARGIN, positionNotional } from "@/lib/market";
+import { formatCountdown, PAPER_MAINTENANCE_MARGIN, positionNotional, fundingDirection, fundingMeaning, fundingTone} from "@/lib/market";
 
 const CONFIG_POLL_MS = 60_000;
 
@@ -78,7 +78,12 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
             <ListRow label="Current funding" hint={HINTS.funding}>
               {m.funding === null || m.funding === undefined
                 ? <span className="text-text-3">---</span>
-                : <span className={cn("num", m.funding > 0 ? "text-rose" : m.funding < 0 ? "text-mint" : "text-text")}>{formatSignedPct(m.funding, 4)}</span>}
+                : <span className={cn("num", fundingTone(m.funding) === "mint" ? "text-mint" : fundingTone(m.funding) === "rose" ? "text-rose" : "text-text")}
+                        title={`${fundingDirection(m.funding)} — ${fundingMeaning(m.funding)}`}>{formatSignedPct(m.funding, 4)}</span>}
+            </ListRow>
+            <ListRow label="Direction" hint="Who pays whom at the next settlement, in the venue's own words">
+              <span className="font-semibold">{fundingDirection(m.funding)}</span>
+              <span className="text-text-2 font-medium"> · {fundingMeaning(m.funding)}</span>
             </ListRow>
             <ListRow label="Next payment" hint="Countdown to the venue's next funding settlement">{formatCountdown(m.countdownSec)}</ListRow>
             <ListRow label="Maintenance margin" hint="Margin fraction at which the paper liquidation estimate triggers">{formatPct(mm, 1)}</ListRow>

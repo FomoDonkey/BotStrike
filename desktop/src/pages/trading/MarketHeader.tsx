@@ -9,7 +9,7 @@ import { SignedPct } from "@/components/shared/TradeChips";
 import { RegimeChip } from "@/components/ui/Chip";
 import { SYMBOL_COLORS, SYMBOL_LABELS } from "@/lib/constants";
 import { cn, formatCompact, formatCompactUSD, formatPrice, formatRelative, formatSignedPct } from "@/lib/utils";
-import { formatCountdown } from "@/lib/market";
+import { formatCountdown, fundingDirection, fundingMeaning, fundingTone} from "@/lib/market";
 import { MarketPicker } from "./MarketPicker";
 
 interface MarketHeaderProps {
@@ -17,11 +17,13 @@ interface MarketHeaderProps {
   onSymbolChange: (s: string) => void;
 }
 
-function Stat({ label, hint, children, className }: { label: string; hint?: string; children: ReactNode; className?: string }) {
+function Stat({ label, hint, sub, children, className }: { label: string; hint?: string; sub?: string; children: ReactNode; className?: string }) {
   return (
     <div className={cn("flex flex-col justify-center gap-1 shrink-0 min-w-0", className)}>
       <span className="text-[12px] leading-none font-medium text-text-2 whitespace-nowrap">{hint ? <Hint title={hint}>{label}</Hint> : label}</span>
       <span className="num text-[13px] leading-none font-semibold text-text whitespace-nowrap">{children}</span>
+      {/* Who pays whom, in words: the colour convention differs between venues, the wording cannot. */}
+      {sub && <span className="text-[11px] leading-none font-medium text-text-2 whitespace-nowrap">{sub}</span>}
     </div>
   );
 }
@@ -89,11 +91,9 @@ export function MarketHeader({ market: m, onSymbolChange }: MarketHeaderProps) {
       <div ref={scrollRef} className="flex items-center gap-6 px-4 overflow-x-auto scrollbar-none min-w-0 flex-1 rounded-r-lg">
         <Stat label="Mark Price" hint={HINTS.mark}>{m.mark > 0 ? formatPrice(m.mark) : "---"}</Stat>
         <Stat label="Index Price" hint={HINTS.index}>{m.index > 0 ? formatPrice(m.index) : "---"}</Stat>
-        <Stat label="Funding / Countdown" hint={HINTS.funding}>
-          {m.funding === null ? <span className="text-text-3">---</span> : <span title={m.funding > 0 ? "Positive: longs pay shorts, so this long-only book PAYS. The venue shows the same number without a sign colour."
-                                    : m.funding < 0 ? "Negative: shorts pay longs, so this book IS PAID."
-                                    : "Zero this settlement: nothing changes hands."}
-                        className={m.funding > 0 ? "text-rose" : m.funding < 0 ? "text-mint" : ""}>{formatSignedPct(m.funding, 4)}</span>}
+        <Stat label="Funding / Countdown" hint={HINTS.funding} sub={fundingDirection(m.funding)}>
+          {m.funding === null ? <span className="text-text-3">---</span> : <span title={`${fundingDirection(m.funding)} — ${fundingMeaning(m.funding)}`}
+                        className={fundingTone(m.funding) === "mint" ? "text-mint" : fundingTone(m.funding) === "rose" ? "text-rose" : ""}>{formatSignedPct(m.funding, 4)}</span>}
           <span className="text-text-2 font-medium"> / {formatCountdown(m.countdownSec)}</span>
         </Stat>
         <Stat label={`${m.winLabel} Change`} hint={winHint}><SignedPct value={m.change} /></Stat>

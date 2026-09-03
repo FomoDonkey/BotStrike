@@ -269,3 +269,26 @@ def test_every_open_market_reaches_the_socket_and_closures_are_cleared(monkeypat
     asyncio.get_event_loop_policy().new_event_loop().run_until_complete(bridge._broadcast_trend_positions())
     assert ("WTI-USD", 0) in sent
     assert "WTI-USD" not in bridge._trend_symbols_sent
+
+
+def test_markets_endpoint_lists_the_whole_venue_not_only_the_feed(st, monkeypatch):
+    """The picker stopped at four crypto while the trend book held gold, silver, the S&P and oil.
+    Every market the bot could operate is listed, tagged with what it offers (2026-09-04)."""
+    from types import SimpleNamespace as NS
+
+    eng = NS(_venue_funding={"BTC-USD": 1.6e-05, "XAU-USD": 0.0, "ZEC-USD": -1.9e-05, "DOGE-USD": 2e-05},
+             settings=NS(symbol_names=["BTC-USD", "ETH-USD"],
+                         trading=NS(funding_interval_hours=1, trend_pool="BTCUSDT,XAU-USD,ZEC-USD",
+                                    exchange_venue="strike")),
+             _funding_positions=lambda: [{"symbol": "XAU-USD"}])
+    st.engine, st.running = eng, True
+    r = TestClient(bridge.app).get("/api/markets").json()
+
+    by = {m["symbol"]: m for m in r["markets"]}
+    assert set(by) == {"BTC-USD", "ETH-USD", "XAU-USD", "ZEC-USD", "DOGE-USD"}
+    assert by["BTC-USD"]["feed"] is True and by["BTC-USD"]["pool"] is True
+    assert by["XAU-USD"]["held"] is True and by["XAU-USD"]["feed"] is False   # daily book only
+    assert by["DOGE-USD"]["feed"] is False and by["DOGE-USD"]["pool"] is False  # listed, not traded
+    assert by["ZEC-USD"]["funding_rate"] == pytest.approx(-1.9e-05)
+    assert by["ETH-USD"]["funding_rate"] is None            # the venue did not quote it
+    assert r["interval_hours"] == 1 and r["venue"] == "strike"

@@ -18,9 +18,10 @@ function pct(v: number, d = 4): string {
 /**
  * Funding tab: one bar per venue settlement + the cumulative line, 24H / 1W / 1M.
  *
- * ROSE = the rate is positive = the long book PAYS; mint = negative = it is paid. This is the
- * opposite of a price chart and matches the Account panel: the sign of the same quantity cannot
- * mean "good" on one screen and "bad" on another (audit 2026-09-03).
+ * Coloured by SIGN, matching the venue: mint = positive = long pays short; rose = negative = short
+ * pays long. Colouring a positive rate as "a cost to us" read as a bug beside Strike's green, and our
+ * own market picker was already sign-coloured (2026-09-04). What it means for this long-only book is
+ * carried by the legend and the direction wording, which no palette can contradict.
  */
 export function FundingChart({ symbol }: { symbol: string }) {
   const [range, setRange] = useState<Range>("1w");
@@ -62,14 +63,14 @@ export function FundingChart({ symbol }: { symbol: string }) {
     <div className="flex flex-col flex-1 min-h-0">
       <div className="flex items-center gap-4 px-3 h-10 border-b border-hairline shrink-0 overflow-x-auto scrollbar-none">
         <RangePills options={RANGES} value={range} onChange={setRange} />
-        <Stat label="Last settlement" value={last === null ? "---" : pct(last)} tone={last === null ? undefined : last > 0 ? "rose" : "mint"} />
-        <Stat label={`Avg (${RANGES.find((r) => r.id === range)?.label})`} value={avg === null ? "---" : pct(avg)} tone={avg === null ? undefined : avg > 0 ? "rose" : "mint"} />
-        <Stat label="Cumulative" value={cumLast === null ? "---" : pct(cumLast, 3)} tone={cumLast === null ? undefined : cumLast > 0 ? "rose" : "mint"} />
+        <Stat label="Last settlement" value={last === null ? "---" : pct(last)} tone={last === null ? undefined : last > 0 ? "mint" : "rose"} />
+        <Stat label={`Avg (${RANGES.find((r) => r.id === range)?.label})`} value={avg === null ? "---" : pct(avg)} tone={avg === null ? undefined : avg > 0 ? "mint" : "rose"} />
+        <Stat label="Cumulative" value={cumLast === null ? "---" : pct(cumLast, 3)} tone={cumLast === null ? undefined : cumLast > 0 ? "mint" : "rose"} />
         {/* The venue paints every funding figure in its brand mint, sign or not, so the colour there
             carries no meaning. Here it does — say which, so nobody has to remember. */}
         <span className="ml-auto flex items-center gap-2 text-[12px] font-medium text-text-2 whitespace-nowrap">
-          <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-rose" />the book pays</span>
-          <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-mint" />the book is paid</span>
+          <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-mint" />long pays short</span>
+          <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-rose" />short pays long</span>
           {fh.data?.source && <span className="opacity-70">· {fh.data.source}</span>}
         </span>
       </div>
@@ -98,7 +99,7 @@ export function FundingChart({ symbol }: { symbol: string }) {
                   formatter={(v: unknown, name: unknown) => [pct(Number(v), name === "cum" ? 3 : 4), name === "cum" ? "Cumulative" : "Funding rate"]}
                 />
                 <Bar yAxisId="rate" dataKey="rate" isAnimationActive={false} maxBarSize={18} radius={[2, 2, 0, 0]}>
-                  {data.map((r) => <Cell key={r.ts} fill={r.rate > 0 ? COLOR_DOWN : COLOR_UP} fillOpacity={0.75} />)}
+                  {data.map((r) => <Cell key={r.ts} fill={r.rate > 0 ? COLOR_UP : COLOR_DOWN} fillOpacity={0.75} />)}
                 </Bar>
                 {hasCum && <Line yAxisId="cum" type="monotone" dataKey="cum" stroke="#FFFFFF" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />}
               </ComposedChart>

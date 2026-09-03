@@ -1974,6 +1974,46 @@ async def get_funding():
     return _json_safe(out)
 
 
+@app.get("/api/markets")
+async def get_markets():
+    """Every market the bot could operate, not only the four with an intraday feed.
+
+    The picker listed a hard-coded crypto four while the trend book was holding gold, silver, the S&P
+    and oil (audit 2026-09-04). A market is tagged with what it actually offers here: `feed` = a live
+    intraday stream (chart, order book, tape), `pool` = a candidate the daily run may buy, `held` = an
+    open position right now. Reads the cached venue snapshot: no network call in a request handler.
+    """
+    engine = state.engine
+    if not engine:
+        return {"engine": False, "markets": []}
+    venue = dict(getattr(engine, "_venue_funding", {}) or {})
+    feed = [str(x).upper() for x in (getattr(engine.settings, "symbol_names", []) or [])]
+    pool = set()
+    try:
+        for x in str(getattr(engine.settings.trading, "trend_pool", "") or "").split(","):
+            x = x.strip().upper()
+            if x:
+                pool.add(x if "-" in x else (x[:-4] + "-USD" if x.endswith("USDT") else x))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        held = {str(p.get("symbol")) for p in (engine._funding_positions() or [])}
+    except Exception:  # noqa: BLE001
+        held = set()
+    measured = _measured_funding_90d()
+    interval = _funding_interval(engine)
+    from analytics.funding import annualized_pct
+    out = []
+    for sym in sorted(set(venue) | set(feed) | pool | held):
+        rate = float(venue.get(sym, 0.0) or 0.0)
+        out.append({"symbol": sym, "feed": sym in feed, "pool": sym in pool, "held": sym in held,
+                    "funding_rate": rate if sym in venue else None,
+                    "annualized_pct": round(annualized_pct(rate, interval), 6) if sym in venue else None,
+                    "annualized_90d": measured.get(sym)})
+    return _json_safe({"engine": True, "venue": str(getattr(engine.settings.trading, "exchange_venue", "") or ""),
+                       "interval_hours": interval, "markets": out})
+
+
 @app.get("/api/ops")
 async def get_ops():
     """Last ops-monitor evaluation (scripts/ops_monitor.py, CT timer) for the System page (spec §5.4)."""

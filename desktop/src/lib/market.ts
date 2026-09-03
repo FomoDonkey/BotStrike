@@ -262,3 +262,30 @@ export function ladderOutcomeVsEntry(ladder: ExitLadder, entry: number | null | 
   }
   return weight > 0 ? acc / weight : null;
 }
+
+/**
+ * Funding colour and wording.
+ *
+ * The venue colours the RATE by its sign (positive mint, negative rose) and states the direction in
+ * words — "Long Pays Short" / "Short Pays Long". We matched that on 2026-09-04: colouring positive as
+ * a cost looked wrong beside Strike's green, and our own picker was already sign-coloured, so the UI
+ * disagreed with itself. The meaning for a long-only book is carried by the words, which cannot be
+ * misread whichever palette you are used to.
+ *
+ * Cash already paid or received is a different quantity: that stays signed as money (rose = out).
+ */
+export function fundingTone(rate: number | null | undefined): "mint" | "rose" | "" {
+  if (typeof rate !== "number" || rate === 0) return "";
+  return rate > 0 ? "mint" : "rose";
+}
+
+export function fundingDirection(rate: number | null | undefined): string {
+  if (typeof rate !== "number" || rate === 0) return "Nothing changes hands this settlement";
+  return rate > 0 ? "Long pays short" : "Short pays long";
+}
+
+/** What it means for THIS book, which is long-only. */
+export function fundingMeaning(rate: number | null | undefined): string {
+  if (typeof rate !== "number" || rate === 0) return "the book neither pays nor is paid";
+  return rate > 0 ? "the book pays" : "the book is paid";
+}

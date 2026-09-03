@@ -932,8 +932,30 @@ export function probeBridge(baseUrl: string): Promise<HealthResponse> {
 
 // ── Public API ───────────────────────────────────────────────────
 
+/** GET /api/markets — the venue's tradable universe, tagged by what each market offers here. */
+export interface VenueMarket {
+  symbol: string;
+  /** a live intraday stream: chart, order book and tape work */
+  feed: boolean;
+  /** a candidate the daily trend run may buy */
+  pool: boolean;
+  held: boolean;
+  funding_rate: number | null;
+  annualized_pct: number | null;
+  annualized_90d?: number | null;
+}
+
+export interface MarketsResponse {
+  engine: boolean;
+  venue?: string;
+  interval_hours?: number;
+  markets: VenueMarket[];
+}
+
 export const api = {
   health: () => request<HealthResponse>("/api/health", { timeoutMs: HEALTH_TIMEOUT_MS }),
+  /** Every market the bot could operate on the venue, not only the four with an intraday feed. */
+  markets: () => request<MarketsResponse>("/api/markets"),
   config: () => request<ConfigResponse>("/api/config"),
   configSchema: () => request<ConfigSchemaResponse>("/api/config/schema"),
   /** Partial update — only the changed paths. Token required when the bridge is not loopback. */

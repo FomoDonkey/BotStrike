@@ -2,7 +2,7 @@
 export const HINTS = {
   mark: "Mark price — the exchange's fair price used for PnL and liquidation (index + funding basis). Falls back to the last trade.",
   index: "Index price — volume-weighted spot price across major exchanges.",
-  funding: "Funding rate for the venue's current settlement (Strike settles hourly); longs pay shorts when positive, so rose is a cost to this long-only book. Countdown to the next mark.",
+  funding: "Funding rate for the venue's current settlement (Strike settles hourly). Positive = long pays short, so this long-only book PAYS; negative = short pays long, so it IS PAID. Coloured by sign, like the venue. Countdown to the next settlement.",
   liq: "Liquidation price — where the margin (notional / leverage) is exhausted: long entry × (1 − 1/lev + 0.5 %), short entry × (1 + 1/lev − 0.5 %). Spot-like positions (leverage 1) cannot be liquidated.",
   roe: "Return on equity — unrealized PnL / margin. With leverage this is PnL % × leverage.",
   pnl: "Unrealized PnL at mark, before the exit fee.",
