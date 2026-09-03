@@ -199,3 +199,17 @@ def test_the_panel_prices_the_markets_the_book_may_buy_tomorrow():
     assert r["BTC-USD"]["held"] is True and r["BTC-USD"]["candidate"] is True
     assert r["BNB-USD"]["held"] is False and r["BNB-USD"]["candidate"] is True
     assert r["ZEC-USD"]["rate"] == pytest.approx(-1.9e-05)      # a market that PAYS the longs
+
+
+def test_the_socket_quotes_the_same_funding_as_rest(monkeypatch):
+    """The header falls back to the socket payload until the REST call lands, and the socket carried
+    the intraday feed's 8-hour rate: it read +0.0079 % where the venue said +0.0016 % (2026-09-03)."""
+    from types import SimpleNamespace as NS
+    from server import bridge
+
+    eng = NS(_venue_funding={"BTC-USD": 1.6e-05},
+             settings=NS(trading=NS(funding_interval_hours=1)),
+             market_data=NS(get_snapshot=lambda s: NS(funding_rate=1e-04)))
+    snap = eng.market_data.get_snapshot("BTC-USD")
+    assert bridge._market_funding_rate(eng, "BTC-USD", snap) == pytest.approx(1.6e-05)   # venue, not feed
+    assert bridge._funding_countdown_sec(3600 * 10 + 1500, 1) == 3600 - 1500             # hourly clock

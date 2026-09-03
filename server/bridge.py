@@ -650,9 +650,16 @@ async def _broadcast_symbol_state(engine, symbol: str):
     # Market snapshot
     snapshot = engine.market_data.get_snapshot(symbol)
     if snapshot:
+        payload = serialize_market_snapshot(snapshot)
+        # The snapshot's funding rate is the intraday FEED's 8-hour rate. The book is charged the
+        # venue's rate on the venue's clock, and the header falls back to this payload until the REST
+        # call lands — so it briefly showed +0.0079 % where the venue said +0.0016 % (audit
+        # 2026-09-03). One rate, from the venue, on every path.
+        payload["funding_rate"] = _market_funding_rate(engine, symbol, snapshot)
+        payload["funding_countdown_sec"] = _funding_countdown_sec(time.time(), _funding_interval(engine))
         await state.channels.broadcast("market", {
             "type": "snapshot",
-            "data": serialize_market_snapshot(snapshot),
+            "data": payload,
         })
 
     # Microstructure
