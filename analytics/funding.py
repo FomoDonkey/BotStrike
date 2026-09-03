@@ -172,3 +172,31 @@ class FundingAccrual:
 def annualized_pct(rate_per_interval: float, interval_hours: int = DEFAULT_INTERVAL_HOURS) -> float:
     """Funding rate per settlement → annualized fraction of notional (365 d)."""
     return rate_per_interval * (24 / interval_hours) * 365
+
+
+def record_rates(rates: Dict[str, float], now_ts: float, path: Optional[str] = None) -> int:
+    """Append one row per market to data/funding_rates.csv at every settlement.
+
+    Needed to validate funding-aware sizing later: no venue publishes a long funding history for
+    every market, so the only way to get one is to record it from today (roadmap P0.2). Returns the
+    number of rows written; never raises.
+    """
+    path = path or os.getenv("BOTSTRIKE_FUNDING_RATES",
+                             os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                          "data", "funding_rates.csv"))
+    rows = [(sym, rate) for sym, rate in sorted(rates.items())
+            if isinstance(rate, (int, float)) and math.isfinite(float(rate))]
+    if not rows:
+        return 0
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        new = not os.path.exists(path)
+        with open(path, "a", encoding="utf-8", newline="") as f:
+            if new:
+                f.write("ts,utc,symbol,rate,annualized_pct\n")
+            stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now_ts))
+            for sym, rate in rows:
+                f.write(f"{now_ts:.0f},{stamp},{sym},{float(rate):.10f},{annualized_pct(float(rate)):.6f}\n")
+        return len(rows)
+    except Exception:  # noqa: BLE001
+        return 0

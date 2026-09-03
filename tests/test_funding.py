@@ -95,3 +95,14 @@ def test_status_and_annualization(tmp_path):
     assert st["last_settled_utc"].endswith("Z") and len(st["recent"]) == 2
     assert annualized_pct(0.0001) == pytest.approx(0.1095)               # 0.01 %/8 h ≈ 10.95 %/yr
     assert annualized_pct(0.0000168) == pytest.approx(0.0183, abs=1e-4)  # measured ADA rate ≈ 1.8 %/yr
+
+
+def test_record_rates_appends_a_csv_row_per_market(tmp_path):
+    from analytics.funding import record_rates
+    p = str(tmp_path / "rates.csv")
+    assert record_rates({"BTC-USD": 0.0001, "ETH-USD": -0.00002, "BAD": float("nan")}, DAY0, path=p) == 2
+    assert record_rates({"BTC-USD": 0.00015}, DAY0 + 8 * H, path=p) == 1
+    lines = open(p, encoding="utf-8").read().strip().splitlines()
+    assert lines[0] == "ts,utc,symbol,rate,annualized_pct" and len(lines) == 4
+    assert lines[1].split(",")[2] == "BTC-USD" and lines[1].endswith("0.109500")   # 0.01 %/8 h ≈ 10.95 %/yr
+    assert record_rates({}, DAY0, path=p) == 0

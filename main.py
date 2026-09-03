@@ -887,7 +887,12 @@ class BotStrike:
                 now = time.time()
                 if not self.funding.due(now):
                     continue
-                payments = self.funding.compute(self._funding_positions(), self._funding_rates(), now)
+                rates = self._funding_rates()
+                # Record every market's rate at each settlement: no venue publishes a long funding
+                # history, so the only way to validate funding-aware sizing later is to build it now.
+                from analytics.funding import record_rates
+                record_rates(rates, now)
+                payments = self.funding.compute(self._funding_positions(), rates, now)
                 total = self.funding.mark_settled(payments, now)
                 if not payments:
                     continue
