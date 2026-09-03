@@ -107,6 +107,17 @@ export function ConnectionSettings() {
               {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
+          {/* Where the value actually lives. Without this the operator has to ask someone, which is
+              what happened on 2026-09-04 when every Close button showed as locked. */}
+          {!currentToken && (
+            <p className="mt-1.5 text-[12px] font-medium text-text-2 leading-snug">
+              The value is <code className="text-text">BOTSTRIKE_AUTH_TOKEN</code> in the bridge&apos;s <code className="text-text">.env</code>.
+              It is stored per browser and per address, so a new address needs it again. To copy it without
+              displaying it, in Git Bash:{" "}
+              <code className="text-text break-all">ssh root@HOST &apos;pct exec CT -- grep BOTSTRIKE_AUTH_TOKEN /opt/botstrike/app/.env&apos; | cut -d= -f2 | tr -d &apos;
+&apos; | clip</code>
+            </p>
+          )}
         </label>
 
         <div className="flex items-center gap-2 flex-wrap">
