@@ -82,3 +82,23 @@ def test_plan_sends_dedups_alerts_and_notifies_recovery():
     # summary rides along
     with_sum = om.Report(summary="<b>resumen</b>")
     assert [p["kind"] for p in om.plan_sends(with_sum, {}, now)] == ["summary"]
+
+
+def test_journal_stats_strips_ansi_and_ignores_startup_flips(monkeypatch):
+    sample = (
+        "\x1b[2m2026-09-03T00:14:12Z\x1b[0m [\x1b[32minfo\x1b[0m] \x1b[1mregime_changed\x1b[0m "
+        "\x1b[36mnew\x1b[0m=\x1b[35mRANGING\x1b[0m \x1b[36mold\x1b[0m=\x1b[35mUNKNOWN\x1b[0m symbol=BTC-USD\n"
+        "2026-09-03T00:20:00Z [info] regime_changed new=TRENDING_UP old=RANGING symbol=ETH-USD\n"
+        "INFO:     Started server process [1]\n"
+        "2026-09-03T00:21:00Z [info] telegram_sent chars=120\n"
+        "Traceback (most recent call last):\n"
+        "RuntimeError: boom\n"
+    )
+
+    class R:
+        stdout = sample
+
+    monkeypatch.setattr(om.subprocess, "run", lambda *a, **k: R())
+    j = om.journal_stats(15)
+    assert j["available"] is True and j["regime_changed"] == 1 and j["restarts"] == 1
+    assert j["telegram_sent"] == 1 and j["errors"] == 1 and j["first_error"].startswith("RuntimeError: boom")

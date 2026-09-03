@@ -17,6 +17,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -36,6 +37,7 @@ TREND_DEADLINE_MIN = 20          # the run is scheduled 00:05 UTC; alert if not 
 MAX_TICK_AGE_SEC = 120.0
 MAX_REGIME_FLIPS_PER_HOUR = 8    # after the 15-min/30-min fix we measure 1-2/h in total
 SERVICE = "botstrike-bridge"
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
 @dataclass
@@ -64,7 +66,9 @@ def journal_stats(since_min: int) -> Dict:
         ).stdout
     except Exception as e:  # noqa: BLE001
         return {"available": False, "error": f"{type(e).__name__}: {e}"}
-    lines = out.splitlines()
+    # structlog's console renderer colours the journal: "old=[35mUNKNOWN" never matched "old=UNKNOWN"
+    # and every restart counted as 4 regime flips (seen 2026-09-03 00:17Z). Strip ANSI first.
+    lines = [_ANSI.sub("", l) for l in out.splitlines()]
     errors = [l for l in lines if "Traceback (most recent call last)" in l or "[error" in l.lower()]
     first_error = ""
     for l in lines:
