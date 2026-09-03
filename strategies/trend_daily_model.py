@@ -34,6 +34,13 @@ class TrendParams:
     liq_exit_usd_venue: float = 5_000.0      # hard minimum 24 h volume at the venue
     liq_venue_multiple: float = 50.0         # ... and at least 50x one position's notional
     position_notional: float = 0.0           # set per run from equity/leverage/n_assets
+    # Short side. OFF by default: measured 2026-09-04 (tasks/research_shorts_and_speed_2026-09-04.md)
+    # it holds the Sharpe (1.92) and cuts the drawdown in all ten stress scenarios (7.6 % -> 5.6 %),
+    # and it is the book's only natural hedge against expensive funding (a short RECEIVES it) — but
+    # it SUBTRACTED return in the last four years (2022+: 1.73 vs 1.94), so it is a hedge with a
+    # premium, not an edge. Half size is the sizing that worked; symmetric shorts measured 1.57.
+    allow_shorts: bool = False
+    short_size: float = 0.5
 
     @classmethod
     def from_config(cls, tc) -> "TrendParams":
@@ -52,6 +59,8 @@ class TrendParams:
             corr_cap=float(getattr(tc, "trend_corr_cap", 0.85) or 0.85),
             liq_exit_usd_venue=float(getattr(tc, "trend_liq_venue_usd", 5_000.0) or 0.0),
             liq_venue_multiple=float(getattr(tc, "trend_liq_venue_multiple", 50.0) or 0.0),
+            allow_shorts=bool(getattr(tc, "trend_allow_shorts", False)),
+            short_size=float(getattr(tc, "trend_short_size", 0.5) or 0.5),
         )
 
     @property
@@ -59,31 +68,46 @@ class TrendParams:
         return max(max(self.lookbacks), self.vol_window) + 2
 
 
-def sub_strategy_positions(close: pd.Series, n: int) -> Tuple[pd.Series, pd.Series]:
-    """Position (0/1) and trailing stop of ONE lookback. Uses only data <= t."""
+def sub_strategy_positions(close: pd.Series, n: int, allow_shorts: bool = False,
+                           short_size: float = 0.5) -> Tuple[pd.Series, pd.Series]:
+    """Position and trailing stop of ONE lookback. Uses only data <= t.
+
+    Long-only by default (0/1). With `allow_shorts` the mirror image is added: an n-day LOW opens a
+    short of `short_size`, whose stop never rises, and the position is -short_size until the close
+    breaks back above it. Validated 2026-09-04 at half size — see TrendParams.
+    """
     roll_max = close.rolling(n).max()
     roll_min = close.rolling(n).min()
     mid = 0.5 * (roll_max + roll_min)
     pos = np.zeros(len(close))
     stop = np.full(len(close), np.nan)
-    in_pos = False
+    state = 0                            # 0 flat · 1 long · -1 short
     cur_stop = np.nan
     c = close.to_numpy(dtype=float)
     m = mid.to_numpy(dtype=float)
     rmax = roll_max.to_numpy(dtype=float)
+    rmin = roll_min.to_numpy(dtype=float)
     for i in range(len(c)):
         if np.isnan(m[i]):
             continue
-        if not in_pos:
-            if c[i] >= rmax[i]:          # close is the n-day high → enter
-                in_pos = True
+        if state == 0:
+            if c[i] >= rmax[i]:          # close is the n-day high → enter long
+                state = 1
                 cur_stop = m[i]          # initial stop = Donchian mid at entry
-        else:
+            elif allow_shorts and c[i] <= rmin[i]:   # n-day low → enter short
+                state = -1
+                cur_stop = m[i]
+        elif state == 1:
             cur_stop = max(cur_stop, m[i])   # trailing: never falls
             if c[i] <= cur_stop:
-                in_pos = False
+                state = 0
                 cur_stop = np.nan
-        pos[i] = 1.0 if in_pos else 0.0
+        else:
+            cur_stop = min(cur_stop, m[i])   # mirror image: never rises
+            if c[i] >= cur_stop:
+                state = 0
+                cur_stop = np.nan
+        pos[i] = 1.0 if state == 1 else (-abs(short_size) if state == -1 else 0.0)
         stop[i] = cur_stop
     return pd.Series(pos, index=close.index), pd.Series(stop, index=close.index)
 
@@ -96,7 +120,7 @@ def asset_weight(close: pd.Series, p: TrendParams) -> pd.Series:
     vol_scalar = vol_scalar.replace([np.inf, -np.inf], np.nan)
     weights = []
     for n in p.lookbacks:
-        pos, _ = sub_strategy_positions(close, n)
+        pos, _ = sub_strategy_positions(close, n, p.allow_shorts, p.short_size)
         weights.append(vol_scalar * pos)
     w = pd.concat(weights, axis=1).mean(axis=1)
     return w.fillna(0.0)
@@ -232,7 +256,10 @@ def target_weights(data: Dict[str, pd.DataFrame], universe: List[str], as_of: pd
             out[sym] = 0.0
             continue
         w = asset_weight(close, p)
-        out[sym] = float(max(0.0, w.iloc[-1])) * share
+        # The clamp is what makes the book long-only; with the short side enabled a negative weight
+        # is a short of that size (execution path still to be reviewed — see the research note).
+        val = float(w.iloc[-1])
+        out[sym] = (val if p.allow_shorts else max(0.0, val)) * share
     return out
 
 

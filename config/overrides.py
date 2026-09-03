@@ -144,6 +144,16 @@ GROUPS: List[Dict[str, Any]] = [
         _t("trend_min_listing_days", "Min listing age", "int", min=30, max=2000, step=1, unit="days"),
         _t("trend_liq_enter_usd", "Liquidity to enter", "number", min=0, max=1e10, step=100_000, unit="$/day"),
         _t("trend_liq_exit_usd", "Liquidity to stay", "number", min=0, max=1e10, step=100_000, unit="$/day"),
+        _t("trend_allow_shorts", "Trade the short side", "bool", restart=True,
+           help="OFF by default and that is a MEASURED decision (tasks/research_shorts_and_speed_2026-09-04.md). "
+                "At half size the short side holds the Sharpe (1.92) and cuts the drawdown in all ten stress "
+                "scenarios (7.6 % to 5.6 %), and it is the book's only natural hedge against expensive funding "
+                "because a short RECEIVES it. But it SUBTRACTED return over the last four years (2022+: 1.73 vs "
+                "1.94): a hedge with a premium, not an edge. The execution path is still written for a long book, "
+                "so treat this as a research switch until that is reviewed."),
+        _t("trend_short_size", "Short size", "number", min=0.1, max=1.0, step=0.1,
+           help="Fraction of a full position taken on the short side. 0.5 is the value that was validated; "
+                "symmetric shorts (1.0) measured Sharpe 1.57 and are the version the research rejected."),
         _t("trend_pool", "Candidate pool", "list",
            help="Comma-separated markets the daily run may pick from: Binance spot symbols (BTCUSDT) and/or "
                 "Strike markets (XAU-USD, SP500-USD, WTI-USD). A pool spanning more than one asset class "

@@ -293,3 +293,36 @@ def test_excursions_reports_mae_and_mfe_against_the_entry(tmp_path, monkeypatch)
     assert ex3["mfe_bps"] == pytest.approx(3000.0)       # the live mark, above every daily high
     eng.state.positions["BTCUSDT"].mark_price = 90.0
     assert eng.excursions()["BTCUSDT"]["mae_bps"] == pytest.approx(-1000.0)
+
+
+def test_the_book_is_long_only_unless_shorts_are_enabled():
+    """The short side is a measured OPTION (research 2026-09-04), not the default: at half size it
+    holds the Sharpe and cuts the drawdown, but it subtracted return in the last four years."""
+    # a market that makes new lows: the long-only rule must stay flat, the short rule must go short
+    falling = pd.Series(np.linspace(100.0, 60.0, 200), index=pd.date_range("2025-01-01", periods=200, freq="D"))
+
+    pos_long, _ = sub_strategy_positions(falling, 20)
+    assert float(pos_long.iloc[-1]) == 0.0                      # long-only: flat in a downtrend
+
+    pos_short, stop = sub_strategy_positions(falling, 20, allow_shorts=True, short_size=0.5)
+    assert float(pos_short.iloc[-1]) == pytest.approx(-0.5)     # short at HALF size, as validated
+    assert float(stop.iloc[-1]) > float(falling.iloc[-1])       # the short's stop sits above price
+
+    # the stop of a short never rises
+    stops = stop.dropna()
+    assert (stops.diff().dropna() <= 1e-9).all()
+
+    # full size when asked for it (the version the research rejected at 1.57)
+    pos_full, _ = sub_strategy_positions(falling, 20, allow_shorts=True, short_size=1.0)
+    assert float(pos_full.iloc[-1]) == pytest.approx(-1.0)
+
+
+def test_target_weights_clamp_shorts_away_unless_enabled():
+    idx = pd.date_range("2025-01-01", periods=200, freq="D")
+    falling = pd.DataFrame({"close": np.linspace(100.0, 60.0, 200)}, index=idx)
+    data = {"BTCUSDT": falling}
+    base = TrendParams(lookbacks=(20,), vol_window=30, n_assets=1)
+    assert target_weights(data, ["BTCUSDT"], idx[-1], base)["BTCUSDT"] == 0.0
+
+    shorting = TrendParams(lookbacks=(20,), vol_window=30, n_assets=1, allow_shorts=True, short_size=0.5)
+    assert target_weights(data, ["BTCUSDT"], idx[-1], shorting)["BTCUSDT"] < 0.0

@@ -186,6 +186,16 @@ class TradingConfig:
     trend_corr_cap: float = 0.85
     trend_liq_venue_usd: float = 5_000.0        # hard minimum 24 h volume at the venue
     trend_liq_venue_multiple: float = 50.0      # and >= 50x the notional of one position
+    # Short side of the daily book. OFF by default and that is a measured decision, not caution:
+    # tasks/research_shorts_and_speed_2026-09-04.md — at half size it holds the Sharpe (1.92) and cuts
+    # the drawdown in all ten stress scenarios (7.6 % -> 5.6 %), and it is the only natural hedge the
+    # book has against expensive funding (a short RECEIVES it). But it SUBTRACTED return in the last
+    # four years (2022+: 1.73 vs 1.94): a hedge with a premium, not an edge. Symmetric shorts (full
+    # size) measured 1.57 and are the version that was rejected earlier.
+    # NOTE: enabling this needs the EXECUTION path reviewed — the exit ladder, the funding sign and
+    # the paper fill logic are all written for a long book.
+    trend_allow_shorts: bool = False
+    trend_short_size: float = 0.5
     trend_pool: str = ("BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,LTCUSDT,TRXUSDT,"
                        "ETCUSDT,EOSUSDT,XLMUSDT,NEOUSDT,IOTAUSDT,ZECUSDT,DASHUSDT,SOLUSDT,"
                        "AVAXUSDT,DOTUSDT,LINKUSDT,ATOMUSDT")

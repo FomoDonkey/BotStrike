@@ -149,12 +149,20 @@ def sub_strategy_positions_ls(close: pd.Series, n: int) -> pd.Series:
 
 
 def asset_weight(close: pd.Series, lookbacks: List[int], target_vol: float, vol_window: int,
-                 long_short: bool = False) -> pd.Series:
+                 long_short: bool = False, pos_fn=None, df: Optional[pd.DataFrame] = None,
+                 symbol: str = "") -> pd.Series:
+    """Target weight of one asset. `pos_fn(df, n, symbol) -> Series` overrides the position rule so a
+    study can test a different one without duplicating the vol targeting or the ensemble average."""
     ret = close.pct_change(fill_method=None)
     sigma = ret.rolling(vol_window).std() * math.sqrt(ANNUALIZATION)
     scalar = (target_vol / sigma).clip(upper=LEVERAGE_CAP).replace([np.inf, -np.inf], np.nan)
-    f = sub_strategy_positions_ls if long_short else sub_strategy_positions
-    w = pd.concat([scalar * f(close, n) for n in lookbacks], axis=1).mean(axis=1)
+    if pos_fn is not None:
+        frame = df if df is not None else close.to_frame("close")
+        legs = [scalar * pos_fn(frame, n, symbol) for n in lookbacks]
+    else:
+        f = sub_strategy_positions_ls if long_short else sub_strategy_positions
+        legs = [scalar * f(close, n) for n in lookbacks]
+    w = pd.concat(legs, axis=1).mean(axis=1)
     return w.fillna(0.0)
 
 
@@ -185,14 +193,16 @@ def monthly_universe(data: Dict[str, pd.DataFrame], dates: pd.DatetimeIndex, n_a
 def backtest(data: Dict[str, pd.DataFrame], cost_bps: float = COST_BPS, lookbacks: Optional[List[int]] = None,
              target_vol: float = TARGET_VOL, vol_window: int = VOL_WINDOW, n_assets: int = N_ASSETS,
              corr_cap: float = CORR_CAP, long_short: bool = False, funding: bool = True,
-             funding_mult: float = 1.0) -> Dict:
+             funding_mult: float = 1.0, pos_fn=None,
+             rebalance_threshold: float = REBALANCE_THRESHOLD) -> Dict:
     lookbacks = lookbacks or LOOKBACKS
     dates = pd.DatetimeIndex(sorted(set().union(*[d.index for d in data.values()])))
     alloc = monthly_universe(data, dates, n_assets, corr_cap)
     w_assets, r_oo = {}, {}
     for s, d in data.items():
         dd = d.reindex(dates).ffill()
-        w_assets[s] = asset_weight(dd["close"], lookbacks, target_vol, vol_window, long_short).reindex(dates).fillna(0.0)
+        w_assets[s] = asset_weight(dd["close"], lookbacks, target_vol, vol_window, long_short,
+                                   pos_fn=pos_fn, df=dd, symbol=s).reindex(dates).fillna(0.0)
         r_oo[s] = (dd["open"] / dd["open"].shift(1) - 1.0).reindex(dates).fillna(0.0)
     W = pd.DataFrame(w_assets) * alloc
     R = pd.DataFrame(r_oo)
@@ -204,7 +214,7 @@ def backtest(data: Dict[str, pd.DataFrame], cost_bps: float = COST_BPS, lookback
         for s in W.columns:
             if (tgt[s] == 0) != (prev[s] == 0):
                 newp[s] = tgt[s]
-            elif prev[s] != 0 and abs(tgt[s] - prev[s]) / abs(prev[s]) > REBALANCE_THRESHOLD:
+            elif prev[s] != 0 and abs(tgt[s] - prev[s]) / abs(prev[s]) > rebalance_threshold:
                 newp[s] = tgt[s]
         W_exec.loc[dt] = newp
         prev = newp
