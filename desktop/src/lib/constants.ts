@@ -40,14 +40,25 @@ export const SYMBOL_COLORS: Record<string, string> = {
   "ADA-USD": "#0033AD",
 };
 
+// Strategy colours are for dots / sparklines / chart lines only — never body text (contrast).
 export const STRATEGY_COLORS: Record<string, string> = {
-  MEAN_REVERSION: "#6C5CE7",
-  FIBONACCI_RETRACEMENT: "#F39C12",
-  ORDER_FLOW_MOMENTUM: "#00CEC9",
-  TREND_FOLLOWING: "#00B894",
-  MARKET_MAKING: "#FDCB6E",
-  TREND_DAILY: "#38BDF8",
+  MEAN_REVERSION: "#A78BFA",
+  FIBONACCI_RETRACEMENT: "#FBBF24",
+  ORDER_FLOW_MOMENTUM: "#22D3EE",
+  TREND_FOLLOWING: "#34D399",
+  MARKET_MAKING: "#FCD34D",
+  TREND_DAILY: "#5AA9FF",
   DIVERGENCE: "#F472B6",
+};
+
+export const STRATEGY_DESCRIPTIONS: Record<string, string> = {
+  MEAN_REVERSION: "Fades z-score extremes on 1m bars with RSI/ADX confirmation; SL/TP from ATR.",
+  FIBONACCI_RETRACEMENT: "Buys pull-backs to 38.2–61.8 % retracements of the last impulse.",
+  ORDER_FLOW_MOMENTUM: "Rides order-flow imbalance bursts (archived).",
+  TREND_FOLLOWING: "Intraday breakout following on 1m bars (archived).",
+  MARKET_MAKING: "Two-sided quoting around the reservation price (archived).",
+  TREND_DAILY: "Daily Donchian ensemble on Binance spot: long the strongest trends, rebalanced at 00:05 UTC.",
+  DIVERGENCE: "RSI divergence between confirmed pivots, entered on the structure break with MACD confirmation.",
 };
 
 export const STRATEGY_LABELS: Record<string, string> = {
@@ -73,16 +84,39 @@ export const EXCHANGE_LABELS: Record<string, string> = {
 };
 
 export const REGIME_COLORS: Record<string, string> = {
-  RANGING: "#74B9FF",
-  TRENDING_UP: "#00D4AA",
+  RANGING: "#5AA9FF",
+  TRENDING_UP: "#4EFAB0",
   TRENDING_DOWN: "#F43F5E",
-  BREAKOUT: "#E84393",
-  UNKNOWN: "#6B7280",
+  BREAKOUT: "#F5B942",
+  UNKNOWN: "#FFFFFF",
 };
 
-// Direction colours — the ONLY place green/rose is defined for charts and chips.
-export const COLOR_UP = "#00D4AA";
+// Direction colours (spec §1 tokens) — canvases (lightweight-charts) cannot read CSS variables,
+// so the hex values live here; `directionColors()` swaps them in colour-blind mode.
+export const COLOR_UP = "#4EFAB0";
 export const COLOR_DOWN = "#F43F5E";
+export const COLOR_UP_CB = "#5AA9FF";
+export const COLOR_DOWN_CB = "#FF8A3D";
+export const COLOR_AMBER = "#F5B942";
+export const COLOR_BLUE = "#5AA9FF";
+
+/** Chart text/grid chrome shared by recharts and lightweight-charts (spec §1 "Charts"). */
+export const CHART_TEXT = "rgba(255,255,255,0.80)";
+export const CHART_GRID = "rgba(255,255,255,0.06)";
+export const CHART_TOOLTIP_STYLE = {
+  background: "#141414",
+  border: "1px solid rgba(255,255,255,0.18)",
+  borderRadius: 8,
+  fontSize: 12,
+  color: "#FFFFFF",
+  fontFamily: "'IBM Plex Sans', system-ui, sans-serif",
+} as const;
+export const CHART_TOOLTIP_LABEL = { color: "rgba(255,255,255,0.80)" } as const;
+export const CHART_TOOLTIP_ITEM = { color: "#FFFFFF" } as const;
+
+/** Favorites strip / market picker: which symbols are pinned (all four for now). */
+export const FAVORITE_SYMBOLS: readonly string[] = ["BTC-USD", "ETH-USD", "SOL-USD", "ADA-USD"];
+export const DOCS_URL = "https://github.com/FomoDonkey/BotStrike#readme";
 
 /** Exit reasons reported on closed trades (contract §2) → chip label + tone. */
 export const EXIT_REASON_LABELS: Record<string, { label: string; tone: "profit" | "loss" | "neutral" | "warning" }> = {

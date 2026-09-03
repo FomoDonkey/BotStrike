@@ -469,18 +469,184 @@ export interface MarketInfoResponse {
   regime_candidate?: string;
   regime_timeframe_min?: number;
   data_age_sec?: number;
+  /** Bridge ≥ 2.16 (spec §5.6) */
+  symbol_config?: SymbolConfigInfo;
+}
+
+/** `/api/market/{sym}.symbol_config` (spec §5.6) */
+export interface SymbolConfigInfo {
+  leverage: number;
+  max_position_usd: number;
+  min_notional_usd: number;
+  strategies: string[];
+  taker_fee: number;
+  maker_fee: number;
+  maintenance_margin: number;
+}
+
+// ── v2.16 (spec §5) ──────────────────────────────────────────────
+
+export type WinDayResult = "win" | "loss" | "flat";
+
+export interface WinDay {
+  date: string;
+  pnl: number;
+  trades: number;
+  result: WinDayResult;
+}
+
+export interface PortfolioDay {
+  date: string;
+  equity: number;
+  pnl: number;
+  volume: number;
+  trades: number;
+  fees: number;
+}
+
+export interface StrategyPortfolio {
+  strategy: string;
+  trades: number;
+  open_positions: number;
+  pnl: number;
+  realized: number;
+  unrealized: number;
+  volume: number;
+  fees: number;
+  win_rate: number;
+  profit_factor: number;
+  sharpe: number | null;
+  max_drawdown: number;
+  t_stat: number;
+  first_trade_ts: number | null;
+  /** [epoch_seconds, cumulative realized pnl] */
+  equity_curve: [number, number][];
+  return_30d: number;
+}
+
+/** GET /api/portfolio (spec §5.1) */
+export interface PortfolioResponse {
+  engine: boolean;
+  mode: string;
+  initial_capital: number;
+  since_ts: number;
+  equity: number;
+  cash: number;
+  margin_used: number;
+  unrealized_pnl: number;
+  realized_pnl: number;
+  alltime_pnl: number;
+  alltime_volume: number;
+  fees_paid: number;
+  leverage: number;
+  margin_usage: number;
+  trend_book_notional: number;
+  volume_30d: number;
+  fees_taker: number;
+  fees_maker: number;
+  analysis: {
+    longest_win_streak_days: number;
+    trading_style: string;
+    avg_hold_sec: number;
+    median_hold_sec: number;
+  };
+  perf_30d: {
+    drawdown: number;
+    win_rate: number;
+    sharpe: number | null;
+    sharpe_valid: boolean;
+    sharpe_reason?: string;
+    trades: number;
+  };
+  win_days: WinDay[];
+  bias: { long_notional: number; short_notional: number; long_pct: number };
+  daily: PortfolioDay[];
+  by_strategy: StrategyPortfolio[];
+}
+
+export type ActivityKind = "fill" | "run" | "regime" | "risk" | "kill" | "system" | "config" | "signal";
+
+/** GET /api/activity (spec §5.2) — newest first */
+export interface ActivityEvent {
+  ts: number;
+  kind: ActivityKind | string;
+  level?: "info" | "warning" | "error" | string;
+  symbol?: string | null;
+  side?: string | null;
+  title: string;
+  detail?: string | null;
+  pnl?: number | null;
+  roe_pct?: number | null;
+}
+
+export interface ActivityResponse {
+  events?: ActivityEvent[];
+}
+
+/** GET /api/market/{sym}/funding_history (spec §5.3) */
+export interface FundingPoint {
+  ts: number;
+  rate: number;
+  mark_price?: number | null;
+}
+
+export interface FundingHistoryResponse {
+  symbol: string;
+  points?: FundingPoint[];
+  cumulative?: { ts: number; value: number }[];
+  source?: string;
+  cached_at?: number;
+}
+
+/** GET /api/ops (spec §5.4) */
+export interface OpsResponse {
+  available: boolean;
+  last_check?: string | null;
+  alerts?: { key: string; text: string }[];
+  sent?: unknown[];
+  summary_sent?: boolean;
+  facts?: Record<string, string | number | boolean | null>;
+  journal_15?: Record<string, number>;
+  state?: { last_summary_date?: string; last_alerts?: Record<string, unknown>; [k: string]: unknown };
+  next_timer?: string | null;
+  [k: string]: unknown;
+}
+
+/** GET /api/regime */
+export interface RegimeStatus {
+  regime?: string;
+  candidate?: string;
+  confirmed_since?: number;
+  timeframe_min?: number;
+  [k: string]: unknown;
+}
+
+export interface RegimeResponse {
+  symbols: Record<string, RegimeStatus>;
+  timeframe_min?: number;
+  min_dwell_min?: number;
 }
 
 export interface DatasetInfo {
   symbol: string;
-  type: string;
-  records: number;
-  size_mb: number;
-  date_range: string;
+  type?: string;
+  /** bridge field name */
+  data_type?: string;
+  records?: number;
+  total_rows?: number;
+  size_mb?: number;
+  date_range?: string;
+  date_start?: string;
+  date_end?: string;
+  file_count?: number;
+  timeframe?: string;
 }
 
+/** `datasets` is an array on old bridges and an object keyed by "SYMBOL/type" on the current one. */
 export interface DataCatalogResponse {
-  datasets?: DatasetInfo[];
+  datasets?: DatasetInfo[] | Record<string, DatasetInfo>;
+  total_datasets?: number;
+  updated_at?: number;
 }
 
 export interface BacktestResult {
@@ -617,6 +783,11 @@ async function authed<T>(path: string, opts: RequestOpts): Promise<T> {
   }
 }
 
+/** Absolute URL of the CSV export (spec §5.5) — a plain link, no auth needed. */
+export function tradesExportUrl(): string {
+  return `${getBridgeUrl()}/api/trades/export.csv`;
+}
+
 /** Reachability probe against an explicit URL (Settings → "Test connection", before saving). */
 export function probeBridge(baseUrl: string): Promise<HealthResponse> {
   return request<HealthResponse>("/api/health", { baseUrl, timeoutMs: HEALTH_TIMEOUT_MS });
@@ -657,6 +828,16 @@ export const api = {
   /** Bridge ≥ 2.15 — market header data for one symbol (404 on older bridges). */
   market: (symbol: string) => request<MarketInfoResponse>(`/api/market/${encodeURIComponent(symbol)}`),
   dataCatalog: () => request<DataCatalogResponse>("/api/data/catalog"),
+  /** Bridge ≥ 2.16 — portfolio page data (404 on older bridges). */
+  portfolio: () => request<PortfolioResponse>("/api/portfolio"),
+  /** Bridge ≥ 2.16 — activity feed, newest first (404 on older bridges). */
+  activity: (limit = 100) => request<ActivityResponse>(`/api/activity?limit=${limit}`),
+  /** Bridge ≥ 2.16 — 8 h funding history of a symbol (404 on older bridges). */
+  fundingHistory: (symbol: string, limit = 200) =>
+    request<FundingHistoryResponse>(`/api/market/${encodeURIComponent(symbol)}/funding_history?limit=${limit}`),
+  /** Bridge ≥ 2.16 — ops monitor state (`available:false` until the monitor ran). */
+  ops: () => request<OpsResponse>("/api/ops"),
+  regime: () => request<RegimeResponse>("/api/regime"),
   backtestRun: (body: BacktestRequest) =>
     authed<BacktestResult>("/api/backtest/run", {
       method: "POST",

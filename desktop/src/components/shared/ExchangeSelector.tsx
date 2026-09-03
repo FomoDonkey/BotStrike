@@ -1,60 +1,31 @@
 import { useExchangeStore, type ExchangeId } from "@/stores/exchangeStore";
 import { cn } from "@/lib/utils";
+import { Chip } from "@/components/ui/Chip";
 
-const EXCHANGES: { id: ExchangeId; name: string; fees: string; color: string; desc: string }[] = [
-  {
-    id: "binance",
-    name: "Binance",
-    fees: "8 bps RT",
-    color: "#F0B90B",
-    desc: "Centralized · High liquidity · API keys",
-  },
-  {
-    id: "hyperliquid",
-    name: "Hyperliquid",
-    fees: "3-5 bps RT",
-    color: "#4AE3B5",
-    desc: "Decentralized · Lower fees · Wallet auth",
-  },
+const EXCHANGES: { id: ExchangeId; name: string; fees: string; desc: string }[] = [
+  { id: "binance", name: "Binance", fees: "8 bps RT", desc: "Centralized · High liquidity · API keys" },
+  { id: "hyperliquid", name: "Hyperliquid", fees: "3-5 bps RT", desc: "Decentralized · Lower fees · Wallet auth" },
 ];
 
 export function ExchangeSelector() {
   const { exchange, setExchange } = useExchangeStore();
-
   return (
-    <div className="flex gap-4">
+    <div className="flex flex-col sm:flex-row gap-3">
       {EXCHANGES.map((ex) => {
         const active = exchange === ex.id;
         return (
           <button
             key={ex.id}
+            type="button"
+            aria-pressed={active}
             onClick={() => setExchange(ex.id)}
-            className={cn(
-              "flex-1 p-5 rounded-2xl border-2 transition-all duration-200 text-left",
-              active
-                ? "border-opacity-100 bg-opacity-10 scale-[1.02]"
-                : "border-white/5 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/10",
-            )}
-            style={active ? {
-              borderColor: ex.color,
-              backgroundColor: `${ex.color}10`,
-            } : undefined}
+            className={cn("flex-1 p-4 rounded-lg border text-left transition-colors", active ? "border-mint bg-mint-soft" : "border-hairline bg-panel-2 hover:bg-hover")}
           >
-            <div className="flex items-center justify-between mb-2">
-              <span
-                className="text-lg font-bold"
-                style={{ color: active ? ex.color : undefined }}
-              >
-                {ex.name}
-              </span>
-              <span className={cn(
-                "text-xs font-mono px-2 py-0.5 rounded-full",
-                active ? "bg-profit/10 text-profit" : "bg-white/5 text-text-muted",
-              )}>
-                {ex.fees}
-              </span>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[15px] font-semibold text-text">{ex.name}</span>
+              <Chip tone={active ? "mint" : "neutral"} size="xs" uppercase={false}>{ex.fees}</Chip>
             </div>
-            <p className="text-xs text-text-muted">{ex.desc}</p>
+            <p className="text-[12.5px] font-medium text-text-2">{ex.desc}</p>
           </button>
         );
       })}

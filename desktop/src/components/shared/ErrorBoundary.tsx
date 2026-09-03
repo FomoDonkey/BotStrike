@@ -67,27 +67,28 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         this.props.fallback || (
           <div style={{
-            padding: 32,
-            color: "#F43F5E",
-            fontFamily: "'JetBrains Mono', monospace",
+            padding: 24,
+            color: "#FFFFFF",
+            fontFamily: "'IBM Plex Sans', system-ui, sans-serif",
             fontSize: 13,
-            background: "#171717",
-            borderRadius: 12,
+            background: "#0F0F0F",
+            border: "1px solid rgba(244,63,94,0.6)",
+            borderRadius: 10,
             margin: 16,
           }}>
-            <h3 style={{ color: "#FFFFFF", marginBottom: 8 }}>Page Error</h3>
-            <pre style={{ whiteSpace: "pre-wrap", opacity: 0.8 }}>
+            <h3 style={{ color: "#F43F5E", marginBottom: 8, fontSize: 15, fontWeight: 600 }}>Page error</h3>
+            <pre style={{ whiteSpace: "pre-wrap", color: "#FFFFFF", fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>
               {this.state.error?.message}
             </pre>
             {this.state.retrying && (
-              <p style={{ color: "rgba(255,255,255,0.6)", marginTop: 8 }}>Retrying automatically…</p>
+              <p style={{ color: "rgba(255,255,255,0.8)", marginTop: 8 }}>Retrying automatically…</p>
             )}
             <button
               onClick={this.reset}
               style={{
                 marginTop: 12,
                 padding: "6px 16px",
-                background: "#00D4AA",
+                background: "#4EFAB0",
                 color: "#0A0A0A",
                 border: "none",
                 borderRadius: 8,

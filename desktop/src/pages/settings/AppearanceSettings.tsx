@@ -1,8 +1,11 @@
-import { GlassPanel } from "@/components/shared/GlassPanel";
-import { Palette, Volume2, VolumeX } from "lucide-react";
+import { useShallow } from "zustand/shallow";
+import { Panel, PanelHeader } from "@/components/ui/Panel";
+import { SwitchRow } from "@/components/ui/Switch";
+import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import { useThemeStore, type ThemeVariant } from "@/stores/themeStore";
 import { useAlertStore } from "@/stores/alertStore";
+import { useUiStore } from "@/stores/uiStore";
 
 const THEMES: { id: ThemeVariant; name: string; desc: string; bg: string }[] = [
   { id: "dark", name: "Dark", desc: "Neutral near-black (default)", bg: "#0A0A0A" },
@@ -15,62 +18,51 @@ export function AppearanceSettings() {
   const setTheme = useThemeStore((s) => s.setVariant);
   const soundEnabled = useAlertStore((s) => s.soundEnabled);
   const toggleSound = useAlertStore((s) => s.toggleSound);
+  const { layout, display, setLayout, setDisplay, resetAll } = useUiStore(useShallow((s) => ({ layout: s.layout, display: s.display, setLayout: s.setLayout, setDisplay: s.setDisplay, resetAll: s.resetAll })));
 
   return (
-    <div className="space-y-4">
-      <GlassPanel className="p-4 sm:p-5">
-        <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-4 flex items-center gap-2">
-          <Palette className="w-3 h-3" /> Theme
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+    <div className="space-y-3">
+      <Panel>
+        <PanelHeader title="Theme" />
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4">
           {THEMES.map((t) => (
             <button
               key={t.id}
+              type="button"
+              aria-pressed={themeVariant === t.id}
               onClick={() => setTheme(t.id)}
-              className={cn(
-                "p-4 rounded-lg border text-left transition-all",
-                themeVariant === t.id
-                  ? "border-accent/60"
-                  : "border-hairline hover:border-white/20"
-              )}
+              className={cn("p-3 rounded-lg border text-left transition-colors", themeVariant === t.id ? "border-mint bg-mint-soft" : "border-hairline hover:bg-hover")}
             >
-              <div
-                className="w-full h-8 rounded-lg mb-3 border border-white/10"
-                style={{ backgroundColor: t.bg }}
-              />
-              <p className="text-sm font-medium text-text-primary">{t.name}</p>
-              <p className="text-[10px] text-text-muted">{t.desc}</p>
+              <div className="w-full h-8 rounded-[6px] mb-2 border border-hairline-strong" style={{ backgroundColor: t.bg }} />
+              <p className="text-[13px] font-semibold text-text">{t.name}</p>
+              <p className="text-[12px] font-medium text-text-2">{t.desc}</p>
             </button>
           ))}
         </div>
-      </GlassPanel>
+      </Panel>
 
-      <GlassPanel className="p-4 sm:p-5">
-        <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-4">Sound</h3>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {soundEnabled ? <Volume2 className="w-4 h-4 text-accent" /> : <VolumeX className="w-4 h-4 text-text-muted" />}
-            <span className="text-sm text-text-secondary">Notification Sounds</span>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <Panel>
+          <PanelHeader title="Layout · Trade page" />
+          <div className="px-4 py-2">
+            <SwitchRow label="Account overview" help="Bot column · Account tab" checked={layout.accountOverview} onChange={(v) => setLayout("accountOverview", v)} />
+            <SwitchRow label="Chart" checked={layout.chart} onChange={(v) => setLayout("chart", v)} />
+            <SwitchRow label="Favorites" help="Symbol strip under the nav" checked={layout.favorites} onChange={(v) => setLayout("favorites", v)} />
+            <SwitchRow label="Order book" help="Order book · Trades column" checked={layout.orderBook} onChange={(v) => setLayout("orderBook", v)} />
+            <SwitchRow label="Tables" help="Positions · Orders · History panel" checked={layout.tables} onChange={(v) => setLayout("tables", v)} />
+            <SwitchRow label="Activity feed" checked={layout.activityFeed} onChange={(v) => setLayout("activityFeed", v)} />
           </div>
-          <button
-            onClick={toggleSound}
-            role="switch"
-            aria-checked={soundEnabled}
-            className={cn(
-              "w-10 h-5 rounded-full transition-all relative",
-              soundEnabled ? "bg-accent" : "bg-white/10"
-            )}
-          >
-            <span className={cn(
-              "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all",
-              soundEnabled ? "left-[22px]" : "left-0.5"
-            )} />
-          </button>
-        </div>
-        <p className="text-[10px] text-text-muted mt-2">
-          Plays tones for trade fills, profit/loss, and alert triggers
-        </p>
-      </GlassPanel>
+        </Panel>
+        <Panel>
+          <PanelHeader title="Trading · Display" right={<Button variant="ghost" size="xs" onClick={resetAll}>Reset all</Button>} />
+          <div className="px-4 py-2">
+            <SwitchRow label="Trade notifications" help="Toast on every live fill" checked={display.tradeToasts} onChange={(v) => setDisplay("tradeToasts", v)} />
+            <SwitchRow label="Sound" help="Tones for fills, PnL and alerts" checked={soundEnabled} onChange={() => toggleSound()} />
+            <SwitchRow label="Colour blind mode" help="Mint / rose → blue / orange" checked={display.colorBlind} onChange={(v) => setDisplay("colorBlind", v)} />
+            <SwitchRow label="Compact rows" help="26 px table rows" checked={display.compactRows} onChange={(v) => setDisplay("compactRows", v)} />
+          </div>
+        </Panel>
+      </div>
     </div>
   );
 }

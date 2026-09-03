@@ -1,155 +1,83 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useShallow } from "zustand/shallow";
-import { api, ApiError, type AccountResponse, type PositionData } from "@/lib/api";
-import { usePolling } from "@/hooks/usePolling";
+import { RefreshCw } from "lucide-react";
+import type { PositionData } from "@/lib/api";
+import { useAccount } from "@/hooks/useAccount";
 import { useRiskStore } from "@/stores/riskStore";
-import { useTradingStore } from "@/stores/tradingStore";
-import { useSystemStore } from "@/stores/systemStore";
-import { Hint } from "@/components/shared/Hint";
+import { ListRow, ListSection, Signed } from "@/components/ui/ListRow";
+import { Button } from "@/components/ui/Button";
+import { StatusChip } from "@/components/ui/Chip";
+import { ConfirmDialog } from "@/components/ui/Modal";
+import { useBotControl } from "@/components/layout/useBotControl";
 import { HINTS } from "@/lib/hints";
-import { cn, formatPct, formatSignedUSD, formatUSD } from "@/lib/utils";
-import { positionMargin, positionNotional } from "@/lib/market";
-
-const POLL_MS = 5_000;
+import { cn, formatMoney, formatPct, formatSignedMoney } from "@/lib/utils";
+import { PAPER_MAINTENANCE_MARGIN } from "@/lib/market";
 
 interface AccountPanelProps {
   positions: PositionData[];
-  /** compact = single column (right rail); full = bottom tab grid */
-  variant: "compact" | "full";
   className?: string;
+  /** Show the Restart engine button row */
+  actions?: boolean;
 }
 
-/** Account overview from GET /api/account (5 s); on a 2.14 bridge the same fields are derived. */
-export function AccountPanel({ positions, variant, className }: AccountPanelProps) {
-  const [rest, setRest] = useState<AccountResponse | null>(null);
-  const [missing, setMissing] = useState(false);
-  usePolling(async () => {
-    try {
-      const r = await api.account();
-      // engine stopped → only mode / initial_capital are present: fall back to the derived view
-      setRest(r.engine === false || typeof r.equity !== "number" ? null : r);
-      setMissing(false);
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 404) setMissing(true);
-    }
-  }, POLL_MS);
-
-  const wsAccount = useRiskStore((s) => s.account);
-  const risk = useRiskStore(useShallow((s) => ({
-    equity: s.equity, peak: s.peak_equity, dd: s.drawdown_pct, daily: s.daily_pnl, weekly: s.weekly_pnl, basis: s.equity_basis,
-  })));
-  const metrics = useTradingStore(useShallow((s) => ({ equity: s.metrics.equity, pnl: s.metrics.pnl, fees: s.metrics.total_fees })));
-  const mode = useSystemStore((s) => s.mode);
-
-  const acct = useMemo<AccountResponse>(() => {
-    // WS risk_update (≥ 2.15) is fresher than the 5 s REST poll; REST is the fallback source.
-    if (wsAccount) return wsAccount;
-    if (rest) return rest;
-    // Derived view (bridge 2.14): equity from the merged metrics, risk figures from the WS
-    // risk_update, exposure from the live positions.
-    const equity = metrics.equity > 0 ? metrics.equity : risk.equity;
-    const unreal = positions.reduce((a, p) => a + (p.unrealized_pnl || 0), 0);
-    const posValue = positions.reduce((a, p) => a + positionNotional(p), 0);
-    const marginUsed = positions.reduce((a, p) => a + positionMargin(p), 0);
-    return {
-      mode,
-      equity,
-      initial_capital: 0,
-      realized_pnl: metrics.pnl - unreal,
-      unrealized_pnl: unreal,
-      position_value: posValue,
-      margin_used: marginUsed,
-      available: Math.max(0, equity - marginUsed),
-      margin_ratio: equity > 0 ? marginUsed / equity : 0,
-      exposure_pct: equity > 0 ? posValue / equity : 0,
-      leverage_effective: equity > 0 ? posValue / equity : 0,
-      open_positions: positions.length,
-      fees_today: NaN,
-      daily_pnl: risk.daily,
-      weekly_pnl: risk.weekly,
-      peak_equity: risk.peak,
-      drawdown_pct: risk.dd,
-    };
-  }, [wsAccount, rest, metrics, risk, positions, mode]);
-
-  const derived = !wsAccount && !rest;
+/** Strike's Account Overview list + Daily / Weekly limits, peak, drawdown; Restart engine in place of Deposit / Withdraw. */
+export function AccountPanel({ positions, className, actions = true }: AccountPanelProps) {
+  const { acct, derived, missing } = useAccount(positions);
+  const risk = useRiskStore(useShallow((s) => ({ dailyLimit: s.daily_limit, weeklyLimit: s.weekly_limit })));
+  const { canControl, disabledReason, busy, run } = useBotControl();
+  const [confirm, setConfirm] = useState(false);
   const mr = acct.margin_ratio;
-  const mrTone = mr >= 0.8 ? "text-loss" : mr >= 0.5 ? "text-warning" : "text-text-primary";
-
-  const groups: { title: string; rows: { k: string; v: React.ReactNode; hint?: string }[] }[] = [
-    {
-      title: "Balance",
-      rows: [
-        { k: "Account value", v: formatUSD(acct.equity), hint: "Equity = initial capital + realised PnL + unrealised PnL" },
-        { k: "Available", v: formatUSD(acct.available), hint: HINTS.available },
-        { k: "Margin used", v: formatUSD(acct.margin_used), hint: HINTS.margin },
-        { k: "Position value", v: formatUSD(acct.position_value), hint: HINTS.notional },
-        { k: "Unrealized PnL", v: <span className={acct.unrealized_pnl > 0 ? "text-profit" : acct.unrealized_pnl < 0 ? "text-loss" : ""}>{formatSignedUSD(acct.unrealized_pnl)}</span>, hint: HINTS.pnl },
-        { k: "Realized PnL", v: <span className={acct.realized_pnl > 0 ? "text-profit" : acct.realized_pnl < 0 ? "text-loss" : ""}>{formatSignedUSD(acct.realized_pnl)}</span>, hint: "Closed-trade PnL net of fees (all-time)" },
-      ],
-    },
-    {
-      title: "Risk",
-      rows: [
-        { k: "Margin ratio", v: <span className={mrTone}>{formatPct(acct.margin_ratio, 1)}</span>, hint: HINTS.marginRatio },
-        { k: "Exposure", v: formatPct(acct.exposure_pct, 1), hint: HINTS.exposure },
-        { k: "Effective leverage", v: `${acct.leverage_effective.toFixed(2)}x`, hint: HINTS.levEff },
-        { k: "Open positions", v: String(acct.open_positions) },
-        { k: "Peak equity", v: acct.peak_equity > 0 ? formatUSD(acct.peak_equity) : "---" },
-        { k: "Drawdown", v: <span className={acct.drawdown_pct > 0 ? "text-loss" : ""}>{formatPct(acct.drawdown_pct)}</span>, hint: HINTS.drawdown },
-      ],
-    },
-    {
-      title: "Period",
-      rows: [
-        { k: "Daily PnL", v: <span className={acct.daily_pnl > 0 ? "text-profit" : acct.daily_pnl < 0 ? "text-loss" : ""}>{formatSignedUSD(acct.daily_pnl)}</span>, hint: HINTS.dailyPnl },
-        { k: "Weekly PnL", v: <span className={acct.weekly_pnl > 0 ? "text-profit" : acct.weekly_pnl < 0 ? "text-loss" : ""}>{formatSignedUSD(acct.weekly_pnl)}</span>, hint: HINTS.weeklyPnl },
-        { k: "Fees today", v: Number.isFinite(acct.fees_today) ? formatUSD(acct.fees_today) : <span title={`All-time fees ${formatUSD(metrics.fees)} — today's split needs bridge ≥ 2.15`} className="text-text-faint">---</span>, hint: HINTS.feesToday },
-        { k: "Initial capital", v: acct.initial_capital > 0 ? formatUSD(acct.initial_capital) : "---" },
-        { k: "Mode", v: <span className={cn("uppercase text-[10px] font-bold tracking-wider px-1.5 py-0.5 rounded", acct.mode === "live" ? "bg-loss/10 text-loss" : "bg-warning/10 text-warning")}>{acct.mode || mode}</span> },
-      ],
-    },
-  ];
-
-  // Right-rail overview: five rows so the order book above keeps room for its levels at 900 px
-  const compactRows = variant === "compact"
-    ? [groups[0].rows[0], groups[0].rows[1], groups[0].rows[3], groups[0].rows[4], groups[1].rows[0]]
-    : null;
+  const mrTone = mr >= 0.8 ? "text-rose" : mr >= 0.5 ? "text-amber" : "text-text";
 
   return (
-    <div className={cn("flex flex-col min-h-0", className)}>
-      {compactRows ? (
-        <dl className="kv px-3 py-1">
-          {compactRows.map((r) => (
-            <Row key={r.k} k={r.k} hint={r.hint}>{r.v}</Row>
-          ))}
-        </dl>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-x-8 px-3 py-2 overflow-auto">
-          {groups.map((g) => (
-            <div key={g.title} className="min-w-0">
-              <p className="text-[10.5px] uppercase tracking-[0.06em] text-text-muted h-7 flex items-center border-b border-hairline-soft">{g.title}</p>
-              <dl className="kv">
-                {g.rows.map((r) => <Row key={r.k} k={r.k} hint={r.hint}>{r.v}</Row>)}
-              </dl>
-            </div>
-          ))}
+    <div className={cn("flex flex-col min-h-0 overflow-y-auto", className)}>
+      <ListSection title="Account overview" first right={<StatusChip status={acct.mode || "paper"} size="xs" />}>
+        <ListRow label="Account Value" hint="Equity = initial capital + realised PnL + unrealised PnL" size="md">{formatMoney(acct.equity)}</ListRow>
+        <ListRow label="Available Balance" hint={HINTS.available}>{formatMoney(acct.available)}</ListRow>
+        <ListRow label="Withdrawable Balance" hint="Paper: equal to the available balance">{formatMoney(acct.available)}</ListRow>
+        <ListRow label="Position Value" hint={HINTS.notional}>{formatMoney(acct.position_value)}</ListRow>
+        <ListRow label="Unrealized PNL" hint={HINTS.pnl}><Signed value={acct.unrealized_pnl} format={formatSignedMoney} /></ListRow>
+        <ListRow label="Margin Ratio" hint={HINTS.marginRatio}><span className={mrTone}>{formatPct(acct.margin_ratio, 1)}</span></ListRow>
+        <ListRow label="Maintenance Margin" hint="Margin needed to keep the open positions (paper: 0.5 % of position value)">{formatMoney(acct.position_value * PAPER_MAINTENANCE_MARGIN)}</ListRow>
+        <ListRow label="Margin Used" hint={HINTS.margin}>{formatMoney(acct.margin_used)}</ListRow>
+        <ListRow label="Effective Leverage" hint={HINTS.levEff}>{acct.leverage_effective.toFixed(2)}x</ListRow>
+      </ListSection>
+      <ListSection title="Period">
+        <ListRow label="Daily PnL" hint={HINTS.dailyPnl}>
+          <Signed value={acct.daily_pnl} format={formatSignedMoney} />
+          {risk.dailyLimit > 0 && <span className="text-text-2 font-medium"> / -{formatMoney(risk.dailyLimit, 0)}</span>}
+        </ListRow>
+        <ListRow label="Weekly PnL" hint={HINTS.weeklyPnl}>
+          <Signed value={acct.weekly_pnl} format={formatSignedMoney} />
+          {risk.weeklyLimit > 0 && <span className="text-text-2 font-medium"> / -{formatMoney(risk.weeklyLimit, 0)}</span>}
+        </ListRow>
+        <ListRow label="Realized PnL" hint="Closed-trade PnL net of fees (all-time)"><Signed value={acct.realized_pnl} format={formatSignedMoney} /></ListRow>
+        <ListRow label="Fees today" hint={HINTS.feesToday}>{Number.isFinite(acct.fees_today) ? formatMoney(acct.fees_today) : "---"}</ListRow>
+        <ListRow label="Peak equity">{acct.peak_equity > 0 ? formatMoney(acct.peak_equity) : "---"}</ListRow>
+        <ListRow label="Drawdown" hint={HINTS.drawdown}><span className={acct.drawdown_pct > 0 ? "text-rose" : ""}>{formatPct(acct.drawdown_pct)}</span></ListRow>
+        <ListRow label="Open positions">{acct.open_positions}</ListRow>
+      </ListSection>
+      {actions && (
+        <div className="px-3 py-3 border-t border-hairline flex items-center gap-2">
+          <Button variant="secondary" className="flex-1" icon={<RefreshCw className="w-3.5 h-3.5" />} disabled={!canControl} title={disabledReason} loading={busy === "restart"} onClick={() => setConfirm(true)}>
+            Restart engine
+          </Button>
         </div>
       )}
       {derived && (
-        <p className="px-3 py-1 text-[10px] text-text-faint border-t border-hairline-soft shrink-0" title={missing ? "GET /api/account returned 404 — figures are derived from the metrics / risk_update broadcasts and the open positions." : "No account overview from the bridge yet (engine stopped?) — figures are derived from the metrics / risk_update broadcasts and the open positions."}>
-          derived · {missing ? "GET /api/account needs bridge ≥ 2.15" : "waiting for the bridge account overview"}
+        <p className="px-3 py-2 text-[12px] font-medium text-text-2 border-t border-hairline shrink-0" title={missing ? "GET /api/account returned 404 — figures are derived from the broadcasts and the open positions." : "No account overview from the bridge yet (engine stopped?) — figures are derived from the broadcasts and the open positions."}>
+          Derived · {missing ? "GET /api/account needs bridge ≥ 2.15" : "waiting for the bridge account overview"}
         </p>
       )}
+      <ConfirmDialog
+        open={confirm}
+        onClose={() => setConfirm(false)}
+        onConfirm={() => { setConfirm(false); void run("restart"); }}
+        title="Restart the engine?"
+        body="The engine stops and starts again with the same mode and exchange. Open paper positions are kept."
+        confirmLabel="Restart"
+        busy={busy !== null}
+      />
     </div>
-  );
-}
-
-function Row({ k, hint, children }: { k: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <>
-      <dt>{hint ? <Hint title={hint}>{k}</Hint> : k}</dt>
-      <dd>{children}</dd>
-    </>
   );
 }

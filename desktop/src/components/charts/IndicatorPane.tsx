@@ -15,10 +15,11 @@ interface IndicatorPaneProps {
   className?: string;
 }
 
-const LINE_COLOR = "#38BDF8";
-const SIGNAL_COLOR = "#F59E0B";
-const HIST_UP = "rgba(0,212,170,0.55)";
-const HIST_DOWN = "rgba(244,63,94,0.55)";
+const LINE_COLOR = "#5AA9FF";   // MACD line: spec --blue
+const RSI_COLOR = "#4EFAB0";    // RSI: mint
+const SIGNAL_COLOR = "#F5B942"; // spec --amber
+const HIST_UP = "rgba(78,250,176,0.6)";
+const HIST_DOWN = "rgba(244,63,94,0.6)";
 
 interface PaneSeries {
   a: ISeriesApi<"Line"> | null;
@@ -99,13 +100,13 @@ export function IndicatorPane({ symbol, timeframe, kind, mainChart, className }:
 
     if (kind === "rsi") {
       cur.a = chart.addLineSeries({
-        color: LINE_COLOR, lineWidth: 1, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false,
+        color: RSI_COLOR, lineWidth: 1, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false,
         priceFormat: { type: "price", precision: 1, minMove: 0.1 },
         // fixed 0–100 scale like every RSI pane
         autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
       });
-      cur.a.createPriceLine({ price: 70, color: "rgba(244,63,94,0.45)", lineWidth: 1, lineStyle: 1, axisLabelVisible: false, title: "" });
-      cur.a.createPriceLine({ price: 30, color: "rgba(0,212,170,0.45)", lineWidth: 1, lineStyle: 1, axisLabelVisible: false, title: "" });
+      cur.a.createPriceLine({ price: 70, color: "rgba(244,63,94,0.6)", lineWidth: 1, lineStyle: 1, axisLabelVisible: false, title: "" });
+      cur.a.createPriceLine({ price: 30, color: "rgba(78,250,176,0.6)", lineWidth: 1, lineStyle: 1, axisLabelVisible: false, title: "" });
     } else {
       cur.h = chart.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false, priceFormat: { type: "price", precision: 2, minMove: 0.01 } });
       cur.a = chart.addLineSeries({ color: LINE_COLOR, lineWidth: 1, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false });
@@ -204,7 +205,7 @@ export function IndicatorPane({ symbol, timeframe, kind, mainChart, className }:
   return (
     <div className={className} style={{ position: "absolute", inset: 0 }}>
       <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
-      <div ref={legendRef} className="absolute left-2 top-1 z-[2] text-[10.5px] font-mono text-text-muted pointer-events-none select-none whitespace-pre">
+      <div ref={legendRef} className="absolute left-2 top-1 z-[2] text-[11px] font-medium num text-text pointer-events-none select-none whitespace-pre">
         {kind === "rsi" ? "RSI 14" : "MACD 12 26 close 9"}
       </div>
     </div>

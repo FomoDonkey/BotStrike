@@ -1,144 +1,93 @@
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import { useShallow } from "zustand/shallow";
-import { motion } from "framer-motion";
-import { GlassPanel } from "@/components/shared/GlassPanel";
+import { Database } from "lucide-react";
 import { useSystemStore } from "@/stores/systemStore";
 import { useMarketStore } from "@/stores/marketStore";
-import { PulsingDot } from "@/components/shared/PulsingDot";
+import { useNow } from "@/hooks/useNow";
+import { useEndpoint } from "@/hooks/useEndpoint";
 import { api, type DatasetInfo } from "@/lib/api";
-import { WS_CHANNEL_LIST } from "@/lib/constants";
-import { Database, Wifi, HardDrive, Calendar, BarChart3 } from "lucide-react";
-import { cn, formatInt } from "@/lib/utils";
+import { SYMBOLS, WS_CHANNEL_LIST } from "@/lib/constants";
+import { formatAge, formatInt, formatPrice } from "@/lib/utils";
+import { Panel, PanelHeader, EmptyState } from "@/components/ui/Panel";
+import { Chip, StatusChip } from "@/components/ui/Chip";
+import { ListRow } from "@/components/ui/ListRow";
+import { DataTable, type Column } from "@/components/ui/DataTable";
+import { PulsingDot } from "@/components/shared/PulsingDot";
 
+/** Data (spec §3.6): live feeds, stream status, local catalog — restyle only. */
 export function DataPage() {
-  const system = useSystemStore(useShallow((s) => ({
-    wsConnected: s.wsConnected,
-    bridgeConnected: s.bridgeConnected,
-    openChannels: s.openChannels,
-  })));
+  const now = useNow();
+  const system = useSystemStore(useShallow((s) => ({ wsConnected: s.wsConnected, bridgeConnected: s.bridgeConnected, openChannels: s.openChannels })));
   const prices = useMarketStore(useShallow((s) => s.prices));
-  const [catalog, setCatalog] = useState<DatasetInfo[]>([]);
-  const [loading, setLoading] = useState(true);
+  const candles = useMarketStore(useShallow((s) => s.candles));
+  const lastTickAt = useMarketStore((s) => s.lastTickAt);
+  const catalog = useEndpoint(() => api.dataCatalog(), 60_000);
+  const rows = useMemo<DatasetInfo[]>(() => {
+    const d = catalog.data?.datasets;
+    if (!d) return [];
+    return Array.isArray(d) ? d : Object.values(d);
+  }, [catalog.data]);
+  const age = lastTickAt > 0 ? (now - lastTickAt) / 1000 : null;
 
-  useEffect(() => {
-    let cancelled = false;
-    api.dataCatalog().then((data) => {
-      if (cancelled) return;
-      if (data?.datasets) setCatalog(data.datasets);
-      setLoading(false);
-    }).catch(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, []);
-
-  const tickCounts = Object.entries(prices).map(([sym, price]) => ({
-    symbol: sym,
-    lastPrice: price,
-    status: price > 0 ? "streaming" : "waiting",
-  }));
+  const columns: Column<DatasetInfo>[] = [
+    { id: "dataset", label: "Dataset", align: "l", sortValue: (d) => d.symbol, render: (d) => <span className="inline-flex items-center gap-2"><span className="font-semibold">{d.symbol}</span><Chip tone="neutral" size="xs" uppercase={false}>{d.type ?? d.data_type ?? "---"}{d.timeframe ? ` ${d.timeframe}` : ""}</Chip></span> },
+    { id: "rows", label: "Rows", sortValue: (d) => d.records ?? d.total_rows ?? 0, render: (d) => <span className="num">{formatInt(d.records ?? d.total_rows ?? 0)}</span> },
+    { id: "files", label: "Files", sortValue: (d) => d.file_count ?? 0, render: (d) => <span className="num">{d.file_count ?? "---"}</span> },
+    { id: "size", label: "Size", sortValue: (d) => d.size_mb ?? 0, render: (d) => <span className="num">{typeof d.size_mb === "number" ? `${d.size_mb.toFixed(2)} MB` : "---"}</span> },
+    { id: "range", label: "Range", align: "l", render: (d) => d.date_range || (d.date_start ? `${d.date_start} → ${d.date_end ?? "…"}` : "---") },
+  ];
 
   return (
-    <motion.div
-      className="space-y-4"
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-    >
-      <h1 className="text-lg font-semibold text-text-primary flex items-center gap-2">
-        <Database className="w-5 h-5 text-accent" /> Market Data
-      </h1>
+    <div className="flex flex-col gap-3 p-3 sm:p-4 min-w-0">
+      <h1 className="text-[18px] font-semibold text-text flex items-center gap-2"><Database className="w-5 h-5 text-mint" /> Data</h1>
 
-      {/* Live Feeds */}
-      <GlassPanel className="p-4 sm:p-5">
-        <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-4 flex items-center gap-2">
-          <Wifi className="w-3 h-3" /> Live Data Feeds
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-          {tickCounts.length > 0 ? tickCounts.map((t) => (
-            <div key={t.symbol} className="p-3 rounded-lg bg-white/[0.02] flex items-center justify-between gap-2 min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <PulsingDot active={t.status === "streaming"} />
-                <div className="min-w-0">
-                  <p className="font-mono text-sm font-semibold text-text-primary">{t.symbol}</p>
-                  <p className="text-[10px] text-text-muted">{t.status === "streaming" ? "Live" : "Connecting..."}</p>
+      <Panel>
+        <PanelHeader title="Live feeds" right={<span className="text-[12px] font-medium text-text-2">last tick <span className="num text-text font-semibold">{formatAge(age)}</span> ago</span>} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2 p-3">
+          {SYMBOLS.map((sym) => {
+            const price = prices[sym] || 0;
+            const n = candles[sym]?.length ?? 0;
+            return (
+              <div key={sym} className="rounded-[6px] bg-panel-2 px-3 py-2 flex items-center justify-between gap-2 min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <PulsingDot active={price > 0} inactive="amber" />
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-semibold text-text">{sym}</p>
+                    <p className="text-[12px] font-medium text-text-2">{price > 0 ? `Live · ${n} 1m bars` : system.bridgeConnected ? "Waiting for ticks" : "Bridge offline"}</p>
+                  </div>
                 </div>
+                <p className="num text-[13px] font-semibold text-text whitespace-nowrap">{price > 0 ? formatPrice(price) : "---"}</p>
               </div>
-              <p className="font-mono text-sm text-accent whitespace-nowrap">${t.lastPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
-            </div>
-          )) : (
-            <div className="col-span-full text-center py-4 text-text-muted text-sm">
-              <PulsingDot active={system.wsConnected} className="mx-auto mb-2" />
-              {system.wsConnected ? "Receiving data..." : "No data feeds — bridge not connected"}
-            </div>
-          )}
+            );
+          })}
         </div>
-      </GlassPanel>
+      </Panel>
 
-      {/* Connection Status */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <GlassPanel className="p-4 sm:p-5">
-          <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-4 flex items-center gap-2">
-            <BarChart3 className="w-3 h-3" /> Stream Status
-          </h3>
-          <div className="space-y-2">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <Panel>
+          <PanelHeader title="Stream status" />
+          <div className="px-4 py-2">
             {WS_CHANNEL_LIST.map((ch) => {
               const open = system.openChannels.includes(ch);
               return (
-                <div key={ch} className="flex items-center justify-between text-xs">
-                  <span className="text-text-secondary font-mono">ws/{ch}</span>
-                  <span className={cn(
-                    "px-2 py-0.5 rounded text-[10px] font-mono",
-                    open ? "bg-profit/10 text-profit" : system.bridgeConnected ? "bg-warning/10 text-warning" : "bg-white/5 text-text-muted"
-                  )}>
-                    {open ? "SUBSCRIBED" : system.bridgeConnected ? "RECONNECTING" : "PENDING"}
-                  </span>
-                </div>
+                <ListRow key={ch} label={`ws/${ch}`}>
+                  <StatusChip status={open ? "online" : system.bridgeConnected ? "warning" : "disabled"} label={open ? "subscribed" : system.bridgeConnected ? "reconnecting" : "pending"} size="xs" />
+                </ListRow>
               );
             })}
+            <ListRow label="Market feed"><StatusChip status={system.wsConnected ? "online" : "offline"} label={system.wsConnected ? "connected" : "disconnected"} size="xs" /></ListRow>
           </div>
-        </GlassPanel>
+        </Panel>
 
-        {/* Data Catalog */}
-        <GlassPanel className="p-4 sm:p-5 min-w-0">
-          <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-4 flex items-center gap-2">
-            <HardDrive className="w-3 h-3" /> Local Data Catalog
-          </h3>
-          {loading ? (
-            <p className="text-text-muted text-xs">Loading catalog...</p>
-          ) : catalog.length > 0 ? (
-            <div className="overflow-x-auto -mx-1 px-1">
-              <table className="w-full min-w-[420px] text-xs">
-                <thead>
-                  <tr className="text-text-muted border-b border-white/5">
-                    <th className="text-left py-1 font-normal">Dataset</th>
-                    <th className="text-right font-normal">Rows</th>
-                    <th className="text-right font-normal">Size</th>
-                    <th className="text-right font-normal">Range</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {catalog.slice(0, 20).map((d, i) => (
-                    <tr key={`${d.symbol}-${d.type}-${i}`} className="border-b border-white/[0.02]">
-                      <td className="py-1.5">
-                        <span className="font-mono text-text-primary">{d.symbol}</span>
-                        <span className="text-text-muted ml-2">{d.type}</span>
-                      </td>
-                      <td className="text-right font-mono text-text-secondary">{formatInt(d.records ?? 0)}</td>
-                      <td className="text-right font-mono text-text-muted">{typeof d.size_mb === "number" ? `${d.size_mb.toFixed(1)} MB` : "---"}</td>
-                      <td className="text-right font-mono text-text-muted whitespace-nowrap">{d.date_range || "---"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+        <Panel className="flex flex-col overflow-hidden">
+          <PanelHeader title="Local data catalog" right={<span className="text-[12px] font-medium text-text-2">{rows.length} dataset{rows.length === 1 ? "" : "s"}</span>} />
+          {!catalog.loaded ? (
+            <EmptyState>Loading catalog…</EmptyState>
           ) : (
-            <div className="text-center py-4">
-              <Calendar className="w-8 h-8 text-text-muted/30 mx-auto mb-2" />
-              <p className="text-text-muted text-xs">
-                No catalog data. Run the data collector to build local datasets.
-              </p>
-            </div>
+            <DataTable columns={columns} rows={rows} rowKey={(d, i) => `${d.symbol}-${d.type ?? d.data_type}-${i}`} minWidth="480px" emptyText="No catalog data" emptySub="Run the data collector to build local datasets" limit={40} />
           )}
-        </GlassPanel>
+        </Panel>
       </div>
-    </motion.div>
+    </div>
   );
 }

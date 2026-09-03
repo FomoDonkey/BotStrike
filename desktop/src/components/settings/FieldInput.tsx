@@ -3,9 +3,12 @@ import { RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ConfigField, ConfigScalar } from "@/lib/api";
 import { fieldLabel, isSameValue, trimNumber } from "./schemaUtils";
+import { Switch } from "@/components/ui/Switch";
+import { Chip } from "@/components/ui/Chip";
 
+/** White text on `--panel-2`, hairline border, mint focus ring (spec §3.7). */
 export const INPUT_CLS =
-  "w-full bg-bg-base border border-white/10 rounded-lg px-3 py-1.5 text-sm text-text-primary font-mono focus:outline-none focus:border-accent/50 disabled:opacity-50";
+  "w-full h-8 bg-panel-2 border border-hairline rounded-[6px] px-2.5 text-[13px] font-medium text-text num placeholder:text-text-3 focus:outline-none focus:border-mint disabled:opacity-50";
 
 interface FieldInputProps {
   field: ConfigField;
@@ -23,46 +26,24 @@ interface FieldInputProps {
   onRevert: () => void;
 }
 
-/** One schema field: label + help + restart badge on the left, the typed control on the right. */
+/** One schema field: `label · help · control` row (spec §3.7). */
 export function FieldInput({ field, value, original, overridden, error, disabled, resetToken, onChange, onRevert }: FieldInputProps) {
   const dirty = !isSameValue(value, original);
   return (
-    <div
-      className={cn(
-        "py-3 border-b border-white/[0.04] flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-6 -mx-2 px-2 rounded-lg",
-        dirty && "bg-accent/[0.03]",
-      )}
-    >
+    <div className={cn("py-3 border-b border-hairline-soft last:border-b-0 flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-6 -mx-2 px-2 rounded-[6px]", dirty && "bg-mint-soft/40")}>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className={cn("text-sm", dirty ? "text-text-primary" : "text-text-secondary")}>{fieldLabel(field)}</span>
-          {field.restart_required && (
-            <span
-              className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-warning/10 text-warning"
-              title="Applies after an engine restart"
-            >
-              restart
-            </span>
-          )}
-          {overridden && !dirty && (
-            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-info/10 text-info" title="Overridden by you">
-              custom
-            </span>
-          )}
+          <span className="text-[13px] font-semibold text-text">{fieldLabel(field)}</span>
+          {field.restart_required && <Chip tone="amber" size="xs" title="Applies after an engine restart">restart</Chip>}
+          {overridden && !dirty && <Chip tone="blue" size="xs" title="Overridden by you">custom</Chip>}
           {dirty && (
-            <button
-              type="button"
-              onClick={onRevert}
-              className="text-text-muted hover:text-text-secondary"
-              title="Revert this change"
-              aria-label="Revert"
-            >
-              <RotateCcw className="w-3 h-3" />
+            <button type="button" onClick={onRevert} className="inline-flex items-center justify-center w-6 h-6 rounded-[6px] text-text hover:bg-hover" title="Revert this change" aria-label="Revert">
+              <RotateCcw className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
-        {field.help && <p className="text-[11px] text-text-muted mt-0.5 leading-snug">{field.help}</p>}
-        {error && <p className="text-[11px] text-loss mt-1 font-mono">{error}</p>}
+        {field.help && <p className="text-[12.5px] font-medium text-text-2 mt-0.5 leading-snug">{field.help}</p>}
+        {error && <p className="text-[12.5px] font-medium text-rose mt-1">{error}</p>}
       </div>
       <div className="w-full sm:w-60 shrink-0">
         <Control key={resetToken} field={field} value={value} disabled={disabled} invalid={!!error} onChange={onChange} />
@@ -83,7 +64,12 @@ function Control(props: ControlProps) {
   const { field, value, disabled, invalid, onChange } = props;
   switch (field.type) {
     case "bool":
-      return <Toggle checked={value === true} disabled={disabled} onChange={onChange} />;
+      return (
+        <div className="flex items-center justify-between sm:justify-end gap-3 h-8">
+          <span className="text-[12.5px] font-semibold text-text">{value === true ? "ON" : "OFF"}</span>
+          <Switch checked={value === true} disabled={disabled} onChange={onChange} label={fieldLabel(field)} />
+        </div>
+      );
     case "select":
       return (
         <select
@@ -93,7 +79,7 @@ function Control(props: ControlProps) {
             const opt = field.options?.find((o) => String(o.value) === e.target.value);
             onChange(opt ? opt.value : e.target.value);
           }}
-          className={cn(INPUT_CLS, invalid && "border-loss/50")}
+          className={cn(INPUT_CLS, "bs-select", invalid && "border-rose")}
         >
           {(field.options ?? []).map((o) => (
             <option key={String(o.value)} value={String(o.value)}>{o.label}</option>
@@ -111,30 +97,12 @@ function Control(props: ControlProps) {
           spellCheck={false}
           autoComplete="off"
           onChange={(e) => onChange(e.target.value)}
-          className={cn(INPUT_CLS, invalid && "border-loss/50")}
+          className={cn(INPUT_CLS, invalid && "border-rose")}
         />
       );
     default:
       return <NumberControl {...props} />;
   }
-}
-
-function Toggle({ checked, disabled, onChange }: { checked: boolean; disabled?: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <div className="flex items-center justify-between sm:justify-end gap-3 h-8">
-      <span className="text-xs font-mono text-text-muted">{checked ? "ON" : "OFF"}</span>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        disabled={disabled}
-        onClick={() => onChange(!checked)}
-        className={cn("w-10 h-5 rounded-full transition-all relative disabled:opacity-50", checked ? "bg-accent" : "bg-white/10")}
-      >
-        <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all", checked ? "left-[22px]" : "left-0.5")} />
-      </button>
-    </div>
-  );
 }
 
 /** Comma-separated list. Sent back as an array when the config value is one, else as a string. */
@@ -154,7 +122,7 @@ function ListControl({ value, disabled, invalid, onChange }: ControlProps) {
         const items = e.target.value.split(",").map((s) => s.trim()).filter(Boolean);
         onChange(asArray ? items : items.join(","));
       }}
-      className={cn(INPUT_CLS, invalid && "border-loss/50")}
+      className={cn(INPUT_CLS, invalid && "border-rose")}
     />
   );
 }
@@ -188,11 +156,9 @@ function NumberControl({ field, value, disabled, invalid, onChange }: ControlPro
           if (!Number.isFinite(n)) return;
           onChange(isPct ? Number((n / 100).toFixed(8)) : n);
         }}
-        className={cn(INPUT_CLS, unit && "pr-12", invalid && "border-loss/50")}
+        className={cn(INPUT_CLS, unit && "pr-12", invalid && "border-rose")}
       />
-      {unit && (
-        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-text-muted pointer-events-none">{unit}</span>
-      )}
+      {unit && <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[12px] font-medium text-text-2 pointer-events-none">{unit}</span>}
     </div>
   );
 }

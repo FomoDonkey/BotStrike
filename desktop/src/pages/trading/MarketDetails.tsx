@@ -1,103 +1,128 @@
-import { useEffect, useState } from "react";
-import { api, type SymbolConfig } from "@/lib/api";
-import { useMarketStore } from "@/stores/marketStore";
+import { useMemo } from "react";
+import { api, type PositionData } from "@/lib/api";
+import type { MarketView } from "@/hooks/useMarketInfo";
+import { useEndpoint } from "@/hooks/useEndpoint";
 import { useMicroStore } from "@/stores/microStore";
 import { useExchangeStore } from "@/stores/exchangeStore";
-import { useNow } from "@/hooks/useNow";
-import { Hint } from "@/components/shared/Hint";
+import { useMarketStore } from "@/stores/marketStore";
+import { ListRow, ListSection, Signed } from "@/components/ui/ListRow";
+import { StrategyTag } from "@/components/ui/Chip";
 import { HINTS } from "@/lib/hints";
-import { EXCHANGE_LABELS, SYMBOL_LABELS } from "@/lib/constants";
-import { cn, formatCompact, formatCompactUSD, formatPrice, formatSignedPct, formatUSD } from "@/lib/utils";
-import { formatCountdown, fundingCountdownSec } from "@/lib/market";
+import { EXCHANGE_LABELS, STRATEGY_DESCRIPTIONS, SYMBOL_LABELS } from "@/lib/constants";
+import { cn, formatCompact, formatCompactUSD, formatPct, formatPrice, formatSignedPct, formatUSD } from "@/lib/utils";
+import { formatCountdown, PAPER_MAINTENANCE_MARGIN, positionNotional } from "@/lib/market";
 
-/** "Details" tab of the chart area: contract facts, venue stats, microstructure and symbol config. */
-export function MarketDetails({ symbol }: { symbol: string }) {
-  const now = useNow();
-  const info = useMarketStore((s) => s.marketInfo[symbol]);
+const CONFIG_POLL_MS = 60_000;
+
+const ABOUT: Record<string, string> = {
+  "BTC-USD": "Bitcoin perpetual (USDT-margined on Binance Futures). The largest and most liquid crypto market; the bot's regime reference symbol.",
+  "ETH-USD": "Ether perpetual (USDT-margined on Binance Futures). Second by liquidity; trades in the same trend and mean-reversion books as BTC.",
+  "SOL-USD": "Solana perpetual (USDT-margined on Binance Futures). Higher beta than BTC/ETH — wider ATR stops and smaller sizes.",
+  "ADA-USD": "Cardano perpetual (USDT-margined on Binance Futures). Lower price, larger contract sizes; same risk rules as the other symbols.",
+};
+
+/** Details tab (spec §3.1): About · Order size rules · Funding & fees · Price protection · Regime parameters. */
+export function MarketDetails({ market: m, positions }: { market: MarketView; positions: PositionData[] }) {
+  const symbol = m.symbol;
   const ob = useMarketStore((s) => s.orderbooks[symbol]);
-  const price = useMarketStore((s) => s.prices[symbol] || 0);
   const micro = useMicroStore((s) => s.snapshots[symbol]);
   const exchange = useExchangeStore((s) => s.exchange);
-  const [cfg, setCfg] = useState<SymbolConfig | null>(null);
-  const [cfgErr, setCfgErr] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    api.config()
-      .then((c) => { if (!cancelled) setCfg(c.symbols.find((s) => s.symbol === symbol) ?? null); })
-      .catch(() => { if (!cancelled) setCfgErr(true); });
-    return () => { cancelled = true; };
-  }, [symbol]);
-
-  const countdown = typeof info?.funding_countdown_sec === "number" && info.updated
-    ? Math.max(0, info.funding_countdown_sec - (now / 1000 - info.updated))
-    : fundingCountdownSec(now);
-
-  const sections: { title: string; rows: { k: string; v: React.ReactNode; hint?: string }[] }[] = [
-    {
-      title: "Contract",
-      rows: [
-        { k: "Symbol", v: symbol },
-        { k: "Base / quote", v: `${SYMBOL_LABELS[symbol] ?? symbol.split("-")[0]} / USD` },
-        { k: "Venue", v: EXCHANGE_LABELS[exchange] ?? exchange },
-        { k: "Type", v: "Perpetual (paper)" },
-        { k: "Last price", v: price > 0 ? formatPrice(price) : "---" },
-        { k: "Mark price", v: info?.mark_price ? formatPrice(info.mark_price) : "---", hint: HINTS.mark },
-        { k: "Index price", v: info?.index_price ? formatPrice(info.index_price) : "---", hint: HINTS.index },
-        { k: "Mark − index", v: info?.mark_price && info?.index_price ? formatSignedPct((info.mark_price - info.index_price) / info.index_price, 3) : "---", hint: "Premium of mark over index — the basis that funding corrects" },
-      ],
-    },
-    {
-      title: "Venue stats",
-      rows: [
-        { k: "Funding rate", v: typeof info?.funding_rate === "number" ? <span className={info.funding_rate > 0 ? "text-profit" : info.funding_rate < 0 ? "text-loss" : ""}>{formatSignedPct(info.funding_rate, 4)}</span> : "---", hint: HINTS.funding },
-        { k: "Next funding", v: formatCountdown(countdown), hint: "Countdown to the next 8 h UTC funding mark" },
-        { k: "24h volume", v: formatCompactUSD(info?.volume_24h ?? 0), hint: HINTS.vol24 },
-        { k: "Open interest", v: info?.open_interest ? `${formatCompact(info.open_interest)} ${SYMBOL_LABELS[symbol] ?? ""}` : "---", hint: HINTS.oi },
-        { k: "Best bid / ask", v: ob?.best_bid && ob?.best_ask ? `${formatPrice(ob.best_bid)} / ${formatPrice(ob.best_ask)}` : "---" },
-        { k: "Spread", v: ob ? `${ob.spread.toFixed(2)} (${ob.spread_bps.toFixed(3)} bps)` : "---", hint: HINTS.spread },
-        { k: "Microprice", v: ob?.microprice ? formatPrice(ob.microprice) : "---", hint: "Size-weighted mid: (bid × askSize + ask × bidSize) / (bidSize + askSize)" },
-      ],
-    },
-    {
-      title: "Microstructure",
-      rows: [
-        { k: "VPIN", v: micro?.vpin ? <span className={cn(micro.vpin.is_toxic && "text-loss")}>{(micro.vpin.vpin * 100).toFixed(0)}%{micro.vpin.is_toxic ? " · toxic" : ""}</span> : "---", hint: "Volume-synchronised probability of informed trading — order-flow toxicity" },
-        { k: "Hawkes", v: micro?.hawkes ? <span className={cn(micro.hawkes.is_spike && "text-loss")}>{micro.hawkes.multiplier.toFixed(1)}x{micro.hawkes.is_spike ? " · spike" : ""}</span> : "---", hint: "Self-exciting intensity of trade arrivals vs baseline" },
-        { k: "Kyle λ", v: micro?.kyle_lambda ? `${micro.kyle_lambda.lambda_bps.toFixed(2)} bps` : "---", hint: "Price impact per unit of signed volume" },
-        { k: "Adverse selection", v: micro?.kyle_lambda ? `${micro.kyle_lambda.adverse_selection_bps.toFixed(2)} bps` : "---" },
-        { k: "Risk score", v: typeof micro?.risk_score === "number" ? <span className={cn(micro.risk_score > 0.6 && "text-warning")}>{micro.risk_score.toFixed(2)}</span> : "---", hint: "Composite 0–1 microstructure risk used to scale position sizing" },
-      ],
-    },
-    {
-      title: "Symbol config",
-      rows: cfg ? [
-        { k: "Leverage", v: `${cfg.leverage}x` },
-        { k: "Max position", v: formatUSD(cfg.max_position_usd) },
-        { k: "VPIN bucket", v: String(cfg.vpin_bucket_size) },
-        { k: "VPIN toxic ≥", v: String(cfg.vpin_toxic_threshold) },
-        { k: "Hawkes spike ×", v: String(cfg.hawkes_spike_mult) },
-        { k: "OBI levels", v: String(cfg.obi_levels) },
-      ] : [{ k: cfgErr ? "Config unavailable" : "Loading…", v: "" }],
-    },
-  ];
+  const cfg = useEndpoint(() => api.config(), CONFIG_POLL_MS);
+  const symCfg = useMemo(() => cfg.data?.symbols.find((s) => s.symbol === symbol) ?? null, [cfg.data, symbol]);
+  const trading = cfg.data?.trading ?? null;
+  const sc = m.rest?.symbol_config ?? null;
+  const leverage = sc?.leverage ?? symCfg?.leverage ?? null;
+  const maxPos = sc?.max_position_usd ?? symCfg?.max_position_usd ?? null;
+  const minNotional = sc?.min_notional_usd ?? null;
+  const taker = sc?.taker_fee ?? trading?.taker_fee ?? null;
+  const maker = sc?.maker_fee ?? trading?.maker_fee ?? null;
+  const mm = sc?.maintenance_margin ?? PAPER_MAINTENANCE_MARGIN;
+  const strategies = sc?.strategies ?? (symCfg && Array.isArray(symCfg.strategies) ? (symCfg.strategies as string[]) : null);
+  const openNotional = positions.filter((p) => p.symbol === symbol).reduce((a, p) => a + positionNotional(p), 0);
+  const base = SYMBOL_LABELS[symbol] ?? symbol.split("-")[0];
 
   return (
     <div className="flex-1 min-h-0 overflow-auto">
-      <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-x-8 px-3 py-2">
-        {sections.map((sec) => (
-          <div key={sec.title} className="min-w-0">
-            <p className="text-[10.5px] uppercase tracking-[0.06em] text-text-muted h-7 flex items-center border-b border-hairline-soft">{sec.title}</p>
-            <dl className="kv">
-              {sec.rows.map((r) => (
-                <div key={r.k} className="contents">
-                  <dt>{r.hint ? <Hint title={r.hint}>{r.k}</Hint> : r.k}</dt>
-                  <dd>{r.v}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-        ))}
+      <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-x-6">
+        <div className="min-w-0 md:col-span-2 2xl:col-span-3">
+          <ListSection title={`About ${symbol}`} first>
+            <p className="text-[13px] font-medium text-text leading-relaxed">{ABOUT[symbol] ?? `${base} perpetual on ${EXCHANGE_LABELS[exchange] ?? exchange}.`}</p>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[12.5px]">
+              <span className="font-medium text-text-2">Venue <span className="text-text font-semibold">{EXCHANGE_LABELS[exchange] ?? exchange}</span></span>
+              <span className="font-medium text-text-2">Type <span className="text-text font-semibold">Perpetual · paper</span></span>
+              <span className="font-medium text-text-2">Base / quote <span className="text-text font-semibold">{base} / USD</span></span>
+              {strategies && strategies.length > 0 && (
+                <span className="inline-flex items-center gap-2 font-medium text-text-2">Strategies {strategies.map((s) => <StrategyTag key={s} strategy={s} />)}</span>
+              )}
+            </div>
+          </ListSection>
+        </div>
+
+        <div className="min-w-0">
+          <ListSection title="Order size rules">
+            <ListRow label="Leverage" hint="Leverage applied to this symbol's positions (SymbolConfig.leverage). Trend daily positions are always 1x.">{leverage !== null ? `${leverage}x` : "---"}</ListRow>
+            <ListRow label="Max position" hint="Largest notional the risk manager allows on this symbol">{maxPos !== null ? formatUSD(maxPos) : "---"}</ListRow>
+            <ListRow label="Min notional" hint="Smallest order the paper book accepts">{minNotional !== null ? formatUSD(minNotional) : <span title="symbol_config.min_notional_usd needs bridge ≥ 2.16">---</span>}</ListRow>
+            <ListRow label="Risk per trade" hint="Fraction of equity risked between entry and stop on each signal">{trading ? formatPct(trading.risk_per_trade_pct, 2) : "---"}</ListRow>
+            <ListRow label="Max total exposure" hint="Sum of open notionals / equity allowed">{trading ? formatPct(trading.max_total_exposure_pct, 0) : "---"}</ListRow>
+            <ListRow label="Open on this symbol" hint={HINTS.notional}>{formatUSD(openNotional)}</ListRow>
+          </ListSection>
+        </div>
+
+        <div className="min-w-0">
+          <ListSection title="Funding & fees">
+            <ListRow label="Current funding" hint={HINTS.funding}><Signed value={m.funding} format={(v) => formatSignedPct(v, 4)} /></ListRow>
+            <ListRow label="Next payment" hint="Countdown to the next 8 h UTC funding mark">{formatCountdown(m.countdownSec)}</ListRow>
+            <ListRow label="Maintenance margin" hint="Margin fraction at which the paper liquidation estimate triggers">{formatPct(mm, 1)}</ListRow>
+            <ListRow label="Taker fee (paper)">{taker !== null ? formatPct(taker, 2) : "---"}</ListRow>
+            <ListRow label="Maker fee (paper)">{maker !== null ? formatPct(maker, 2) : "---"}</ListRow>
+            <ListRow label="Open interest" hint={HINTS.oi}>{m.oi > 0 ? `${formatCompact(m.oi)} ${base}` : "---"}</ListRow>
+            <ListRow label={`${m.winLabel} volume`} hint={HINTS.vol24}>{formatCompactUSD(m.volumeUsd)}</ListRow>
+          </ListSection>
+        </div>
+
+        <div className="min-w-0">
+          <ListSection title="Price protection">
+            <ListRow label="Slippage model" hint="Paper fills are moved against you by this many basis points of the mark price">{trading ? `${trading.slippage_bps} bps` : "---"}</ListRow>
+            <ListRow label="Mark price" hint={HINTS.mark}>{m.mark > 0 ? formatPrice(m.mark) : "---"}</ListRow>
+            <ListRow label="Index price" hint={HINTS.index}>{m.index > 0 ? formatPrice(m.index) : "---"}</ListRow>
+            <ListRow label="Mark − index" hint="Premium of mark over index — the basis funding corrects">{m.mark > 0 && m.index > 0 ? formatSignedPct((m.mark - m.index) / m.index, 3) : "---"}</ListRow>
+            <ListRow label="Best bid / ask">{ob?.best_bid && ob?.best_ask ? `${formatPrice(ob.best_bid)} / ${formatPrice(ob.best_ask)}` : "---"}</ListRow>
+            <ListRow label="Spread" hint={HINTS.spread}>{ob ? `${ob.spread.toFixed(2)} (${ob.spread_bps.toFixed(3)} bps)` : "---"}</ListRow>
+            <ListRow label="Data age" hint="Seconds since the last tick the engine received for this symbol">{m.dataAgeSec !== null ? `${m.dataAgeSec.toFixed(1)} s` : "---"}</ListRow>
+          </ListSection>
+        </div>
+
+        <div className="min-w-0">
+          <ListSection title="Regime parameters">
+            <ListRow label="Detection frame" hint={HINTS.regime}>{m.regimeTf} min bars</ListRow>
+            <ListRow label="Min dwell" hint="A new regime must hold this long before it is confirmed">30 min</ListRow>
+            <ListRow label="Current regime">{m.regime.replace(/_/g, " ")}</ListRow>
+            <ListRow label="Candidate" hint="Regime the detector is leaning to, not yet confirmed">{m.rest?.regime_candidate || "---"}</ListRow>
+            <ListRow label="Since">{m.regimeSince > 0 ? new Date(m.regimeSince * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "---"}</ListRow>
+          </ListSection>
+        </div>
+
+        <div className="min-w-0">
+          <ListSection title="Microstructure">
+            <ListRow label="VPIN" hint="Volume-synchronised probability of informed trading — order-flow toxicity">
+              {micro?.vpin ? <span className={cn(micro.vpin.is_toxic && "text-rose")}>{(micro.vpin.vpin * 100).toFixed(0)}%{micro.vpin.is_toxic ? " · toxic" : ""}</span> : "---"}
+            </ListRow>
+            <ListRow label="Hawkes" hint="Self-exciting intensity of trade arrivals vs baseline">
+              {micro?.hawkes ? <span className={cn(micro.hawkes.is_spike && "text-rose")}>{micro.hawkes.multiplier.toFixed(1)}x{micro.hawkes.is_spike ? " · spike" : ""}</span> : "---"}
+            </ListRow>
+            <ListRow label="Kyle λ" hint="Price impact per unit of signed volume">{micro?.kyle_lambda ? `${micro.kyle_lambda.lambda_bps.toFixed(2)} bps` : "---"}</ListRow>
+            <ListRow label="Adverse selection">{micro?.kyle_lambda ? `${micro.kyle_lambda.adverse_selection_bps.toFixed(2)} bps` : "---"}</ListRow>
+            <ListRow label="Risk score" hint="Composite 0–1 microstructure risk used to scale position sizing">
+              {typeof micro?.risk_score === "number" ? <span className={cn(micro.risk_score > 0.6 && "text-amber")}>{micro.risk_score.toFixed(2)}</span> : <span title="Microstructure is disabled on this bridge (trading.microstructure_enabled)">off</span>}
+            </ListRow>
+            {strategies && (
+              <ListRow label="Strategy notes">
+                <span className="text-[12px] font-medium text-text-2 whitespace-normal text-right">{strategies.map((s) => STRATEGY_DESCRIPTIONS[s]?.split(":")[0] ?? s).join(" · ")}</span>
+              </ListRow>
+            )}
+          </ListSection>
+        </div>
       </div>
     </div>
   );

@@ -1,33 +1,39 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { IChartApi } from "lightweight-charts";
+import { Camera, Maximize2, RotateCcw } from "lucide-react";
 import type { PositionData } from "@/lib/api";
 import type { SignalData, TradeData } from "@/stores/tradingStore";
+import { useUiStore } from "@/stores/uiStore";
+import type { MarketView } from "@/hooks/useMarketInfo";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
-import { TabBar } from "@/components/shared/TabBar";
+import { TabBar } from "@/components/ui/TabBar";
+import { IconButton } from "@/components/ui/Button";
+import { Popover, MenuItem, DropdownTrigger, MenuLabel } from "@/components/ui/Popover";
+import { FundingChart } from "@/components/ui/FundingChart";
 import { CandlestickChart } from "@/components/charts/CandlestickChart";
 import { IndicatorPane, type IndicatorKind } from "@/components/charts/IndicatorPane";
-import { TIMEFRAMES, type Timeframe } from "@/components/charts/chartConfig";
-import { divergenceOverlays, positionPriceLines } from "@/components/charts/chartOverlays";
+import { MORE_TIMEFRAMES, TIMEFRAMES, type Timeframe } from "@/components/charts/chartConfig";
+import { divergenceOverlays, positionPriceLines, type PriceLineSpec } from "@/components/charts/chartOverlays";
+import { COLOR_BLUE, COLOR_DOWN, COLOR_DOWN_CB, COLOR_UP, COLOR_UP_CB } from "@/lib/constants";
+import { cn } from "@/lib/utils";
 import { SignalsFeed } from "./SignalsFeed";
 import { DepthChart } from "./DepthChart";
 import { MarketDetails } from "./MarketDetails";
-import { cn } from "@/lib/utils";
 
-type ChartTab = "chart" | "signals" | "depth" | "details";
+type ChartTab = "chart" | "funding" | "depth" | "signals" | "details";
 type Indicator = IndicatorKind | "none";
+type PriceMode = "last" | "mark";
 
 const TABS = [
   { id: "chart", label: "Chart" },
-  { id: "signals", label: "Signals" },
+  { id: "funding", label: "Funding" },
   { id: "depth", label: "Depth" },
+  { id: "signals", label: "Signals" },
   { id: "details", label: "Details" },
 ] as const satisfies readonly { id: ChartTab; label: string }[];
 
-/** Contract §4: paper takes no manual orders — the engine decides. */
-export const MANUAL_ORDER_TOOLTIP = "Las órdenes las decide el motor; activa una estrategia en Strategies";
-
 interface ChartAreaProps {
-  symbol: string;
+  market: MarketView;
   timeframe: Timeframe;
   onTimeframe: (tf: Timeframe) => void;
   markers: TradeData[];
@@ -35,100 +41,170 @@ interface ChartAreaProps {
   signals: SignalData[];
 }
 
-export function ChartArea({ symbol, timeframe, onTimeframe, markers, positions, signals }: ChartAreaProps) {
+interface Elements {
+  trades: boolean;
+  positions: boolean;
+  divergence: boolean;
+}
+
+/** Chart · Funding · Depth · Signals · Details with Strike's toolbar (spec §3.1). */
+export function ChartArea({ market, timeframe, onTimeframe, markers, positions, signals }: ChartAreaProps) {
+  const symbol = market.symbol;
   const [tab, setTab] = useState<ChartTab>("chart");
   const [indicator, setIndicator] = useState<Indicator>("macd");
+  const [priceMode, setPriceMode] = useState<PriceMode>("last");
+  const [elements, setElements] = useState<Elements>({ trades: true, positions: true, divergence: true });
   const [mainChart, setMainChart] = useState<IChartApi | null>(null);
+  const legendRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const colorBlind = useUiStore((s) => s.display.colorBlind);
+  const upColor = colorBlind ? COLOR_UP_CB : COLOR_UP;
+  const downColor = colorBlind ? COLOR_DOWN_CB : COLOR_DOWN;
 
-  const priceLines = useMemo(() => positionPriceLines(positions, symbol), [positions, symbol]);
-  const overlays = useMemo(() => divergenceOverlays(signals, symbol), [signals, symbol]);
+  const priceLines = useMemo<PriceLineSpec[]>(() => {
+    const lines = elements.positions ? positionPriceLines(positions, symbol) : [];
+    if (priceMode === "mark" && market.mark > 0) {
+      lines.push({ id: "mark", price: market.mark, color: COLOR_BLUE, title: "Mark", style: "dotted" });
+    }
+    return lines;
+  }, [positions, symbol, elements.positions, priceMode, market.mark]);
+  const overlays = useMemo(() => (elements.divergence ? divergenceOverlays(signals, symbol) : []), [signals, symbol, elements.divergence]);
+  const tradeMarkers = elements.trades ? markers : [];
   const symbolSignals = useMemo(() => signals.filter((s) => s.symbol === symbol).length, [signals, symbol]);
 
+  const screenshot = () => {
+    if (!mainChart) return;
+    try {
+      const canvas = mainChart.takeScreenshot();
+      const url = canvas.toDataURL("image/png");
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${symbol}-${timeframe}.png`;
+      a.click();
+    } catch (e) {
+      console.warn("[chart] screenshot failed", e);
+    }
+  };
+  const reset = () => {
+    try {
+      mainChart?.timeScale().resetTimeScale();
+      mainChart?.timeScale().scrollToRealTime();
+    } catch { /* disposed */ }
+  };
+  const fullscreen = () => {
+    const el = panelRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void el.requestFullscreen?.();
+  };
+
   const toolbar = (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-1.5 whitespace-nowrap">
       <div className="flex items-center gap-px">
         {TIMEFRAMES.map((tf) => (
           <button
             key={tf}
             type="button"
+            aria-pressed={timeframe === tf}
             onClick={() => onTimeframe(tf)}
-            className={cn("px-2 h-6 rounded text-[11px] font-mono transition-colors", timeframe === tf ? "bg-white/10 text-text-primary" : "text-text-muted hover:text-text-secondary")}
+            className={cn("h-6 px-2 rounded-[6px] text-[12px] font-medium transition-colors", timeframe === tf ? "bg-active text-text" : "text-text-2 hover:text-text hover:bg-hover")}
           >
             {tf}
           </button>
         ))}
+        <Popover width="w-28" trigger={(open) => <DropdownTrigger size="xs" open={open} label={MORE_TIMEFRAMES.includes(timeframe) ? timeframe : "More"} />}>
+          {(close) => MORE_TIMEFRAMES.map((tf) => <MenuItem key={tf} active={timeframe === tf} onClick={() => { onTimeframe(tf); close(); }}>{tf}</MenuItem>)}
+        </Popover>
       </div>
-      <span className="w-px h-4 bg-hairline" />
-      <select
-        value={indicator}
-        onChange={(e) => setIndicator(e.target.value as Indicator)}
-        aria-label="Indicator pane"
-        className="h-6 bg-transparent text-[11px] text-text-secondary border border-hairline rounded px-1 focus:outline-none focus:border-white/30"
-      >
-        <option value="none">No indicator</option>
-        <option value="rsi">RSI 14</option>
-        <option value="macd">MACD 12/26/9</option>
-      </select>
-      <span className="w-px h-4 bg-hairline" />
-      <ManualOrderButtons />
+      <span className="w-px h-4 bg-hairline-strong" />
+      <Popover width="w-40" trigger={(open) => <DropdownTrigger size="xs" open={open} label={priceMode === "mark" ? "Mark Price" : "Last Price"} />}>
+        {(close) => (
+          <>
+            <MenuItem active={priceMode === "last"} onClick={() => { setPriceMode("last"); close(); }}>Last Price</MenuItem>
+            <MenuItem active={priceMode === "mark"} onClick={() => { setPriceMode("mark"); close(); }} title="Adds the mark price line to the chart">Mark Price</MenuItem>
+          </>
+        )}
+      </Popover>
+      <Popover width="w-44" trigger={(open) => <DropdownTrigger size="xs" open={open} label={indicator === "none" ? "Indicators" : indicator === "rsi" ? "RSI 14" : "MACD"} />}>
+        {(close) => (
+          <>
+            <MenuItem active={indicator === "none"} onClick={() => { setIndicator("none"); close(); }}>None</MenuItem>
+            <MenuItem active={indicator === "rsi"} onClick={() => { setIndicator("rsi"); close(); }}>RSI 14</MenuItem>
+            <MenuItem active={indicator === "macd"} onClick={() => { setIndicator("macd"); close(); }}>MACD 12 / 26 / 9</MenuItem>
+          </>
+        )}
+      </Popover>
+      <Popover width="w-52" trigger={(open) => <DropdownTrigger size="xs" open={open} label="Chart Elements" />}>
+        <MenuLabel>Show</MenuLabel>
+        <MenuItem onClick={() => setElements((e) => ({ ...e, trades: !e.trades }))}><Check on={elements.trades} /> Trade markers</MenuItem>
+        <MenuItem onClick={() => setElements((e) => ({ ...e, positions: !e.positions }))}><Check on={elements.positions} /> Position lines (entry · SL · TP · liq)</MenuItem>
+        <MenuItem onClick={() => setElements((e) => ({ ...e, divergence: !e.divergence }))}><Check on={elements.divergence} /> Divergence overlays</MenuItem>
+      </Popover>
+      <span className="w-px h-4 bg-hairline-strong" />
+      <IconButton onClick={screenshot} title="Screenshot" aria-label="Screenshot" disabled={!mainChart}><Camera className="w-3.5 h-3.5" /></IconButton>
+      <IconButton onClick={reset} title="Reset view" aria-label="Reset view" disabled={!mainChart}><RotateCcw className="w-3.5 h-3.5" /></IconButton>
+      <IconButton onClick={fullscreen} title="Fullscreen" aria-label="Fullscreen"><Maximize2 className="w-3.5 h-3.5" /></IconButton>
     </div>
   );
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 min-w-0">
+    <div ref={panelRef} className="flex flex-col flex-1 min-h-0 min-w-0 bg-panel">
       <TabBar
-        tabs={TABS.map((t) => (t.id === "signals" && symbolSignals ? { ...t, badge: symbolSignals } : t))}
+        size="sm"
+        tabs={TABS.map((t) => (t.id === "signals" && symbolSignals ? { ...t, count: symbolSignals } : t))}
         value={tab}
         onChange={setTab}
         right={tab === "chart" ? <div className="hidden md:block">{toolbar}</div> : undefined}
       />
-      {/* < md: the toolbar gets its own row so the four tabs never scroll out of sight */}
       {tab === "chart" && (
-        <div className="md:hidden flex items-center h-8 px-2 border-b border-hairline-soft overflow-x-auto scrollbar-none shrink-0">{toolbar}</div>
+        <div className="md:hidden flex items-center h-9 px-2 border-b border-hairline-soft overflow-x-auto scrollbar-none shrink-0">{toolbar}</div>
       )}
 
       {tab === "chart" && (
         <div className="flex flex-col flex-1 min-h-0">
-          <ErrorBoundary fallback={<div className="flex flex-1 items-center justify-center text-text-muted text-sm">Chart unavailable</div>}>
+          <ErrorBoundary fallback={<div className="flex flex-1 items-center justify-center text-text text-[13px] font-medium">Chart unavailable</div>}>
             <div className="relative flex-1 min-h-0">
               <div className="absolute inset-0">
                 <CandlestickChart
                   className="w-full h-full"
                   symbol={symbol}
-                  trades={markers}
+                  trades={tradeMarkers}
                   timeframe={timeframe}
                   priceLines={priceLines}
                   overlays={overlays}
                   onChart={setMainChart}
+                  upColor={upColor}
+                  downColor={downColor}
+                  legendRef={legendRef}
                 />
               </div>
+              {/* OHLC legend line — "BTC-USD · 5m  O H L C Δ" (updated from the crosshair, no state) */}
+              <div className="absolute left-2 top-1.5 z-[2] flex items-center gap-2 max-w-[calc(100%-92px)] overflow-hidden text-[11.5px] font-medium num text-text pointer-events-none select-none whitespace-pre">
+                <span className="font-semibold">{symbol} · {timeframe}</span>
+                <span ref={legendRef} className="truncate" />
+              </div>
               {overlays.length > 0 && (
-                <div className="absolute left-2 top-1 z-[2] text-[10.5px] font-mono text-[#F472B6] pointer-events-none select-none">
+                <div className="absolute left-2 top-6 z-[2] text-[11px] font-medium text-[#F472B6] pointer-events-none select-none">
                   {overlays.map((o) => o.label).join(" · ")} divergence
                 </div>
               )}
             </div>
             {indicator !== "none" && (
-              <div className="relative h-[26%] min-h-[96px] max-h-[180px] border-t border-hairline-soft shrink-0">
+              <div className="relative h-[26%] min-h-[96px] max-h-[180px] border-t border-hairline shrink-0">
                 <IndicatorPane symbol={symbol} timeframe={timeframe} kind={indicator} mainChart={mainChart} />
               </div>
             )}
           </ErrorBoundary>
         </div>
       )}
-      {tab === "signals" && <SignalsFeed signals={signals} symbol={symbol} />}
+      {tab === "funding" && <FundingChart symbol={symbol} />}
       {tab === "depth" && <DepthChart symbol={symbol} />}
-      {tab === "details" && <MarketDetails symbol={symbol} />}
+      {tab === "signals" && <SignalsFeed signals={signals} symbol={symbol} />}
+      {tab === "details" && <MarketDetails market={market} positions={positions} />}
     </div>
   );
 }
 
-/** Long / Short present but disabled — a wrapper carries the tooltip since disabled buttons swallow hover. */
-function ManualOrderButtons() {
-  return (
-    <span className="inline-flex items-center gap-1" title={MANUAL_ORDER_TOOLTIP}>
-      <button type="button" disabled aria-disabled className="h-6 px-2.5 rounded text-[11px] font-semibold bg-profit/15 text-profit opacity-50 cursor-not-allowed">Long</button>
-      <button type="button" disabled aria-disabled className="h-6 px-2.5 rounded text-[11px] font-semibold bg-loss/15 text-loss opacity-50 cursor-not-allowed">Short</button>
-    </span>
-  );
+function Check({ on }: { on: boolean }) {
+  return <span className={cn("inline-flex items-center justify-center w-3.5 h-3.5 rounded-[3px] border", on ? "bg-mint border-mint text-bg" : "border-hairline-strong")}>{on && <span className="text-[10px] font-bold leading-none">✓</span>}</span>;
 }

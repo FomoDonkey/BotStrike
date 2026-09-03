@@ -88,6 +88,8 @@ interface MarketState {
   marketInfo: Record<string, MarketInfo>;
   /** Rolling tape of the last TAPE_SIZE ticks per symbol, newest first */
   tape: Record<string, Tick[]>;
+  /** Date.now() of the last price flush (footer "feed age") */
+  lastTickAt: number;
 
   onTick: (tick: Tick) => void;
   onCandles: (symbol: string, candles: Candle[]) => void;
@@ -152,6 +154,9 @@ function startPriceThrottle() {
       updates.tape = tape;
     }
 
+    // ticks arrived (even at an unchanged price) → refresh the feed-age stamp at most once a second
+    const nowMs = Date.now();
+    if (keys.length && nowMs - state.lastTickAt >= 1000) updates.lastTickAt = nowMs;
     if (Object.keys(updates).length) useMarketStore.setState(updates);
   }, 250);
 }
@@ -168,6 +173,7 @@ export const useMarketStore = create<MarketState>((set, get) => ({
   regime: {},
   marketInfo: {},
   tape: {},
+  lastTickAt: 0,
 
   onTick: (tick) => {
     if (!tick?.symbol || !isFiniteNum(tick.price) || tick.price <= 0) return;

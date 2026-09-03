@@ -49,7 +49,7 @@ export function positionPriceLines(positions: PositionData[], symbol: string): P
     }
     const liq = positionLiquidation(p);
     if (liq.price && liq.price > 0) {
-      out.push({ id: `liq-${key}`, price: liq.price, color: "#FFA502", title: liq.estimated ? "Liq (est.)" : "Liq", style: "dotted" });
+      out.push({ id: `liq-${key}`, price: liq.price, color: "#F5B942", title: liq.estimated ? "Liq (est.)" : "Liq", style: "dotted" });
     }
   });
   return out;

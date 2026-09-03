@@ -1,46 +1,50 @@
 import { useMemo, useState } from "react";
 import { useShallow } from "zustand/shallow";
 import { useTradingStore, type TradeData } from "@/stores/tradingStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { TabBar } from "@/components/shared/TabBar";
+import { useMarketInfo } from "@/hooks/useMarketInfo";
+import { TabBar } from "@/components/ui/TabBar";
+import { Panel } from "@/components/ui/Panel";
 import type { Timeframe } from "@/components/charts/chartConfig";
 import { cn } from "@/lib/utils";
+import { FavoritesStrip } from "./FavoritesStrip";
 import { MarketHeader } from "./MarketHeader";
 import { ChartArea } from "./ChartArea";
-import { OrderBookPanel } from "./OrderBookPanel";
+import { OrderBookColumn } from "./OrderBookColumn";
 import { TradesTape } from "./TradesTape";
-import { PositionsTable } from "./PositionsTable";
-import { OrdersTable } from "./OrdersTable";
-import { TradeHistoryTable } from "./TradeHistoryTable";
-import { SignalsFeed } from "./SignalsFeed";
+import { BotColumn } from "./BotColumn";
 import { AccountPanel } from "./AccountPanel";
+import { BottomPanel } from "./BottomPanel";
 import { useTradeHistory } from "./useTradeHistory";
 
-type RightTab = "book" | "tape" | "account";
-type BottomTab = "positions" | "orders" | "history" | "signals" | "account";
+type MobileTab = "book" | "trades" | "bot" | "account";
 
 const SYMBOL_KEY = "botstrike.trading.symbol";
+const TF_KEY = "botstrike.trading.timeframe";
 
 function loadSymbol(): string {
   try { return localStorage.getItem(SYMBOL_KEY) || "BTC-USD"; } catch { return "BTC-USD"; }
 }
-
-function Panel({ className, children }: { className?: string; children: React.ReactNode }) {
-  return <div className={cn("rounded-lg border border-hairline bg-bg-surface flex flex-col min-w-0 overflow-hidden", className)}>{children}</div>;
+function loadTimeframe(): Timeframe {
+  try { return (localStorage.getItem(TF_KEY) as Timeframe) || "5m"; } catch { return "5m"; }
 }
 
 /**
- * Live Trading terminal (contract §1): market header → chart + order book / tape → positions,
- * orders, history, signals, account. Stacks below lg; nothing ever scrolls the body sideways.
+ * Trade page (spec §3.1): favorites strip · market header · [chart 1fr | order book 290 | bot 300]
+ * · bottom panel. Two columns between lg and xl, everything stacks below lg (spec §6).
  */
 export function TradingPage() {
   const [symbol, setSymbolState] = useState(loadSymbol);
   const setSymbol = (s: string) => { setSymbolState(s); try { localStorage.setItem(SYMBOL_KEY, s); } catch { /* ignore */ } };
-  const [timeframe, setTimeframe] = useState<Timeframe>("5m");
-  const [rightTab, setRightTab] = useState<RightTab>("book");
-  const [bottomTab, setBottomTab] = useState<BottomTab>("positions");
-  const isDesktop = useMediaQuery("(min-width: 1024px)");
+  const [timeframe, setTimeframeState] = useState<Timeframe>(loadTimeframe);
+  const setTimeframe = (tf: Timeframe) => { setTimeframeState(tf); try { localStorage.setItem(TF_KEY, tf); } catch { /* ignore */ } };
+  const [mobileTab, setMobileTab] = useState<MobileTab>("book");
+  const isLg = useMediaQuery("(min-width: 1024px)");
+  const isXl = useMediaQuery("(min-width: 1280px)");
+  const layout = useUiStore(useShallow((s) => s.layout));
 
+  const market = useMarketInfo(symbol);
   const positionsMap = useTradingStore(useShallow((s) => s.positions));
   const positions = useMemo(() => Object.values(positionsMap).flat(), [positionsMap]);
   const signals = useTradingStore(useShallow((s) => s.recentSignals));
@@ -61,62 +65,60 @@ export function TradingPage() {
     return merged;
   }, [history.markers, liveTrades, symbol]);
 
-  const rightTabs = useMemo(() => {
-    const base = [{ id: "book" as const, label: "Order Book" }, { id: "tape" as const, label: "Trades" }];
-    return isDesktop ? base : [...base, { id: "account" as const, label: "Account" }];
-  }, [isDesktop]);
-  const effectiveRight: RightTab = isDesktop && rightTab === "account" ? "book" : rightTab;
-
-  const bottomTabs = [
-    { id: "positions" as const, label: "Positions", badge: positions.length || undefined },
-    { id: "orders" as const, label: "Orders" },
-    { id: "history" as const, label: "Trade History", badge: history.closed.length || undefined },
-    { id: "signals" as const, label: "Signals", badge: signals.length || undefined },
-    { id: "account" as const, label: "Account" },
-  ];
+  const showBook = layout.orderBook;
+  const chart = layout.chart && (
+    <Panel className="flex flex-col min-h-[440px] lg:min-h-0 overflow-hidden">
+      <ChartArea market={market} timeframe={timeframe} onTimeframe={setTimeframe} markers={markers} positions={positions} signals={signals} />
+    </Panel>
+  );
+  const bottom = layout.tables && (
+    <Panel className="flex flex-col overflow-hidden min-h-[280px] max-h-[70vh] lg:max-h-none lg:h-[300px] lg:shrink-0">
+      <BottomPanel symbol={symbol} positions={positions} trades={history.trades} closed={history.closed} signals={signals} loading={history.loading} error={history.error} activityEnabled={layout.activityFeed} />
+    </Panel>
+  );
 
   return (
-    <div className="flex flex-col gap-2 lg:h-full min-w-0">
-      <MarketHeader symbol={symbol} onSymbolChange={setSymbol} />
+    <div className="flex flex-col gap-2 p-2 lg:h-full min-w-0">
+      {layout.favorites && <FavoritesStrip symbol={symbol} onSelect={setSymbol} />}
+      <MarketHeader market={market} onSymbolChange={setSymbol} />
 
-      {/* Middle: chart + right rail */}
-      <div className="flex flex-col lg:flex-row gap-2 lg:flex-1 lg:min-h-0 min-w-0">
-        <Panel className="flex-1 min-h-[480px] lg:min-h-0">
-          <ChartArea
-            symbol={symbol}
-            timeframe={timeframe}
-            onTimeframe={setTimeframe}
-            markers={markers}
-            positions={positions}
-            signals={signals}
-          />
-        </Panel>
-
-        <div className="w-full lg:w-[292px] xl:w-[316px] shrink-0 flex flex-col gap-2 lg:min-h-0">
-          <Panel className="flex-1 min-h-[380px] lg:min-h-0">
-            <TabBar tabs={rightTabs} value={effectiveRight} onChange={setRightTab} size="sm" />
-            {effectiveRight === "book" && <OrderBookPanel symbol={symbol} />}
-            {effectiveRight === "tape" && <TradesTape symbol={symbol} />}
-            {effectiveRight === "account" && <AccountPanel positions={positions} variant="compact" />}
-          </Panel>
-          {isDesktop && (
-            <Panel className="shrink-0">
-              <div className="h-8 px-3 flex items-center text-[11.5px] font-medium text-text-primary border-b border-hairline">Account Overview</div>
-              <AccountPanel positions={positions} variant="compact" />
-            </Panel>
-          )}
+      {isXl ? (
+        <div className={cn("grid gap-2 flex-1 min-h-0 min-w-0", showBook ? "grid-cols-[minmax(0,1fr)_290px_300px]" : "grid-cols-[minmax(0,1fr)_300px]")}>
+          {chart || <Panel className="flex items-center justify-center text-[13px] font-medium text-text">Chart hidden (Settings → Layout)</Panel>}
+          {showBook && <Panel className="overflow-hidden flex flex-col min-h-0"><OrderBookColumn symbol={symbol} className="flex-1" /></Panel>}
+          <Panel className="overflow-hidden flex flex-col min-h-0"><BotColumn market={market} positions={positions} showAccount={layout.accountOverview} className="flex-1" /></Panel>
         </div>
-      </div>
+      ) : isLg ? (
+        <div className="grid grid-cols-[minmax(0,1fr)_300px] gap-2 flex-1 min-h-0 min-w-0">
+          {chart || <Panel className="flex items-center justify-center text-[13px] font-medium text-text">Chart hidden (Settings → Layout)</Panel>}
+          <div className="flex flex-col gap-2 min-h-0">
+            {showBook && <Panel className="overflow-hidden flex flex-col flex-1 min-h-0"><OrderBookColumn symbol={symbol} className="flex-1" /></Panel>}
+            <Panel className="overflow-hidden flex flex-col flex-1 min-h-0"><BotColumn market={market} positions={positions} showAccount={layout.accountOverview} className="flex-1" /></Panel>
+          </div>
+        </div>
+      ) : (
+        <>
+          {chart}
+          <Panel className="flex flex-col overflow-hidden min-h-[440px]">
+            <TabBar
+              size="sm"
+              tabs={[
+                ...(showBook ? [{ id: "book" as const, label: "Book" }, { id: "trades" as const, label: "Trades" }] : []),
+                { id: "bot" as const, label: "Bot" },
+                ...(layout.accountOverview ? [{ id: "account" as const, label: "Account" }] : []),
+              ]}
+              value={!showBook && (mobileTab === "book" || mobileTab === "trades") ? "bot" : mobileTab}
+              onChange={setMobileTab}
+            />
+            {mobileTab === "book" && showBook && <OrderBookColumn symbol={symbol} className="flex-1" />}
+            {mobileTab === "trades" && showBook && <TradesTape symbol={symbol} />}
+            {(mobileTab === "bot" || (!showBook && (mobileTab === "book" || mobileTab === "trades"))) && <BotColumn market={market} positions={positions} tab="bot" className="flex-1" />}
+            {mobileTab === "account" && <AccountPanel positions={positions} className="flex-1" />}
+          </Panel>
+        </>
+      )}
 
-      {/* Bottom: positions / orders / history / signals / account */}
-      <Panel className="lg:h-[min(300px,36vh)] lg:shrink-0 min-h-[260px] max-h-[70vh] lg:max-h-none">
-        <TabBar tabs={bottomTabs} value={bottomTab} onChange={setBottomTab} size="sm" />
-        {bottomTab === "positions" && <PositionsTable positions={positions} symbol={symbol} />}
-        {bottomTab === "orders" && <OrdersTable positions={positions} symbol={symbol} />}
-        {bottomTab === "history" && <TradeHistoryTable trades={history.closed} loading={history.loading} error={history.error} symbol={symbol} />}
-        {bottomTab === "signals" && <SignalsFeed signals={signals} />}
-        {bottomTab === "account" && <AccountPanel positions={positions} variant="full" />}
-      </Panel>
+      {bottom}
     </div>
   );
 }

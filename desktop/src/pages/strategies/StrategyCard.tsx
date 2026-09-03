@@ -1,23 +1,32 @@
 import { useState } from "react";
-import { ChevronDown, ChevronUp, Loader2, SlidersHorizontal } from "lucide-react";
-import { GlassPanel } from "@/components/shared/GlassPanel";
-import { VerdictChip } from "@/components/shared/VerdictChip";
-import type { ConfigField, ConfigScalar, StrategyInfo, StrategyResearch } from "@/lib/api";
-import { STRATEGY_COLORS, STRATEGY_LABELS } from "@/lib/constants";
-import { cn, formatPct, formatUSD } from "@/lib/utils";
+import { ChevronDown, ChevronUp, SlidersHorizontal } from "lucide-react";
+import type { ConfigField, ConfigScalar, EdgeStats, StrategyInfo, StrategyPortfolio, StrategyResearch } from "@/lib/api";
+import { STRATEGY_COLORS, STRATEGY_DESCRIPTIONS, STRATEGY_LABELS } from "@/lib/constants";
+import { cn, formatDurationShort, formatMoney, formatPct, formatSignedMoney } from "@/lib/utils";
 import { trimNumber } from "@/components/settings/schemaUtils";
+import { Panel } from "@/components/ui/Panel";
+import { Chip, StatusChip } from "@/components/ui/Chip";
+import { Switch } from "@/components/ui/Switch";
+import { Button } from "@/components/ui/Button";
+import { Sparkline } from "@/components/ui/Sparkline";
+import { ListRow, Signed } from "@/components/ui/ListRow";
 import { defaultAllocation, recallAllocation, rememberAllocation } from "./allocationMemory";
 
 interface StrategyCardProps {
   s: StrategyInfo;
-  /** Schema field of `trading.allocation_<type>` (bounds for the slider), when the bridge exposes it */
+  /** /api/portfolio.by_strategy row (bridge ≥ 2.16) */
+  pf?: StrategyPortfolio;
+  edge?: EdgeStats;
+  /** Schema field of `trading.allocation_<type>` (bounds for the slider) */
   allocField?: ConfigField;
   busy: boolean;
-  expandable?: boolean;
-  expanded?: boolean;
-  onToggleExpand?: () => void;
+  expanded: boolean;
+  onToggleExpand: () => void;
   onAllocation: (type: string, value: number) => void;
   onEditParams: () => void;
+  /** Remote bridge without token → controls disabled */
+  canEdit: boolean;
+  nowMs: number;
 }
 
 function num(v: unknown, digits = 2): string {
@@ -32,17 +41,27 @@ function paramText(v: ConfigScalar | undefined): string {
   return String(v);
 }
 
-export function StrategyCard({ s, allocField, busy, expandable, expanded, onToggleExpand, onAllocation, onEditParams }: StrategyCardProps) {
+function strategyStatus(s: StrategyInfo): string {
+  if (s.killed) return "killed";
+  if (s.active) return "active";
+  if (s.enabled ?? s.allocation > 0) return "enabled";
+  return "disabled";
+}
+
+/** Vault-style strategy card (spec §3.3). */
+export function StrategyCard({ s, pf, edge, allocField, busy, expanded, onToggleExpand, onAllocation, onEditParams, canEdit, nowMs }: StrategyCardProps) {
   const enabled = s.enabled ?? s.allocation > 0;
-  const color = STRATEGY_COLORS[s.type] ?? "#6B7280";
+  const color = STRATEGY_COLORS[s.type] ?? "#FFFFFF";
   const label = STRATEGY_LABELS[s.type] ?? s.name ?? s.type;
   const max = allocField?.max ?? 1;
   const step = allocField?.step ?? 0.05;
-  const params = Object.entries(s.params ?? {}).slice(0, 6);
-  const edge = s.edge;
+  const params = Object.entries(s.params ?? {});
+  const curve = pf?.equity_curve?.map((p) => p[1]) ?? [];
+  const alltime = pf ? pf.pnl : edge ? edge.net_pnl : null;
+  const ageSec = pf?.first_trade_ts ? Math.max(0, nowMs / 1000 - pf.first_trade_ts) : null;
 
   const toggle = () => {
-    if (busy) return;
+    if (busy || !canEdit) return;
     if (enabled) {
       rememberAllocation(s.type, s.allocation);
       onAllocation(s.type, 0);
@@ -53,204 +72,143 @@ export function StrategyCard({ s, allocField, busy, expandable, expanded, onTogg
   };
 
   return (
-    <GlassPanel className="p-4 sm:p-5 flex flex-col gap-4 min-w-0" glow={s.active}>
-      {/* Header: dot + name + status + switch */}
-      <div className="flex items-start gap-3">
-        <div className="w-3 h-3 mt-1 rounded-full shrink-0" style={{ backgroundColor: color }} />
+    <Panel className="flex flex-col min-w-0" accent={s.active}>
+      <div className="flex items-start gap-3 px-4 pt-4">
+        <span className="w-3 h-3 mt-1 rounded-full shrink-0" style={{ backgroundColor: color }} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-semibold text-text-primary">{label}</span>
-            <span className={cn(
-              "px-2 py-0.5 rounded text-[10px] font-semibold uppercase",
-              s.killed ? "bg-loss/10 text-loss" :
-              s.active ? "bg-profit/10 text-profit" :
-              enabled ? "bg-warning/10 text-warning" : "bg-white/5 text-text-muted"
-            )}>
-              {s.killed ? "KILLED" : s.active ? "ACTIVE" : enabled ? "ENABLED" : "DISABLED"}
-            </span>
+            <span className="text-[15px] font-semibold text-text">{label}</span>
+            <StatusChip status={strategyStatus(s)} size="xs" />
             {s.research && <ResearchChip r={s.research} />}
-            {s.symbols && s.symbols.length > 0 && (
-              <span className="text-[10px] font-mono text-text-muted truncate">{s.symbols.join(" · ")}</span>
-            )}
           </div>
-          <p className="text-xs text-text-secondary mt-1 leading-snug">{s.description || s.name}</p>
-          {s.research && <ResearchLine r={s.research} />}
+          <p className="text-[12.5px] font-medium text-text-2 mt-1 leading-snug">{s.description || STRATEGY_DESCRIPTIONS[s.type] || s.name}</p>
+          {s.symbols && s.symbols.length > 0 && <p className="text-[12px] font-medium text-text-2 mt-1">{s.symbols.join(" · ")}</p>}
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={enabled}
-          aria-label={enabled ? "Disable strategy" : "Enable strategy"}
-          disabled={busy}
-          onClick={toggle}
-          className={cn("w-10 h-5 rounded-full transition-all relative shrink-0 disabled:opacity-50", enabled ? "bg-accent" : "bg-white/10")}
-        >
-          {busy ? (
-            <Loader2 className="w-3 h-3 animate-spin absolute top-1 left-3.5 text-bg-base" />
-          ) : (
-            <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all", enabled ? "left-[22px]" : "left-0.5")} />
-          )}
-        </button>
+        <Switch checked={enabled} onChange={toggle} busy={busy} disabled={!canEdit} label={enabled ? "Disable strategy" : "Enable strategy"} />
       </div>
 
-      {/* Allocation slider — PUT on release */}
-      <div>
-        <div className="flex items-center justify-between text-xs mb-1">
-          <span className="text-text-muted">Allocation</span>
-          {allocField?.restart_required && (
-            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-warning/10 text-warning">restart</span>
-          )}
+      <div className="flex items-end justify-between gap-3 px-4 pt-4">
+        <div className="min-w-0">
+          <p className="text-[12.5px] font-medium text-text-2">All-time PNL</p>
+          <p className="num text-[24px] font-bold leading-tight"><Signed value={alltime} format={formatSignedMoney} /></p>
         </div>
-        <AllocationSlider
-          key={`${s.type}-${s.allocation}`}
-          value={s.allocation}
-          max={max}
-          step={step}
-          color={color}
-          disabled={busy}
-          onCommit={(v) => onAllocation(s.type, v)}
-        />
+        <Sparkline values={curve} width={140} height={40} />
       </div>
 
-      {/* Params */}
-      {params.length > 0 && (
-        <div>
-          <div className="flex items-center justify-between text-xs mb-1.5">
-            <span className="text-text-muted">Parameters</span>
-            <button
-              type="button"
-              onClick={onEditParams}
-              className="flex items-center gap-1 text-[11px] text-accent hover:underline"
-            >
-              <SlidersHorizontal className="w-3 h-3" /> Edit in Settings
-            </button>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-            {params.map(([k, v]) => (
-              <div key={k} className="rounded-lg bg-white/[0.02] px-2 py-1 min-w-0">
-                <p className="text-[9px] uppercase tracking-wider text-text-muted truncate" title={k}>{k.replace(/_/g, " ")}</p>
-                <p className="font-mono text-xs text-text-secondary truncate" title={paramText(v)}>{paramText(v)}</p>
+      <div className="grid grid-cols-2 gap-x-6 px-4 pt-3">
+        <ListRow label="All-time PNL"><Signed value={alltime} format={formatSignedMoney} /></ListRow>
+        <ListRow label="30D return"><Signed value={pf ? pf.return_30d : null} format={(v) => `${v > 0 ? "+" : ""}${(v * 100).toFixed(2)}%`} /></ListRow>
+        <ListRow label="Trades">{pf ? pf.trades : edge ? edge.n : "---"}</ListRow>
+        <ListRow label="Win rate">{pf ? formatPct(pf.win_rate, 0) : edge ? formatPct(edge.win_rate, 0) : "---"}</ListRow>
+        <ListRow label="PF" hint="Profit factor = gross wins / gross losses">{pf ? num(pf.profit_factor) : edge ? num(edge.profit_factor) : "---"}</ListRow>
+        <ListRow label="Sharpe">{pf && typeof pf.sharpe === "number" ? num(pf.sharpe) : "n/a"}</ListRow>
+        <ListRow label="Max DD"><span className={cn(pf && pf.max_drawdown > 0 && "text-rose")}>{pf ? formatPct(pf.max_drawdown) : "---"}</span></ListRow>
+        <ListRow label="Age" hint="Since the first trade">{ageSec !== null ? formatDurationShort(ageSec) : "---"}</ListRow>
+        <ListRow label="Allocation">{formatPct(s.allocation, 0)}</ListRow>
+        <ListRow label="Open positions">{pf ? pf.open_positions : "---"}</ListRow>
+      </div>
+
+      <div className="px-4 pt-3">
+        <div className="flex items-center justify-between text-[12.5px] mb-1">
+          <span className="font-medium text-text-2">Allocation</span>
+          {allocField?.restart_required && <Chip tone="amber" size="xs">restart</Chip>}
+        </div>
+        <AllocationSlider key={`${s.type}-${s.allocation}`} value={s.allocation} max={max} step={step} disabled={busy || !canEdit} onCommit={(v) => onAllocation(s.type, v)} />
+      </div>
+
+      <div className="flex items-center gap-2 px-4 py-3">
+        <Button variant="primary" className="flex-1" onClick={onToggleExpand} icon={expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}>
+          {expanded ? "Hide details" : "View details"}
+        </Button>
+        <Button variant="secondary" onClick={onEditParams} icon={<SlidersHorizontal className="w-3.5 h-3.5" />}>Parameters</Button>
+      </div>
+
+      {expanded && (
+        <div className="border-t border-hairline px-4 py-3 space-y-3">
+          {s.research && <ResearchDetails r={s.research} />}
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-2 mb-1.5">Edge monitor</p>
+            {edge ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6">
+                <ListRow label="n">{edge.n}</ListRow>
+                <ListRow label="Win rate">{formatPct(edge.win_rate, 0)}</ListRow>
+                <ListRow label="t-stat"><span className={cn(edge.t_stat <= -2 && "text-rose", edge.t_stat >= 2 && "text-mint")}>{num(edge.t_stat)}</span></ListRow>
+                <ListRow label="PF"><span className={cn(edge.profit_factor >= 1 ? "text-mint" : "text-rose")}>{num(edge.profit_factor)}</span></ListRow>
+                <ListRow label="Fee share"><span className={cn(edge.fee_share >= 0.5 && "text-amber")}>{formatPct(edge.fee_share, 0)}</span></ListRow>
+                <ListRow label="Net PnL"><Signed value={edge.net_pnl} format={formatSignedMoney} /></ListRow>
+                <ListRow label="Mean gross">{num(edge.mean_gross_bps, 1)} ± {num(edge.se_bps, 1)} bps</ListRow>
+                <ListRow label="Expectancy">{formatMoney(edge.expectancy_usd)}</ListRow>
+                <ListRow label="Avg hold">{num(edge.avg_hold_min, 0)} min</ListRow>
+                <ListRow label="Verdict"><StatusChip status={edge.verdict === "ok" ? "ok" : edge.verdict === "kill" ? "killed" : edge.verdict === "warn" ? "warning" : "disabled"} label={edge.verdict} size="xs" title={edge.reason} /></ListRow>
               </div>
-            ))}
+            ) : (
+              <p className="text-[12.5px] font-medium text-text">No edge data yet — the monitor needs closed trades.</p>
+            )}
+            {s.killed && s.kill_reason && <p className="text-[12.5px] font-medium text-rose mt-1 break-words">Killed: {s.kill_reason}</p>}
           </div>
-        </div>
-      )}
-
-      {/* Edge */}
-      <div>
-        <div className="flex items-center justify-between text-xs mb-1.5">
-          <span className="text-text-muted">Edge</span>
-          <VerdictChip verdict={edge?.verdict} title={edge?.reason} />
-        </div>
-        {edge ? (
-          <>
-            <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 text-[11px]">
-              <Stat label="n" value={String(edge.n ?? 0)} />
-              <Stat label="Win rate" value={typeof edge.win_rate === "number" ? formatPct(edge.win_rate, 0) : "---"} />
-              <Stat
-                label="t-stat"
-                value={num(edge.t_stat)}
-                tone={typeof edge.t_stat === "number" ? (edge.t_stat <= -2 ? "loss" : edge.t_stat >= 2 ? "profit" : undefined) : undefined}
-              />
-              <Stat label="PF" value={num(edge.profit_factor)} tone={typeof edge.profit_factor === "number" ? (edge.profit_factor >= 1 ? "profit" : "loss") : undefined} />
-              <Stat label="Fee share" value={typeof edge.fee_share === "number" ? formatPct(edge.fee_share, 0) : "---"} tone={typeof edge.fee_share === "number" && edge.fee_share >= 0.5 ? "warning" : undefined} />
+          {params.length > 0 && (
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-2 mb-1.5">Parameters</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                {params.map(([k, v]) => (
+                  <div key={k} className="rounded-[6px] bg-panel-2 px-2 py-1 min-w-0">
+                    <p className="text-[11px] font-medium text-text-2 truncate" title={k}>{k.replace(/_/g, " ")}</p>
+                    <p className="num text-[12.5px] font-semibold text-text truncate" title={paramText(v)}>{paramText(v)}</p>
+                  </div>
+                ))}
+              </div>
             </div>
-            <p className="text-[10px] text-text-muted mt-1 font-mono">
-              net {formatUSD(edge.net_pnl ?? 0)} · {num(edge.mean_gross_bps, 1)} ± {num(edge.se_bps, 1)} bps · hold {num(edge.avg_hold_min, 0)} min
-              {edge.reason ? ` · ${edge.reason}` : ""}
-            </p>
-          </>
-        ) : (
-          <p className="text-[11px] text-text-muted">No edge data yet</p>
-        )}
-        {s.killed && s.kill_reason && (
-          <p className="text-[11px] text-loss mt-1 font-mono break-words">Killed: {s.kill_reason}</p>
-        )}
-      </div>
-
-      {expandable && (
-        <button
-          type="button"
-          onClick={onToggleExpand}
-          className="flex items-center justify-center gap-1 -mb-1 pt-2 border-t border-white/5 text-[11px] text-accent hover:text-accent/80"
-        >
-          {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-          {expanded ? "Hide details" : "Show details (targets, positions, tracking)"}
-        </button>
+          )}
+        </div>
       )}
-    </GlassPanel>
+    </Panel>
   );
 }
 
-function researchTone(verdict: string): "profit" | "loss" | "warning" | "muted" {
+function researchTone(verdict: string): "mint" | "rose" | "amber" | "neutral" {
   const v = verdict.toUpperCase();
-  if (v === "GO" || v === "PASS") return "profit";
-  if (v.includes("NO") || v === "FAIL" || v === "KILL") return "loss";
-  if (v) return "warning";
-  return "muted";
+  if (v === "GO" || v === "PASS") return "mint";
+  if (v.includes("NO") || v === "FAIL" || v === "KILL") return "amber";
+  if (v) return "amber";
+  return "neutral";
 }
 
 function researchChecks(r: StrategyResearch): string {
-  if (Array.isArray(r.checks)) return `${r.checks.length} checks`;
-  if (typeof r.checks === "string" && r.checks) return `${r.checks} checks`;
+  if (Array.isArray(r.checks)) return `${r.checks.length}`;
+  if (typeof r.checks === "string" && r.checks) return r.checks;
   return "";
 }
 
-/** Offline research verdict next to the switch (bridge ≥ 2.15 `research` block). */
+/** `RESEARCH GO 11/11` (mint) / `NO-GO 2/7` (amber) with the checklist as hover card. */
 function ResearchChip({ r }: { r: StrategyResearch }) {
-  const tone = researchTone(r.verdict ?? "");
-  const title = [r.summary, r.note, researchChecks(r)].filter(Boolean).join(" · ") || "Offline research verdict";
-  return (
-    <span
-      title={title}
-      className={cn(
-        "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider whitespace-nowrap",
-        tone === "profit" && "bg-profit/10 text-profit",
-        tone === "loss" && "bg-loss/10 text-loss",
-        tone === "warning" && "bg-warning/10 text-warning",
-        tone === "muted" && "bg-white/5 text-text-muted",
-      )}
-    >
-      research {r.verdict || "n/a"}
-    </span>
-  );
+  const checks = researchChecks(r);
+  const title = [r.summary, r.note, Array.isArray(r.checks) ? r.checks.map(String).join("\n") : ""].filter(Boolean).join("\n") || "Offline research verdict";
+  return <Chip tone={researchTone(r.verdict ?? "")} size="xs" title={title}>Research {r.verdict || "n/a"}{checks ? ` ${checks}` : ""}</Chip>;
 }
 
-function ResearchLine({ r }: { r: StrategyResearch }) {
+function ResearchDetails({ r }: { r: StrategyResearch }) {
   const parts: string[] = [];
-  const checks = researchChecks(r);
-  if (checks) parts.push(checks);
   if (typeof r.trades === "number") parts.push(`${r.trades} trades`);
   if (typeof r.profit_factor === "number") parts.push(`PF ${r.profit_factor.toFixed(2)}`);
   if (typeof r.t_stat === "number") parts.push(`t ${r.t_stat.toFixed(2)}`);
-  const text = r.summary || r.note;
-  if (!parts.length && !text) return null;
   return (
-    <p className="text-[10.5px] text-text-muted mt-1 font-mono leading-snug break-words">
-      {parts.join(" · ")}{parts.length && text ? " · " : ""}{text}
-      {Array.isArray(r.checks) && r.checks.length > 0 && (
-        <span className="block text-text-faint font-sans mt-0.5">{r.checks.map(String).join(" · ")}</span>
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-2 mb-1.5">Research · {r.verdict || "n/a"}</p>
+      {(parts.length > 0 || r.summary || r.note) && (
+        <p className="text-[12.5px] font-medium text-text leading-snug break-words">{parts.join(" · ")}{parts.length && (r.summary || r.note) ? " · " : ""}{r.summary || r.note}</p>
       )}
-    </p>
-  );
-}
-
-function Stat({ label, value, tone }: { label: string; value: string; tone?: "profit" | "loss" | "warning" }) {
-  return (
-    <div className="rounded-lg bg-white/[0.02] px-2 py-1">
-      <p className="text-[9px] uppercase tracking-wider text-text-muted">{label}</p>
-      <p className={cn("font-mono text-xs", tone === "profit" && "text-profit", tone === "loss" && "text-loss", tone === "warning" && "text-warning", !tone && "text-text-secondary")}>
-        {value}
-      </p>
+      {Array.isArray(r.checks) && r.checks.length > 0 && (
+        <ul className="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-x-4">
+          {r.checks.map((c, i) => <li key={i} className="text-[12px] font-medium text-text-2 leading-snug">• {String(c)}</li>)}
+        </ul>
+      )}
     </div>
   );
 }
 
 const COMMIT_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"]);
 
-function AllocationSlider({ value, max, step, color, disabled, onCommit }: {
-  value: number; max: number; step: number; color: string; disabled: boolean; onCommit: (v: number) => void;
-}) {
+function AllocationSlider({ value, max, step, disabled, onCommit }: { value: number; max: number; step: number; disabled: boolean; onCommit: (v: number) => void }) {
   const [pct, setPct] = useState(Math.round(value * 100));
   const commit = () => {
     const next = pct / 100;
@@ -270,10 +228,9 @@ function AllocationSlider({ value, max, step, color, disabled, onCommit }: {
         onPointerUp={commit}
         onKeyUp={(e) => { if (COMMIT_KEYS.has(e.key)) commit(); }}
         onBlur={commit}
-        style={{ accentColor: color }}
         aria-label="Allocation"
       />
-      <span className="font-mono text-sm w-12 text-right tabular-nums" style={{ color }}>{pct}%</span>
+      <span className="num text-[13px] font-semibold w-12 text-right text-text">{pct}%</span>
     </div>
   );
 }

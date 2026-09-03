@@ -160,3 +160,47 @@ export function formatDateTime(ts: number | string | null | undefined): string {
   if (!ms) return "---";
   return new Date(ms).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
+
+/** Money with thousands separators: 1003.42 → "$1,003.42"; negatives "-$0.20". */
+export function formatMoney(value: number, decimals = 2): string {
+  if (!Number.isFinite(value)) return "---";
+  const abs = Math.abs(value).toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  return `${value < 0 ? "-$" : "$"}${abs}`;
+}
+
+/** Signed money with thousands separators: "+$1,003.42". */
+export function formatSignedMoney(value: number, decimals = 2): string {
+  if (!Number.isFinite(value)) return "---";
+  return `${value > 0 ? "+" : ""}${formatMoney(value, decimals)}`;
+}
+
+/** Feed age "0.1 s" / "12 s" / "3 min". */
+export function formatAge(seconds: number | null): string {
+  if (seconds === null || !Number.isFinite(seconds)) return "---";
+  // the store stamps ticks with Date.now() while useNow() ticks once a second → up to ~1 s "negative" age
+  if (seconds < 0) {
+    if (seconds > -5) seconds = 0;
+    else return "---";
+  }
+  if (seconds < 10) return `${seconds.toFixed(1)} s`;
+  if (seconds < 90) return `${Math.round(seconds)} s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+  return `${(seconds / 3600).toFixed(1)} h`;
+}
+
+/** "5h 37m" style duration for schedules; seconds → compact text. */
+export function formatDurationShort(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "---";
+  const s = Math.floor(seconds);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h < 24) return `${h}h ${String(m).padStart(2, "0")}m`;
+  return `${Math.floor(h / 24)}d ${h % 24}h`;
+}
+
+/** Capitalise the first letter: "paper" → "Paper". */
+export function capitalize(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}

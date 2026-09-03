@@ -1,62 +1,76 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
-import { GlassPanel } from "@/components/shared/GlassPanel";
-import { Brain } from "lucide-react";
-import { api, ApiError, type ConfigField, type ConfigSchemaResponse, type StrategyInfo } from "@/lib/api";
+import { api, ApiError, type ConfigField, type EdgeStats, type StrategyInfo, type StrategyPortfolio } from "@/lib/api";
 import { STRATEGY_LABELS } from "@/lib/constants";
-import { usePolling } from "@/hooks/usePolling";
+import { useEndpoint } from "@/hooks/useEndpoint";
+import { usePortfolio } from "@/hooks/usePortfolio";
+import { useNow } from "@/hooks/useNow";
 import { useAlertStore } from "@/stores/alertStore";
+import { useBridgeConfig } from "@/lib/config";
 import { allocationPath } from "@/components/settings/schemaUtils";
+import { Panel, PanelHeader, EmptyState } from "@/components/ui/Panel";
+import { StatusChip, StrategyTag } from "@/components/ui/Chip";
+import { DataTable, type Column } from "@/components/ui/DataTable";
+import { Signed } from "@/components/ui/ListRow";
+import { cn, formatMoney, formatPct, formatSignedMoney } from "@/lib/utils";
 import { StrategyCard } from "./StrategyCard";
 import { TrendDailyPanel } from "./TrendDailyPanel";
 import { rememberAllocation } from "./allocationMemory";
 
+interface LeaderRow {
+  rank: number;
+  type: string;
+  status: string;
+  share: number;
+  pf?: StrategyPortfolio;
+  edge?: EdgeStats;
+}
+
+function strategyStatus(s: StrategyInfo): string {
+  if (s.killed) return "killed";
+  if (s.active) return "active";
+  if (s.enabled ?? s.allocation > 0) return "enabled";
+  return "disabled";
+}
+
+/** Strategies (spec §3.3): vault-style cards + leaderboard table. */
 export function StrategiesPage() {
   const navigate = useNavigate();
+  const now = useNow();
   const addAlert = useAlertStore((s) => s.addAlert);
-  const [strategies, setStrategies] = useState<StrategyInfo[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [schema, setSchema] = useState<ConfigSchemaResponse | null>(null);
+  const { isLocal, token } = useBridgeConfig();
+  const canEdit = isLocal || token.length > 0;
   const [busy, setBusy] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>("TREND_DAILY");
+  const [reloadKey, setReloadKey] = useState(0);
 
-  const load = useCallback(async () => {
-    try {
-      const r = await api.strategies();
-      setStrategies(r.strategies ?? []);
-      setLoadError(null);
-    } catch (e) {
-      setLoadError(e instanceof ApiError ? e.message : String(e));
-    } finally {
-      setLoaded(true);
-    }
-  }, []);
-  usePolling(load, 30_000);
-
-  useEffect(() => {
-    let cancelled = false;
-    api.configSchema().then((s) => { if (!cancelled) setSchema(s); }).catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
+  const strategiesEp = useEndpoint(() => api.strategies(), 30_000, String(reloadKey));
+  const schemaEp = useEndpoint(() => api.configSchema(), 300_000);
+  const edgeEp = useEndpoint(() => api.edge(), 30_000);
+  const pf = usePortfolio(30_000);
+  const strategies = useMemo(() => strategiesEp.data?.strategies ?? [], [strategiesEp.data]);
 
   const fieldByPath = useMemo(() => {
     const m = new Map<string, ConfigField>();
-    for (const g of schema?.groups ?? []) for (const f of g.fields) m.set(f.path, f);
+    for (const g of schemaEp.data?.groups ?? []) for (const f of g.fields) m.set(f.path, f);
     return m;
-  }, [schema]);
+  }, [schemaEp.data]);
 
-  /** Settings tab holding this strategy's params (matched by field name), with a sane fallback. */
+  const pfByType = useMemo(() => {
+    const m = new Map<string, StrategyPortfolio>();
+    for (const r of pf.data?.by_strategy ?? []) m.set(r.strategy, r);
+    return m;
+  }, [pf.data]);
+
   const paramGroupFor = useCallback((s: StrategyInfo): string => {
-    if (s.settings_group) return s.settings_group; // bridge ≥ 2.15 says which Settings tab
+    if (s.settings_group) return s.settings_group;
     const keys = new Set(Object.keys(s.params ?? {}));
-    for (const g of schema?.groups ?? []) {
+    for (const g of schemaEp.data?.groups ?? []) {
       if (g.per_symbol) continue;
       if (g.fields.some((f) => keys.has(f.path.split(".").pop() ?? ""))) return g.id;
     }
     return s.type === "TREND_DAILY" ? "trend_daily" : "strategies";
-  }, [schema]);
+  }, [schemaEp.data]);
 
   const setAllocation = useCallback(async (type: string, value: number) => {
     setBusy(type);
@@ -70,70 +84,91 @@ export function StrategiesPage() {
         title: value > 0 ? `${label} → ${(value * 100).toFixed(0)}%` : `${label} disabled`,
         message: res.restart_required ? "Applies after an engine restart (Settings)" : "Applied to the running engine",
       });
-      await load();
+      setReloadKey((k) => k + 1);
     } catch (e) {
-      addAlert({
-        level: "critical",
-        title: "Allocation update failed",
-        message: e instanceof ApiError ? e.message : String(e),
-        sound: "alert",
-      });
+      addAlert({ level: "critical", title: "Allocation update failed", message: e instanceof ApiError ? e.message : String(e), sound: "alert" });
     } finally {
       setBusy(null);
     }
-  }, [addAlert, load]);
+  }, [addAlert]);
+
+  const leaderboard = useMemo<LeaderRow[]>(() => {
+    const totalAlloc = strategies.reduce((a, s) => a + ((s.enabled ?? s.allocation > 0) ? s.allocation : 0), 0);
+    const rows = strategies.map((s) => ({
+      rank: 0,
+      type: s.type,
+      status: strategyStatus(s),
+      share: totalAlloc > 0 && (s.enabled ?? s.allocation > 0) ? s.allocation / totalAlloc : 0,
+      pf: pfByType.get(s.type),
+      edge: edgeEp.data?.strategies?.[s.type],
+    }));
+    rows.sort((a, b) => (b.pf?.pnl ?? b.edge?.net_pnl ?? -Infinity) - (a.pf?.pnl ?? a.edge?.net_pnl ?? -Infinity));
+    return rows.map((r, i) => ({ ...r, rank: i + 1 }));
+  }, [strategies, pfByType, edgeEp.data]);
+
+  const columns: Column<LeaderRow>[] = [
+    { id: "rank", label: "Rank", align: "l", sortValue: (r) => r.rank, render: (r) => <span className="font-semibold">#{r.rank}</span> },
+    { id: "strategy", label: "Strategy", align: "l", sortValue: (r) => r.type, render: (r) => <StrategyTag strategy={r.type} /> },
+    { id: "status", label: "Status", align: "l", sortValue: (r) => r.status, render: (r) => <StatusChip status={r.status} size="xs" /> },
+    { id: "share", label: "Equity share", hint: "Allocation share among the enabled strategies", sortValue: (r) => r.share, render: (r) => <span className="num">{formatPct(r.share, 0)}</span> },
+    { id: "pnl", label: "All-time PnL", sortValue: (r) => r.pf?.pnl ?? r.edge?.net_pnl ?? null, render: (r) => <Signed value={r.pf?.pnl ?? r.edge?.net_pnl ?? null} format={formatSignedMoney} /> },
+    { id: "realized", label: "Realized", sortValue: (r) => r.pf?.realized ?? null, render: (r) => <Signed value={r.pf?.realized ?? null} format={formatSignedMoney} /> },
+    { id: "volume", label: "Volume", sortValue: (r) => r.pf?.volume ?? null, render: (r) => <span className="num">{r.pf ? formatMoney(r.pf.volume) : "---"}</span> },
+    { id: "trades", label: "Trades", sortValue: (r) => r.pf?.trades ?? r.edge?.n ?? null, render: (r) => <span className="num">{r.pf?.trades ?? r.edge?.n ?? "---"}</span> },
+    { id: "fees", label: "Fees", sortValue: (r) => r.pf?.fees ?? r.edge?.fees ?? null, render: (r) => <span className="num">{typeof (r.pf?.fees ?? r.edge?.fees) === "number" ? formatMoney((r.pf?.fees ?? r.edge?.fees) as number) : "---"}</span> },
+    { id: "wr", label: "Win rate", sortValue: (r) => r.pf?.win_rate ?? r.edge?.win_rate ?? null, render: (r) => <span className="num">{typeof (r.pf?.win_rate ?? r.edge?.win_rate) === "number" ? formatPct((r.pf?.win_rate ?? r.edge?.win_rate) as number, 0) : "---"}</span> },
+    { id: "sharpe", label: "Sharpe", sortValue: (r) => r.pf?.sharpe ?? null, render: (r) => <span className="num">{typeof r.pf?.sharpe === "number" ? r.pf.sharpe.toFixed(2) : "n/a"}</span> },
+    { id: "dd", label: "Max DD", sortValue: (r) => r.pf?.max_drawdown ?? null, render: (r) => <span className={cn("num", r.pf && r.pf.max_drawdown > 0 && "text-rose")}>{r.pf ? formatPct(r.pf.max_drawdown) : "---"}</span> },
+    { id: "t", label: "t-stat", sortValue: (r) => r.pf?.t_stat ?? r.edge?.t_stat ?? null, render: (r) => { const t = r.pf?.t_stat ?? r.edge?.t_stat; return <span className={cn("num", typeof t === "number" && t <= -2 && "text-rose", typeof t === "number" && t >= 2 && "text-mint")}>{typeof t === "number" ? t.toFixed(2) : "---"}</span>; } },
+  ];
+
+  const active = strategies.filter((s) => s.active).length;
+  const enabledN = strategies.filter((s) => s.enabled ?? s.allocation > 0).length;
 
   return (
-    <motion.div
-      className="space-y-4"
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-    >
+    <div className="flex flex-col gap-3 p-3 sm:p-4 min-w-0">
       <div className="flex items-baseline justify-between gap-3 flex-wrap">
-        <h1 className="text-lg font-semibold text-text-primary flex items-center gap-2">
-          <Brain className="w-5 h-5 text-accent" /> Strategy Manager
-        </h1>
-        <span className="text-[11px] text-text-muted">
-          {strategies.filter((s) => s.active).length} active · {strategies.filter((s) => s.enabled ?? s.allocation > 0).length} enabled · {strategies.length} total
+        <h1 className="text-[18px] font-semibold text-text">Strategies</h1>
+        <span className="text-[12.5px] font-medium text-text-2">
+          <span className="text-text font-semibold">{active}</span> active · <span className="text-text font-semibold">{enabledN}</span> enabled · <span className="text-text font-semibold">{strategies.length}</span> total
+          {!canEdit && <span className="text-amber"> · read-only (remote bridge without a token)</span>}
         </span>
       </div>
 
-      {!loaded ? (
-        <GlassPanel className="p-8 text-center"><p className="text-text-muted text-sm">Loading strategies…</p></GlassPanel>
+      {!strategiesEp.loaded ? (
+        <Panel className="p-8"><EmptyState>Loading strategies…</EmptyState></Panel>
       ) : strategies.length === 0 ? (
-        <GlassPanel className="p-8 text-center">
-          <p className="text-text-muted text-sm">No strategies reported by the bridge.</p>
-          {loadError && <p className="text-xs font-mono text-loss mt-2 break-all">{loadError}</p>}
-        </GlassPanel>
+        <Panel className="p-8"><EmptyState sub={strategiesEp.error ?? undefined}>No strategies reported by the bridge</EmptyState></Panel>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {strategies.map((s) => {
-            const isTrend = s.type === "TREND_DAILY";
-            return (
-              <Fragment key={s.type}>
-                <StrategyCard
-                  s={s}
-                  allocField={fieldByPath.get(allocationPath(s.type))}
-                  busy={busy === s.type}
-                  expandable={isTrend}
-                  expanded={isTrend && expanded === s.type}
-                  onToggleExpand={() => setExpanded((cur) => (cur === s.type ? null : s.type))}
-                  onAllocation={setAllocation}
-                  onEditParams={() => navigate("/settings", { state: { tab: paramGroupFor(s) } })}
-                />
-                {isTrend && expanded === s.type && (
-                  <div className="lg:col-span-2 min-w-0">
-                    <TrendDailyPanel />
-                  </div>
-                )}
-              </Fragment>
-            );
-          })}
+        <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
+          {strategies.map((s) => (
+            <Fragment key={s.type}>
+              <StrategyCard
+                s={s}
+                pf={pfByType.get(s.type)}
+                edge={edgeEp.data?.strategies?.[s.type]}
+                allocField={fieldByPath.get(allocationPath(s.type))}
+                busy={busy === s.type}
+                expanded={expanded === s.type}
+                onToggleExpand={() => setExpanded((cur) => (cur === s.type ? null : s.type))}
+                onAllocation={setAllocation}
+                onEditParams={() => navigate("/settings", { state: { tab: paramGroupFor(s) } })}
+                canEdit={canEdit}
+                nowMs={now}
+              />
+            </Fragment>
+          ))}
         </div>
       )}
-      {loaded && loadError && strategies.length > 0 && (
-        <p className="text-[11px] font-mono text-warning">Last refresh failed: {loadError}</p>
+      {expanded === "TREND_DAILY" && strategies.some((s) => s.type === "TREND_DAILY") && <TrendDailyPanel />}
+      {strategiesEp.loaded && strategiesEp.error && strategies.length > 0 && (
+        <p className="text-[12.5px] font-medium text-amber">Last refresh failed: {strategiesEp.error}</p>
       )}
-    </motion.div>
+
+      <Panel className="flex flex-col overflow-hidden">
+        <PanelHeader title="Strategy leaderboard" right={pf.missing ? <span className="text-[12px] font-medium text-text-2">Volume · Sharpe · Max DD need bridge ≥ 2.16</span> : undefined} />
+        <DataTable columns={columns} rows={leaderboard} rowKey={(r) => r.type} minWidth="1180px" defaultSort={{ id: "rank", dir: "asc" }} emptyText="No strategies to rank" />
+      </Panel>
+    </div>
   );
 }

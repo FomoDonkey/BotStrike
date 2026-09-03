@@ -1,34 +1,17 @@
-import { useMemo, useState } from "react";
-import { api, ApiError, type PositionData, type ProtectiveOrder } from "@/lib/api";
-import { usePolling } from "@/hooks/usePolling";
-import { Hint } from "@/components/shared/Hint";
-import { HINTS } from "@/lib/hints";
-import { SideChip, StrategyTag } from "@/components/shared/TradeChips";
+import { useMemo } from "react";
+import type { PositionData, ProtectiveOrder } from "@/lib/api";
+import { useOrders } from "@/hooks/useOrders";
+import { Chip, SideChip, StrategyTag } from "@/components/ui/Chip";
+import { DataTable, type Column } from "@/components/ui/DataTable";
 import { cn, formatPrice, formatSignedPct, formatSize, formatUSD } from "@/lib/utils";
 import { isLong, pnlDistancePct } from "@/lib/market";
-
-const POLL_MS = 5_000;
 
 interface OrdersTableProps {
   /** Open positions — fallback source of SL/TP levels when /api/orders is missing (bridge 2.14) */
   positions: PositionData[];
   symbol?: string;
-}
-
-/** Protective orders synthesised from the positions' own SL/TP fields (bridge ≥ 2.15 positions). */
-function ordersFromPositions(positions: PositionData[]): ProtectiveOrder[] {
-  const out: ProtectiveOrder[] = [];
-  for (const p of positions) {
-    const long = isLong(p.side);
-    const mark = p.mark_price > 0 ? p.mark_price : p.entry_price;
-    if (typeof p.stop_loss === "number" && p.stop_loss > 0) {
-      out.push({ symbol: p.symbol, type: "STOP", side: long ? "SELL" : "BUY", price: p.stop_loss, size: p.size, strategy: p.strategy, position_id: p.order_id, distance_pct: p.sl_distance_pct ?? pnlDistancePct(p.stop_loss, mark, p.side) });
-    }
-    if (typeof p.take_profit === "number" && p.take_profit > 0) {
-      out.push({ symbol: p.symbol, type: "TAKE_PROFIT", side: long ? "SELL" : "BUY", price: p.take_profit, size: p.size, strategy: p.strategy, position_id: p.order_id, distance_pct: p.tp_distance_pct ?? pnlDistancePct(p.take_profit, mark, p.side) });
-    }
-  }
-  return out;
+  /** Row filter (bottom panel filters) */
+  filter?: (o: ProtectiveOrder) => boolean;
 }
 
 function typeLabel(t: string): string {
@@ -39,91 +22,50 @@ function typeLabel(t: string): string {
 }
 
 /** Orders tab: live SL/TP orders from GET /api/orders (5 s), derived from positions on older bridges. */
-export function OrdersTable({ positions, symbol }: OrdersTableProps) {
-  const [orders, setOrders] = useState<ProtectiveOrder[] | null>(null);
-  const [missing, setMissing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  usePolling(async () => {
-    try {
-      const r = await api.orders();
-      setOrders(r.orders ?? []);
-      setMissing(false);
-      setError(null);
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 404) { setMissing(true); setOrders(null); }
-      else setError(e instanceof ApiError ? e.message : String(e));
-    }
-  }, POLL_MS);
-
-  const derived = useMemo(() => ordersFromPositions(positions), [positions]);
-  const rows = orders ?? derived;
+export function OrdersTable({ positions, symbol, filter }: OrdersTableProps) {
+  const { rows: all, fromRest, missing, error } = useOrders(positions);
+  const rows = filter ? all.filter(filter) : all;
   const markBySymbol = useMemo(() => {
     const m: Record<string, number> = {};
     for (const p of positions) if (p.mark_price > 0) m[p.symbol] = p.mark_price;
     return m;
   }, [positions]);
 
+  const columns: Column<ProtectiveOrder>[] = [
+    { id: "symbol", label: "Symbol", align: "l", sortValue: (o) => o.symbol, render: (o) => <span className="font-semibold">{o.symbol}</span> },
+    { id: "type", label: "Type", align: "l", render: (o) => <Chip tone={/stop|sl/i.test(o.type) ? "rose" : "mint"} size="xs">{typeLabel(o.type)}</Chip> },
+    { id: "side", label: "Side", align: "l", render: (o) => <span className="inline-flex items-center gap-1.5"><SideChip side={o.side === "SELL" ? "BUY" : "SELL"} size="xs" compact /><span className="font-medium" title="Closing side">{o.side}</span></span> },
+    { id: "price", label: "Trigger price", sortValue: (o) => o.price, render: (o) => <span className="num">{formatPrice(o.price)}</span> },
+    {
+      id: "distance", label: "Distance", hint: "Distance from mark in PnL direction of the position: negative = adverse (towards the stop), positive = favourable (towards the target)",
+      render: (o) => {
+        const posSide = o.side === "SELL" ? "BUY" : "SELL";
+        const mark = markBySymbol[o.symbol] ?? 0;
+        const d = fromRest
+          ? (mark > 0 ? pnlDistancePct(o.price, mark, posSide) : typeof o.distance_pct === "number" ? (isLong(posSide) ? o.distance_pct : -o.distance_pct) : null)
+          : (typeof o.distance_pct === "number" ? o.distance_pct : pnlDistancePct(o.price, mark, posSide));
+        return <span className={cn("num", d === null ? "text-text-3" : d < 0 ? "text-rose" : "text-mint")}>{d === null ? "---" : formatSignedPct(d)}</span>;
+      },
+    },
+    { id: "size", label: "Size", sortValue: (o) => o.size, render: (o) => <span className="num">{formatSize(o.size)}</span> },
+    { id: "value", label: "Value", sortValue: (o) => o.price * o.size, render: (o) => <span className="num">{formatUSD(o.price * o.size)}</span> },
+    { id: "strategy", label: "Strategy", align: "l", render: (o) => <StrategyTag strategy={o.strategy} /> },
+    { id: "position", label: "Position", align: "l", render: (o) => <span className="font-medium text-text-2">{o.position_id ?? "---"}</span> },
+  ];
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      {rows.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center text-text-faint text-xs py-8 gap-1">
-          <span>No protective orders</span>
-          {missing && <span className="text-[10.5px]">GET /api/orders needs bridge ≥ 2.15 — showing SL/TP carried by the positions (none reported).</span>}
-          {error && <span className="text-[10.5px] text-loss font-mono">{error}</span>}
-        </div>
-      ) : (
-        <div className="overflow-auto flex-1 min-h-0">
-          <table className="term-table min-w-[820px]">
-            <thead>
-              <tr>
-                <th className="l">Symbol</th>
-                <th className="l">Type</th>
-                <th className="l">Side</th>
-                <th>Trigger price</th>
-                <th><Hint title="Distance from mark in PnL direction of the position: negative = adverse (towards the stop), positive = favourable (towards the target)">Distance</Hint></th>
-                <th>Size</th>
-                <th>Value</th>
-                <th className="l">Strategy</th>
-                <th className="l">Position</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((o, i) => {
-                // The order's side is the CLOSING side → the position is long when the order sells.
-                const posSide = o.side === "SELL" ? "BUY" : "SELL";
-                const mark = markBySymbol[o.symbol] ?? 0;
-                // /api/orders reports price-direction (px / mark − 1); positions report PnL-direction.
-                const d = orders
-                  ? (mark > 0 ? pnlDistancePct(o.price, mark, posSide) : typeof o.distance_pct === "number" ? (isLong(posSide) ? o.distance_pct : -o.distance_pct) : null)
-                  : (typeof o.distance_pct === "number" ? o.distance_pct : pnlDistancePct(o.price, mark, posSide));
-                const isSl = /stop|sl/i.test(o.type);
-                return (
-                  <tr key={`${o.symbol}-${o.type}-${o.position_id ?? i}`} className={cn(symbol && o.symbol === symbol && "is-open")}>
-                    <td className="l font-medium">{o.symbol}</td>
-                    <td className="l">
-                      <span className={cn("inline-flex items-center h-5 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wider", isSl ? "bg-loss/10 text-loss" : "bg-profit/10 text-profit")}>
-                        {typeLabel(o.type)}
-                      </span>
-                    </td>
-                    <td className="l"><SideChip side={posSide} compact /> <span className="text-text-secondary text-[11.5px] ml-1" title="Closing side">{o.side}</span></td>
-                    <td className="num">{formatPrice(o.price)}</td>
-                    <td className={cn("num", d === null ? "text-text-faint" : d < 0 ? "text-loss" : "text-profit")}>{d === null ? "---" : formatSignedPct(d)}</td>
-                    <td className="num">{formatSize(o.size)}</td>
-                    <td className="num text-text-secondary">{formatUSD(o.price * o.size)}</td>
-                    <td className="l"><StrategyTag strategy={o.strategy} /></td>
-                    <td className="l text-text-faint text-[11px] font-mono">{o.position_id ?? "---"}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(o, i) => `${o.symbol}-${o.type}-${o.position_id ?? i}`}
+        rowClassName={(o) => (symbol && o.symbol === symbol ? "is-open" : undefined)}
+        minWidth="900px"
+        emptyText="No open orders"
+        emptySub={error ? error : missing ? "GET /api/orders needs bridge ≥ 2.15 — showing SL/TP carried by the positions (none reported)" : "Trend daily positions carry no SL/TP; MR / divergence positions show their protective orders here"}
+      />
       {missing && rows.length > 0 && (
-        <p className="px-3 py-1.5 text-[10.5px] text-text-faint border-t border-hairline-soft shrink-0" title={HINTS.sl}>
-          Derived from the positions' SL/TP fields — GET /api/orders needs bridge ≥ 2.15.
-        </p>
+        <p className="px-3 py-1.5 text-[12px] font-medium text-text-2 border-t border-hairline shrink-0">Derived from the positions' SL/TP fields — GET /api/orders needs bridge ≥ 2.15.</p>
       )}
     </div>
   );

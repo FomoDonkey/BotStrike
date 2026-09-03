@@ -2,60 +2,78 @@
 @import "tailwindcss";
 
 /*
- * Visual system (v2.15) — terminal density, hairline panels, one accent.
- * Values 100 % white, labels 60 %, secondary #B8B8B8; green/rose ONLY for direction/sign.
- * Backgrounds are neutral near-black (no navy tint); panels are separated by 1 px hairlines,
- * never by shadows or blur. See tasks/ui_live_trading_contract.md §0.
+ * Visual system v2.16 — "Strike-grade" (tasks/ui_premium_spec.md §1).
+ * Every value / title / nav item / table cell is pure white; labels are 80 % white; the dimmest
+ * visible text is 72 % white (timestamps, footnotes). Panels are separated by 1 px hairlines,
+ * never by shadows, blur or gradients. One accent: mint. Rose only for negative / short / sell.
+ * `@theme static` so aliases that only reference another token are always emitted.
  */
-@theme {
-  /* Core backgrounds (overridden per theme variant by stores/themeStore.ts) */
-  --color-bg-base: #0A0A0A;
-  --color-bg-surface: #0F0F0F;
-  --color-bg-elevated: #171717;
+@theme static {
+  /* Surfaces */
+  --color-bg: #0A0A0A;
+  --color-panel: #0F0F0F;
+  --color-panel-2: #141414;
+  --color-hover: #1A1A1A;
+  --color-active: #232323;
 
-  /* Borders */
-  --color-border-subtle: #1F1F1F;
-  --color-border-default: #2A2A2A;
-  --color-hairline: rgba(255, 255, 255, 0.12);
+  /* Hairlines */
+  --color-hairline: rgba(255, 255, 255, 0.10);
+  --color-hairline-strong: rgba(255, 255, 255, 0.18);
   --color-hairline-soft: rgba(255, 255, 255, 0.06);
 
   /* Text */
-  --color-text-primary: #FFFFFF;
-  --color-text-secondary: #B8B8B8;
-  --color-text-muted: rgba(255, 255, 255, 0.6);
-  --color-text-faint: rgba(255, 255, 255, 0.38);
+  --color-text: #FFFFFF;
+  --color-text-2: rgba(255, 255, 255, 0.80);
+  --color-text-3: rgba(255, 255, 255, 0.72);
+  --color-disabled: rgba(255, 255, 255, 0.45);
 
-  /* Accent — BotStrike mint, the only accent */
-  --color-accent: #00D4AA;
-  --color-accent-dim: #00A88A;
+  /* Accent + semantic */
+  --color-mint: #4EFAB0;
+  --color-mint-soft: rgba(78, 250, 176, 0.16);
+  --color-rose: #F43F5E;
+  /* 0.12 (spec says 0.16): rose text on a 0.16 tint measures 4.4:1, below WCAG AA — 0.12 measures 4.7:1 */
+  --color-rose-soft: rgba(244, 63, 94, 0.12);
+  --color-amber: #F5B942;
+  --color-amber-soft: rgba(245, 185, 66, 0.16);
+  --color-blue: #5AA9FF;
+  --color-blue-soft: rgba(90, 169, 255, 0.16);
+  --color-grid: rgba(255, 255, 255, 0.06);
 
-  /* Semantic */
-  --color-profit: #00D4AA;
-  --color-loss: #F43F5E;
-  --color-warning: #FFA502;
-  --color-info: #3B82F6;
+  /* Aliases kept for the parts of the app that were not rewritten (charts, toasts, overlay) */
+  --color-bg-base: var(--color-bg);
+  --color-bg-surface: var(--color-panel);
+  --color-bg-elevated: var(--color-panel-2);
+  --color-border-subtle: var(--color-hairline);
+  --color-border-default: var(--color-hairline-strong);
+  --color-text-primary: var(--color-text);
+  --color-text-secondary: var(--color-text-2);
+  --color-text-muted: var(--color-text-2);
+  --color-text-faint: var(--color-text-3);
+  --color-accent: var(--color-mint);
+  --color-accent-dim: var(--color-mint);
+  --color-profit: var(--color-mint);
+  --color-loss: var(--color-rose);
+  --color-warning: var(--color-amber);
+  --color-info: var(--color-blue);
 
-  /* Strategy colors */
-  --color-strategy-mr: #6C5CE7;
-  --color-strategy-ofm: #00CEC9;
-  --color-strategy-tf: #00B894;
-  --color-strategy-mm: #FDCB6E;
+  /* Strategy colours (dots / sparklines only — never for body text) */
+  --color-strategy-mr: #A78BFA;
+  --color-strategy-ofm: #22D3EE;
+  --color-strategy-tf: #34D399;
+  --color-strategy-mm: #FCD34D;
   --color-strategy-div: #F472B6;
-
-  /* Regime colors */
-  --color-regime-ranging: #74B9FF;
-  --color-regime-up: #00D4AA;
-  --color-regime-down: #F43F5E;
-  --color-regime-breakout: #E84393;
-
-  /* Micro colors */
-  --color-vpin: #E84393;
-  --color-hawkes: #FF7675;
-  --color-as-spread: #00CEC9;
 
   /* Fonts */
   --font-display: "IBM Plex Sans", "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* Colour-blind mode (Settings popover): mint → blue, rose → orange. Chips / charts read the same tokens. */
+:root[data-cb="1"] {
+  --color-mint: #5AA9FF;
+  --color-mint-soft: rgba(90, 169, 255, 0.16);
+  --color-rose: #FF8A3D;
+  --color-rose-soft: rgba(255, 138, 61, 0.14);
 }
 
 /* Base styles */
@@ -64,8 +82,8 @@ html, body, #root {
   padding: 0;
   width: 100%;
   height: 100%;
-  background: var(--color-bg-base);
-  color: var(--color-text-primary);
+  background: var(--color-bg);
+  color: var(--color-text);
   font-family: var(--font-display);
   font-size: 13px;
   overflow: hidden;
@@ -74,51 +92,42 @@ html, body, #root {
   font-variant-numeric: tabular-nums;
 }
 
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+button, input, select, textarea {
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
-}
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
 
-::-webkit-scrollbar-thumb {
-  background: var(--color-border-default);
-  border-radius: 3px;
-}
+/* Scrollbars */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.30); }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-faint);
-}
+::selection { background: rgba(78, 250, 176, 0.25); color: #FFFFFF; }
 
-/* Selection */
-::selection {
-  background: rgba(0, 212, 170, 0.2);
-  color: var(--color-text-primary);
-}
+.scrollbar-none { scrollbar-width: none; -ms-overflow-style: none; }
+.scrollbar-none::-webkit-scrollbar { display: none; }
 
-/* Hidden-but-scrollable rows (TopBar tickers, Settings tabs on narrow screens) */
-.scrollbar-none {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-.scrollbar-none::-webkit-scrollbar {
-  display: none;
-}
+/* Focus ring — mint, only for keyboard users */
+:focus-visible { outline: 2px solid var(--color-mint); outline-offset: 1px; }
 
-/* ── Terminal primitives ─────────────────────────────────────────── */
+/* ── Primitives ──────────────────────────────────────────────────── */
 
-/* Label with an explanatory tooltip (dotted underline = "hover me"), as in the reference. */
+/* Numbers: same sans, tabular figures (Strike does not use a monospace face for values) */
+.num { font-family: var(--font-display); font-variant-numeric: tabular-nums; }
+
+/* Label with an explanatory tooltip (dotted underline = "hover me"), exactly like Strike */
 .hint {
-  text-decoration: underline dotted rgba(255, 255, 255, 0.35);
+  text-decoration: underline dotted rgba(255, 255, 255, 0.55);
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
   cursor: help;
 }
 
-/* Dense data table: 28 px uppercase header, 32 px rows, tabular numbers, right-aligned by default. */
+/* Dense data table: sticky 30 px header, 34 px rows, tabular numbers, right-aligned by default */
 .term-table {
   width: 100%;
   border-collapse: separate;
@@ -127,49 +136,54 @@ html, body, #root {
   line-height: 1;
 }
 .term-table th {
-  height: 28px;
-  padding: 0 8px;
-  font-size: 10.5px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   text-align: right;
   white-space: nowrap;
-  color: var(--color-text-muted);
-  background: var(--color-bg-surface);
+  color: var(--color-text-2);
+  background: var(--color-panel);
   border-bottom: 1px solid var(--color-hairline);
   position: sticky;
   top: 0;
   z-index: 1;
 }
+.term-table th.sortable { cursor: pointer; user-select: none; }
+.term-table th.sortable:hover { color: var(--color-text); }
 .term-table td {
-  height: 32px;
-  padding: 0 8px;
+  height: 34px;
+  padding: 0 10px;
   text-align: right;
   white-space: nowrap;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
   border-bottom: 1px solid var(--color-hairline-soft);
-  color: var(--color-text-primary);
+  color: var(--color-text);
 }
+:root[data-compact="1"] .term-table td { height: 26px; }
 .term-table th.l, .term-table td.l { text-align: left; }
 .term-table th.c, .term-table td.c { text-align: center; }
-.term-table tbody tr:hover > td { background: rgba(255, 255, 255, 0.025); }
-.term-table tbody tr.is-open > td { background: rgba(255, 255, 255, 0.035); }
-.term-table tr.detail > td { height: auto; padding: 8px; white-space: normal; background: rgba(255, 255, 255, 0.02); }
-.term-table .num { font-family: var(--font-mono); font-size: 12px; }
+.term-table tbody tr:hover > td { background: var(--color-hover); }
+.term-table tbody tr.is-open > td { background: var(--color-panel-2); }
+.term-table tr.detail > td { height: auto; padding: 10px; white-space: normal; background: var(--color-panel-2); }
+.term-table .num { font-family: var(--font-display); }
 
-/* Key/value list used by Account overview / Details */
+/* Key/value list (Account overview, Portfolio left column, Details) */
 .kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; row-gap: 0; font-size: 12.5px; }
-.kv > dt { color: var(--color-text-muted); height: 24px; display: flex; align-items: center; min-width: 0; white-space: nowrap; }
-.kv > dd { margin: 0; height: 24px; display: flex; align-items: center; justify-content: flex-end; font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+.kv > dt { color: var(--color-text-2); font-weight: 500; height: 28px; display: flex; align-items: center; min-width: 0; white-space: nowrap; }
+.kv > dd { margin: 0; height: 28px; display: flex; align-items: center; justify-content: flex-end; font-weight: 600; color: var(--color-text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+:root[data-compact="1"] .kv > dt, :root[data-compact="1"] .kv > dd { height: 24px; }
 
-/* Native range input styled to the theme (Strategies allocation slider) */
+/* Native range input styled to the theme (allocation slider) */
 input[type="range"].bs-range {
   -webkit-appearance: none;
   appearance: none;
   height: 4px;
   border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.14);
   outline: none;
 }
 input[type="range"].bs-range::-webkit-slider-thumb {
@@ -178,19 +192,38 @@ input[type="range"].bs-range::-webkit-slider-thumb {
   width: 14px;
   height: 14px;
   border-radius: 9999px;
-  background: var(--color-accent);
-  border: 2px solid var(--color-bg-surface);
+  background: var(--color-mint);
+  border: 2px solid var(--color-panel);
   cursor: pointer;
 }
 input[type="range"].bs-range::-moz-range-thumb {
   width: 14px;
   height: 14px;
   border-radius: 9999px;
-  background: var(--color-accent);
-  border: 2px solid var(--color-bg-surface);
+  background: var(--color-mint);
+  border: 2px solid var(--color-panel);
   cursor: pointer;
 }
-input[type="range"].bs-range:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+input[type="range"].bs-range:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Footer ticker marquee */
+@keyframes bs-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
 }
+.marquee-track { display: flex; width: max-content; animation: bs-marquee 40s linear infinite; }
+.marquee:hover .marquee-track { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) { .marquee-track { animation: none; } }
+
+/* Native select: white text on panel-2 with a white chevron */
+select.bs-select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-color: var(--color-panel-2);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='white' stroke-width='1.5'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+  color: var(--color-text);
+}
+select.bs-select option { background: #141414; color: #FFFFFF; }

@@ -1,13 +1,29 @@
-import { useEffect, useRef, useState, useCallback } from "react";
-import type { IChartApi, IPriceLine, ISeriesApi, SeriesMarker, Time, UTCTimestamp } from "lightweight-charts";
+import { useEffect, useRef, useState, useCallback, type RefObject } from "react";
+import type { IChartApi, IPriceLine, ISeriesApi, MouseEventParams, SeriesMarker, Time, UTCTimestamp } from "lightweight-charts";
 import { useMarketStore, type Candle } from "@/stores/marketStore";
 import { type TradeData } from "@/stores/tradingStore";
 import { resampleCandles } from "@/lib/indicators";
 import { COLOR_DOWN, COLOR_UP } from "@/lib/constants";
+import { formatPrice } from "@/lib/utils";
 import { applyOverlays, applyPriceLines, type DivergenceOverlay, type OverlayRefs, type PriceLineSpec } from "./chartOverlays";
 import { CHART_THEME, TF_SECONDS, type Timeframe } from "./chartConfig";
 
 export type { Timeframe };
+
+function hexToRgba(hex: string, alpha: number): string {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+/** "O 77,120.50  H 77,210.00  L 77,050.00  C 77,180.25  +0.08%" — written straight to the DOM. */
+function legendText(c: Candle): string {
+  const d = c.open > 0 ? (c.close - c.open) / c.open : 0;
+  const sign = d > 0 ? "+" : "";
+  return `O ${formatPrice(c.open)}   H ${formatPrice(c.high)}   L ${formatPrice(c.low)}   C ${formatPrice(c.close)}   ${sign}${(d * 100).toFixed(2)}%`;
+}
 
 interface CandlestickChartProps {
   symbol: string;
@@ -20,9 +36,14 @@ interface CandlestickChartProps {
   overlays?: DivergenceOverlay[];
   /** Exposes the chart API (time-scale / crosshair sync with the indicator pane) */
   onChart?: (chart: IChartApi | null) => void;
+  /** Candle colours (colour-blind mode swaps them) */
+  upColor?: string;
+  downColor?: string;
+  /** OHLC legend element — updated from the crosshair without React state */
+  legendRef?: RefObject<HTMLElement | null>;
 }
 
-export function CandlestickChart({ symbol, className, trades, timeframe = "1m", priceLines, overlays, onChart }: CandlestickChartProps) {
+export function CandlestickChart({ symbol, className, trades, timeframe = "1m", priceLines, overlays, onChart, upColor = COLOR_UP, downColor = COLOR_DOWN, legendRef }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -41,6 +62,10 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
   const [chartReady, setChartReady] = useState(false);
   const onChartRef = useRef(onChart);
   useEffect(() => { onChartRef.current = onChart; });
+  const colorsRef = useRef({ up: upColor, down: downColor });
+  useEffect(() => { colorsRef.current = { up: upColor, down: downColor }; });
+  /** candles currently on the chart (legend lookup by time) */
+  const shownRef = useRef<Map<number, Candle>>(new Map());
 
   // Step 1: Initialize chart (async)
   useEffect(() => {
@@ -89,12 +114,12 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
         });
 
         const candleSeries = chart.addCandlestickSeries({
-          upColor: COLOR_UP,
-          downColor: COLOR_DOWN,
-          borderUpColor: COLOR_UP,
-          borderDownColor: COLOR_DOWN,
-          wickUpColor: COLOR_UP,
-          wickDownColor: COLOR_DOWN,
+          upColor: colorsRef.current.up,
+          downColor: colorsRef.current.down,
+          borderUpColor: colorsRef.current.up,
+          borderDownColor: colorsRef.current.down,
+          wickUpColor: colorsRef.current.up,
+          wickDownColor: colorsRef.current.down,
         });
 
         const volumeSeries = chart.addHistogramSeries({
@@ -104,6 +129,20 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
 
         chart.priceScale("volume").applyOptions({
           scaleMargins: { top: 0.8, bottom: 0 },
+        });
+
+        // OHLC legend (spec §3.1): crosshair candle, or the last candle when the pointer leaves
+        chart.subscribeCrosshairMove((param: MouseEventParams) => {
+          const el = legendRef?.current;
+          if (!el) return;
+          const t = typeof param.time === "number" ? param.time : null;
+          const c = t !== null ? shownRef.current.get(t) : undefined;
+          if (c) el.textContent = legendText(c);
+          else {
+            const all = [...shownRef.current.values()];
+            const last = all.length ? all[all.length - 1] : null;
+            el.textContent = last ? legendText(last) : "";
+          }
         });
 
         chartRef.current = chart;
@@ -138,7 +177,16 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
         ovRefs.series = [];
       }
     };
-  }, []);
+  }, [legendRef]);
+
+  // Candle colours follow the colour-blind switch
+  useEffect(() => {
+    const s = seriesRef.current;
+    if (!chartReady || !s) return;
+    s.applyOptions({ upColor, downColor, borderUpColor: upColor, borderDownColor: downColor, wickUpColor: upColor, wickDownColor: downColor });
+    lastCandleHash.current = ""; // volume histogram colours are per bar -> full redraw
+    lastCandleCount.current = 0;
+  }, [upColor, downColor, chartReady]);
 
   // Step 2: Subscribe to candle data and update chart
   const tfSeconds = TF_SECONDS[timeframe];
@@ -159,6 +207,8 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
     const hash = `${candles.length}_${last.time}_${last.open}_${last.close}_${last.high}_${last.low}_${last.volume}`;
     if (hash === lastCandleHash.current) return;
     lastCandleHash.current = hash;
+    const upC = hexToRgba(colorsRef.current.up, 0.4);
+    const downC = hexToRgba(colorsRef.current.down, 0.4);
 
     try {
       // Detect incremental update (same count or +1 bar)
@@ -175,8 +225,10 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
         volumeSeriesRef.current.update({
           time: last.time as UTCTimestamp,
           value: last.volume,
-          color: last.close >= last.open ? "rgba(0,212,170,0.25)" : "rgba(244,63,94,0.25)",
+          color: last.close >= last.open ? upC : downC,
         });
+        shownRef.current.set(last.time, last);
+        if (legendRef?.current) legendRef.current.textContent = legendText(last);
       } else {
         // Full redraw: initial load, timeframe change, or large data change
         seriesRef.current.setData(
@@ -192,9 +244,13 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
           candles.map((c: Candle) => ({
             time: c.time as UTCTimestamp,
             value: c.volume,
-            color: c.close >= c.open ? "rgba(0,212,170,0.25)" : "rgba(244,63,94,0.25)",
+            color: c.close >= c.open ? upC : downC,
           }))
         );
+        const map = new Map<number, Candle>();
+        for (const c of candles) map.set(c.time, c);
+        shownRef.current = map;
+        if (legendRef?.current) legendRef.current.textContent = legendText(last);
         // Scroll to show latest candles on initial load
         if (chartRef.current) {
           chartRef.current.timeScale().scrollToRealTime();
@@ -206,7 +262,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
     } catch (e) {
       console.error("[Chart] update error:", e);
     }
-  }, [symbol, tfSeconds]);
+  }, [symbol, tfSeconds, legendRef]);
 
   useEffect(() => {
     if (!chartReady) return;
@@ -239,7 +295,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
 
     // historyStart is a dependency: markers are rebuilt when the candle history (re)loads
     const firstTime = historyStart;
-    const hash = `${trades.length}_${trades[0]?.timestamp}_${trades[trades.length - 1]?.timestamp}_${timeframe}_${firstTime}`;
+    const hash = `${trades.length}_${trades[0]?.timestamp}_${trades[trades.length - 1]?.timestamp}_${timeframe}_${firstTime}_${upColor}`;
     if (hash === lastMarkersHash.current) return;
     lastMarkersHash.current = hash;
 
@@ -260,7 +316,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
           markers.push({
             time,
             position: isBuy ? "belowBar" : "aboveBar",
-            color: isBuy ? COLOR_UP : COLOR_DOWN,
+            color: isBuy ? colorsRef.current.up : colorsRef.current.down,
             shape: isBuy ? "arrowUp" : "arrowDown",
             text: `${isBuy ? "L" : "S"} $${t.price.toFixed(0)}`,
           });
@@ -272,7 +328,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
           markers.push({
             time,
             position: wasLong ? "aboveBar" : "belowBar",
-            color: isWin ? COLOR_UP : COLOR_DOWN,
+            color: isWin ? colorsRef.current.up : colorsRef.current.down,
             shape: "circle",
             text: `$${pnlStr}`,
           });
@@ -284,7 +340,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
     } catch (e) {
       console.error("[Chart] markers error:", e);
     }
-  }, [trades, chartReady, timeframe, tfSeconds, historyStart]);
+  }, [trades, chartReady, timeframe, tfSeconds, historyStart, upColor, downColor]);
 
   // Step 4: live price lines (entry / SL / TP / liq of open positions)
   useEffect(() => {
@@ -316,7 +372,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
 
   if (error) {
     return (
-      <div className={className} style={{ display: "flex", alignItems: "center", justifyContent: "center", color: COLOR_DOWN, fontSize: 12 }}>
+      <div className={className} style={{ display: "flex", alignItems: "center", justifyContent: "center", color: "#FFFFFF", fontSize: 13, fontWeight: 500 }}>
         Chart error: {error}
       </div>
     );

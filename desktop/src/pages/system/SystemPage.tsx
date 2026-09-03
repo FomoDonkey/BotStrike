@@ -1,263 +1,154 @@
-import { useEffect, useState, useRef } from "react";
-import { motion } from "framer-motion";
-import { GlassPanel } from "@/components/shared/GlassPanel";
+import { useEffect, useRef, useState } from "react";
+import { useShallow } from "zustand/shallow";
+import { Monitor, Play, Square, RefreshCw, Trash2 } from "lucide-react";
+import { Panel, PanelHeader, EmptyState } from "@/components/ui/Panel";
+import { ListRow, ListSection } from "@/components/ui/ListRow";
+import { Chip, StatusChip } from "@/components/ui/Chip";
+import { Button } from "@/components/ui/Button";
+import { ConfirmDialog } from "@/components/ui/Modal";
 import { PulsingDot } from "@/components/shared/PulsingDot";
 import { useSystemStore } from "@/stores/systemStore";
-import { formatDuration, cn } from "@/lib/utils";
-import { api, ApiError, type BotStatusResponse } from "@/lib/api";
-import { useBridgeConfig } from "@/lib/config";
 import { useMarketStore } from "@/stores/marketStore";
-import { useAlertStore } from "@/stores/alertStore";
-import { Monitor, Cpu, Clock, Users, Activity, Play, Square, RefreshCw } from "lucide-react";
-import { ExchangeSelector } from "@/components/shared/ExchangeSelector";
 import { useExchangeStore } from "@/stores/exchangeStore";
+import { useBridgeConfig } from "@/lib/config";
+import { useEndpoint } from "@/hooks/useEndpoint";
+import { useNow } from "@/hooks/useNow";
+import { useBotControl, type BotAction } from "@/components/layout/useBotControl";
+import { api } from "@/lib/api";
+import { EXCHANGE_LABELS } from "@/lib/constants";
+import { cn, formatAge, formatDuration, formatLocalDateTime, formatMoney, formatSignedMoney } from "@/lib/utils";
 
-const BOT_STATUS_POLL_MS = 5_000;
-
+/** System (spec §3.8): health, ops monitor, feed status, version, uptime, Telegram, recent logs. */
 export function SystemPage() {
-  const system = useSystemStore();
+  const now = useNow();
+  const system = useSystemStore(useShallow((s) => ({ engineRunning: s.engineRunning, mode: s.mode, uptimeSec: s.uptimeSec, wsConnected: s.wsConnected, clientsConnected: s.clientsConnected, bridgeConnected: s.bridgeConnected, openChannels: s.openChannels })));
   const logs = useSystemStore((s) => s.logs);
-  const hasPriceData = useMarketStore((s) => Object.keys(s.prices).length > 0);
+  const lastTickAt = useMarketStore((s) => s.lastTickAt);
   const { url: bridgeUrl, mode: bridgeMode } = useBridgeConfig();
-  const [botStatus, setBotStatus] = useState<BotStatusResponse | null>(null);
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const exchange = useExchangeStore((s) => s.exchange);
+  const health = useEndpoint(() => api.health(), 5_000, bridgeUrl);
+  const status = useEndpoint(() => api.botStatus(), 5_000, bridgeUrl);
+  const ops = useEndpoint(() => api.ops(), 30_000, bridgeUrl);
+  const { canControl, disabledReason, busy, run } = useBotControl();
+  const [confirm, setConfirm] = useState<BotAction | null>(null);
+  const logBoxRef = useRef<HTMLDivElement>(null);
 
-  // Fetch bot status periodically (re-armed when the bridge URL changes)
-  useEffect(() => {
-    const fetchStatus = () => api.botStatus().then(setBotStatus).catch(() => null);
-    fetchStatus();
-    const i = setInterval(fetchStatus, BOT_STATUS_POLL_MS);
-    return () => clearInterval(i);
-  }, [bridgeUrl]);
-
-  // Auto-scroll when new logs arrive
+  // Scroll the log box itself — scrollIntoView also scrolled the page's <main> on every load.
   useEffect(() => {
     const timer = setTimeout(() => {
-      logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      const el = logBoxRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
     }, 100);
     return () => clearTimeout(timer);
   }, [logs.length]);
 
-  const exchange = useExchangeStore((s) => s.exchange);
-  const [startMode, setStartMode] = useState<"paper" | "dry_run" | "live">("paper");
-
-  // Errors from the bridge (auth token missing, unreachable, 401…) are surfaced, never swallowed.
-  const report = (title: string) => (e: unknown) => {
-    const message = e instanceof ApiError ? e.message : String(e);
-    useAlertStore.getState().addAlert({ level: "critical", title, message, sound: "alert" });
-  };
-  const handleStart = () => api.botStart(startMode, exchange).catch(report("Start failed"));
-  const handleStop = () => api.botStop().catch(report("Stop failed"));
+  const h = health.data;
+  const feedAge = lastTickAt > 0 ? (now - lastTickAt) / 1000 : null;
+  const opsData = ops.data && ops.data.available ? ops.data : null;
+  const facts = opsData?.facts ?? {};
+  const journal = opsData?.journal_15 ?? {};
 
   return (
-    <motion.div
-      className="space-y-4 h-full flex flex-col"
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-    >
-      <h1 className="text-lg font-semibold text-text-primary flex items-center gap-2">
-        <Monitor className="w-5 h-5 text-accent" /> System Monitor
-      </h1>
+    <div className="flex flex-col gap-3 p-3 sm:p-4 min-w-0 lg:h-full">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h1 className="text-[18px] font-semibold text-text flex items-center gap-2"><Monitor className="w-5 h-5 text-mint" /> System</h1>
+        <div className="flex items-center gap-2">
+          <Button variant="primary" size="sm" icon={<Play className="w-3.5 h-3.5" />} disabled={!canControl || system.engineRunning} title={disabledReason} loading={busy === "start"} onClick={() => void run("start")}>Start · paper</Button>
+          <Button variant="secondary" size="sm" icon={<Square className="w-3.5 h-3.5 text-rose" />} disabled={!canControl || !system.engineRunning} title={disabledReason} loading={busy === "stop"} onClick={() => setConfirm("stop")}>Stop</Button>
+          <Button variant="secondary" size="sm" icon={<RefreshCw className="w-3.5 h-3.5" />} disabled={!canControl} title={disabledReason} loading={busy === "restart"} onClick={() => setConfirm("restart")}>Restart</Button>
+        </div>
+      </div>
+      {!canControl && <p className="text-[12.5px] font-medium text-amber -mt-1">{disabledReason}</p>}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Engine Status */}
-        <GlassPanel className="p-5" glow={system.engineRunning}>
-          <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-4">Trading Engine</h3>
-          <div className="flex items-center gap-3 mb-4">
-            <PulsingDot active={system.engineRunning} />
-            <span className={cn(
-              "text-lg font-semibold",
-              system.engineRunning ? "text-profit" : "text-loss"
-            )}>
-              {system.engineRunning ? "Running" : "Stopped"}
-            </span>
-          </div>
-          <div className="space-y-2 text-xs mb-4">
-            <div className="flex justify-between">
-              <span className="text-text-muted flex items-center gap-1"><Cpu className="w-3 h-3" /> Mode</span>
-              <span className={cn(
-                "font-mono uppercase font-semibold",
-                system.mode === "live" ? "text-loss" : system.mode === "paper" ? "text-warning" : "text-info"
-              )}>
-                {system.mode}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-text-muted flex items-center gap-1"><Clock className="w-3 h-3" /> Uptime</span>
-              <span className="font-mono">{formatDuration(system.uptimeSec)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-text-muted flex items-center gap-1"><Users className="w-3 h-3" /> WS Clients</span>
-              <span className="font-mono">{system.clientsConnected}</span>
-            </div>
-            {botStatus && (
-              <>
-                <div className="flex justify-between">
-                  <span className="text-text-muted">Equity</span>
-                  <span className="font-mono text-text-primary">${(botStatus.equity ?? 1000).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-text-muted">PnL</span>
-                  <span className={cn("font-mono", (botStatus.pnl ?? 0) >= 0 ? "text-profit" : "text-loss")}>
-                    ${(botStatus.pnl ?? 0).toFixed(2)}
-                  </span>
-                </div>
-              </>
-            )}
-          </div>
-          {/* Mode + Exchange Selector (only when engine is stopped) */}
-          {!system.engineRunning && (
-            <div className="space-y-4 mb-4">
-              <div>
-                <label className="text-xs text-text-muted block mb-2">Mode</label>
-                <div className="flex gap-2">
-                  {(["paper", "dry_run", "live"] as const).map((m) => (
-                    <button
-                      key={m}
-                      onClick={() => setStartMode(m)}
-                      className={cn(
-                        "flex-1 px-3 py-2 rounded-lg text-xs font-semibold uppercase transition-all border",
-                        startMode === m
-                          ? m === "live" ? "border-loss bg-loss/10 text-loss"
-                            : m === "paper" ? "border-warning bg-warning/10 text-warning"
-                            : "border-info bg-info/10 text-info"
-                          : "border-white/5 text-text-muted hover:border-white/10",
-                      )}
-                    >
-                      {m.replace("_", " ")}
-                    </button>
-                  ))}
-                </div>
-                {startMode === "live" && (
-                  <p className="text-[10px] text-text-muted mt-2">
-                    LIVE requires the bridge auth token (Settings → Connection).
-                  </p>
-                )}
-              </div>
-              <div>
-                <label className="text-xs text-text-muted block mb-2">Exchange</label>
-                <ExchangeSelector />
-              </div>
-            </div>
-          )}
-          {system.engineRunning && (
-            <div className="flex justify-between text-xs mb-4">
-              <span className="text-text-muted">Exchange</span>
-              <span className="font-mono text-text-primary uppercase">{botStatus?.exchange || exchange}</span>
-            </div>
-          )}
-          {/* Controls */}
-          <div className="flex gap-2">
-            <button
-              onClick={handleStart}
-              disabled={system.engineRunning}
-              className={cn(
-                "flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-all",
-                system.engineRunning
-                  ? "bg-white/5 text-text-muted cursor-not-allowed"
-                  : "bg-profit/10 text-profit hover:bg-profit/20"
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        <Panel accent={system.engineRunning} danger={!system.bridgeConnected}>
+          <PanelHeader title="Health" right={<StatusChip status={!system.bridgeConnected ? "offline" : system.engineRunning ? "running" : "stopped"} size="xs" />} />
+          <ListSection first>
+            <ListRow label="Engine"><span className={cn("inline-flex items-center gap-2", system.engineRunning ? "text-mint" : "text-rose")}><PulsingDot active={system.engineRunning} />{system.engineRunning ? "Running" : "Stopped"}</span></ListRow>
+            <ListRow label="Bridge status">{h ? <span className={cn(h.status === "ok" ? "text-mint" : "text-amber")}>{h.status}</span> : health.error ? <span className="text-rose">unreachable</span> : "---"}</ListRow>
+            <ListRow label="Mode"><StatusChip status={system.mode} size="xs" /></ListRow>
+            <ListRow label="Exchange">{EXCHANGE_LABELS[status.data?.exchange ?? exchange] ?? exchange}</ListRow>
+            <ListRow label="Uptime">{formatDuration(system.uptimeSec)}</ListRow>
+            <ListRow label="Version">{h?.version ? `v${h.version}` : "---"} <span className="text-text-2 font-medium">· UI {__APP_VERSION__}</span></ListRow>
+            <ListRow label="WS clients">{system.clientsConnected}</ListRow>
+            {status.data && <ListRow label="Equity">{formatMoney(status.data.equity ?? 0)} <span className={cn("ml-1", (status.data.pnl ?? 0) > 0 ? "text-mint" : (status.data.pnl ?? 0) < 0 ? "text-rose" : "")}>{formatSignedMoney(status.data.pnl ?? 0)}</span></ListRow>}
+            <ListRow label="Telegram">{h ? (typeof h.telegram_failures === "number" ? <span className={cn(h.telegram_failures > 0 && "text-amber")}>{h.telegram_failures === 0 ? "ok · 0 failures" : `${h.telegram_failures} failures`}</span> : "not reported") : "---"}</ListRow>
+            <ListRow label="Trend daily">{h ? (h.trend_daily_enabled ? "enabled" : "disabled") : "---"}</ListRow>
+            <ListRow label="Microstructure">{h ? (h.microstructure_enabled ? "enabled" : "disabled") : "---"}</ListRow>
+          </ListSection>
+        </Panel>
+
+        <Panel>
+          <PanelHeader title="Ops monitor" right={opsData ? <Chip tone={(opsData.alerts?.length ?? 0) > 0 ? "amber" : "mint"} size="xs">{(opsData.alerts?.length ?? 0) > 0 ? `${opsData.alerts?.length} alert${opsData.alerts?.length === 1 ? "" : "s"}` : "all clear"}</Chip> : undefined} />
+          {ops.missing ? (
+            <EmptyState sub="GET /api/ops needs bridge ≥ 2.16">Ops monitor not available on this bridge</EmptyState>
+          ) : !ops.loaded ? (
+            <EmptyState>Loading ops state…</EmptyState>
+          ) : !opsData ? (
+            <EmptyState sub="The monitor timer runs on the server every 15 min (desktop / local bridges have none)">Ops monitor has not run yet</EmptyState>
+          ) : (
+            <>
+              <ListSection first>
+                <ListRow label="Last check">{formatLocalDateTime(opsData.last_check ?? null)}</ListRow>
+                {opsData.next_timer && <ListRow label="Next timer">{formatLocalDateTime(opsData.next_timer)}</ListRow>}
+                <ListRow label="Daily summary">{opsData.summary_sent ? "sent" : "pending"}{opsData.state?.last_summary_date ? <span className="text-text-2 font-medium"> · {opsData.state.last_summary_date}</span> : null}</ListRow>
+                {Object.entries(facts).map(([k, v]) => <ListRow key={k} label={k.replace(/_/g, " ")}>{String(v ?? "---")}</ListRow>)}
+              </ListSection>
+              {Object.keys(journal).length > 0 && (
+                <ListSection title="Journal · last 15 min">
+                  {Object.entries(journal).map(([k, v]) => <ListRow key={k} label={k.replace(/_/g, " ")}><span className={cn(k === "errors" && v > 0 && "text-rose")}>{v}</span></ListRow>)}
+                </ListSection>
               )}
-            >
-              <Play className="w-3 h-3" /> Start
-            </button>
-            <button
-              onClick={handleStop}
-              disabled={!system.engineRunning}
-              className={cn(
-                "flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-all",
-                !system.engineRunning
-                  ? "bg-white/5 text-text-muted cursor-not-allowed"
-                  : "bg-loss/10 text-loss hover:bg-loss/20"
+              {(opsData.alerts?.length ?? 0) > 0 && (
+                <ListSection title="Alerts">
+                  {opsData.alerts!.map((a) => <p key={a.key} className="text-[12.5px] font-medium text-amber leading-snug py-1 break-words">{a.text}</p>)}
+                </ListSection>
               )}
-            >
-              <Square className="w-3 h-3" /> Stop
-            </button>
-          </div>
-        </GlassPanel>
+            </>
+          )}
+        </Panel>
 
-        {/* WebSocket Status */}
-        <GlassPanel className="p-5" glow={system.wsConnected}>
-          <h3 className="text-xs text-text-secondary uppercase tracking-wider mb-4">Connections</h3>
-          <div className="space-y-3">
-            {[
-              {
-                name: `Bridge Server (${bridgeMode.toUpperCase()})`,
-                connected: system.bridgeConnected,
-                detail: `${bridgeUrl.replace(/^https?:\/\//, "")} · ${system.openChannels.length}/5 channels`,
-              },
-              { name: `Market Data (${exchange === "hyperliquid" ? "Hyperliquid" : "Binance"})`,
-                connected: system.wsConnected || hasPriceData,
-                detail: exchange === "hyperliquid" ? "api.hyperliquid.xyz" : "fstream.binance.com" },
-            ].map((c) => (
-              <div key={c.name} className="flex items-center justify-between p-3 rounded-lg bg-white/[0.02]">
-                <div className="flex items-center gap-3">
-                  <PulsingDot active={c.connected} />
-                  <div>
-                    <p className="text-sm text-text-primary">{c.name}</p>
-                    <p className="text-[10px] text-text-muted font-mono">{c.detail}</p>
-                  </div>
-                </div>
-                <span className={cn(
-                  "text-[10px] font-mono px-2 py-0.5 rounded font-semibold",
-                  c.connected ? "bg-profit/10 text-profit" : "bg-loss/10 text-loss"
-                )}>
-                  {c.connected ? "ONLINE" : "OFFLINE"}
-                </span>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-4 pt-4 border-t border-white/5">
-            <h4 className="text-xs text-text-muted mb-2">App Info</h4>
-            <div className="space-y-1 text-xs">
-              <div className="flex justify-between">
-                <span className="text-text-muted">Version</span>
-                <span className="font-mono text-text-secondary">{__APP_VERSION__}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">Framework</span>
-                <span className="font-mono text-text-secondary">Tauri v2 + React</span>
-              </div>
-            </div>
-          </div>
-        </GlassPanel>
+        <Panel>
+          <PanelHeader title="Connections" />
+          <ListSection first>
+            <ListRow label={`Bridge (${bridgeMode})`}><StatusChip status={system.bridgeConnected ? "online" : "offline"} size="xs" /></ListRow>
+            <ListRow label="URL"><span className="break-all whitespace-normal text-right">{bridgeUrl.replace(/^https?:\/\//, "")}</span></ListRow>
+            <ListRow label="WS channels">{system.openChannels.length}/5 <span className="text-text-2 font-medium">· {system.openChannels.join(", ") || "none"}</span></ListRow>
+            <ListRow label={`${EXCHANGE_LABELS[exchange] ?? exchange} feed`}><StatusChip status={system.wsConnected || (feedAge !== null && feedAge < 30) ? "online" : "offline"} size="xs" /></ListRow>
+            <ListRow label="Last tick">{formatAge(feedAge)}{feedAge !== null ? " ago" : ""}</ListRow>
+            <ListRow label="Endpoint">{exchange === "hyperliquid" ? "api.hyperliquid.xyz" : "fstream.binance.com"}</ListRow>
+            <ListRow label="Framework">Tauri v2 · React 19</ListRow>
+          </ListSection>
+        </Panel>
       </div>
 
-      {/* Live Logs */}
-      <GlassPanel className="flex-1 p-4 flex flex-col min-h-[280px] lg:min-h-0">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-xs text-text-secondary uppercase tracking-wider flex items-center gap-2">
-            <Activity className="w-3 h-3" /> Live Logs
-          </h3>
-          <button
-            onClick={() => useSystemStore.setState({ logs: [] })}
-            className="text-[10px] text-text-muted hover:text-text-secondary flex items-center gap-1"
-          >
-            <RefreshCw className="w-2.5 h-2.5" /> Clear
-          </button>
-        </div>
-        <div className="flex-1 overflow-auto rounded-lg bg-bg-base/50 p-3 font-mono text-[11px] leading-5">
+      <Panel className="flex flex-col flex-1 min-h-[280px] lg:min-h-0 overflow-hidden">
+        <PanelHeader title="Recent log lines" right={<Button variant="ghost" size="xs" icon={<Trash2 className="w-3.5 h-3.5" />} onClick={() => useSystemStore.setState({ logs: [] })}>Clear</Button>} />
+        <div ref={logBoxRef} className="flex-1 overflow-auto p-3 font-mono text-[12px] leading-5">
           {logs.length === 0 ? (
-            <p className="text-text-muted">Waiting for log output...</p>
+            <p className="text-[12.5px] font-medium text-text font-sans">Waiting for log output…</p>
           ) : (
             logs.map((log, i) => (
               <div key={i} className="flex gap-2">
-                <span className="text-text-muted shrink-0">
-                  {new Date(log.timestamp * 1000).toLocaleTimeString("en-US", { hour12: false })}
-                </span>
-                <span className={cn(
-                  "shrink-0 w-12",
-                  log.level === "error" ? "text-loss" : log.level === "warn" ? "text-warning" : "text-text-muted"
-                )}>
-                  [{log.level}]
-                </span>
-                <span className="text-text-secondary break-all">{log.message}</span>
+                <span className="text-text-2 shrink-0">{new Date(log.timestamp * 1000).toLocaleTimeString("en-US", { hour12: false })}</span>
+                <span className={cn("shrink-0 w-14 font-semibold", log.level === "error" ? "text-rose" : log.level === "warn" || log.level === "warning" ? "text-amber" : "text-text-2")}>[{log.level}]</span>
+                <span className="text-text break-all">{log.message}</span>
               </div>
             ))
           )}
-          <div ref={logsEndRef} />
         </div>
-      </GlassPanel>
-    </motion.div>
+      </Panel>
+
+      <ConfirmDialog
+        open={confirm !== null}
+        onClose={() => setConfirm(null)}
+        onConfirm={() => { const a = confirm; setConfirm(null); if (a) void run(a); }}
+        title={confirm === "stop" ? "Stop the bot?" : "Restart the engine?"}
+        body={confirm === "stop" ? "The engine stops trading. Open paper positions stay in the book until the engine runs again." : "The engine stops and starts again with the same mode and exchange. Positions are kept."}
+        confirmLabel={confirm === "stop" ? "Stop bot" : "Restart"}
+        danger={confirm === "stop"}
+        busy={busy !== null}
+      />
+    </div>
   );
 }

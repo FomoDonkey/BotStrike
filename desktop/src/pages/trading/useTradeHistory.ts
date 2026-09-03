@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
-import { api, ApiError, type TradeRecord } from "@/lib/api";
+import { useMemo } from "react";
+import { api, type TradeRecord } from "@/lib/api";
 import type { TradeData } from "@/stores/tradingStore";
-import { usePolling } from "@/hooks/usePolling";
+import { useEndpoint } from "@/hooks/useEndpoint";
 
 const FETCH_LIMIT = 400; // ENTRY + EXIT rows → ~200 closed trades
 const POLL_MS = 15_000;
@@ -13,27 +13,12 @@ export function isClosedTrade(t: TradeRecord): boolean {
 }
 
 /**
- * Historical fills from the trade DB (/api/trades) for the whole terminal: the Trade History
- * tab shows the closed rows, the chart draws every fill as a marker (the WS feed only carries
- * fills seen since the page loaded — without this a refresh wiped the markers).
+ * Historical fills from the trade DB (/api/trades) for the whole terminal: Trade History shows
+ * the closed rows, Order History every ENTRY / EXIT row, the chart draws every fill as a marker.
  */
 export function useTradeHistory() {
-  const [trades, setTrades] = useState<TradeRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  usePolling(async () => {
-    try {
-      const res = await api.trades(FETCH_LIMIT);
-      setTrades(res.trades ?? []);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, POLL_MS);
-
+  const ep = useEndpoint(() => api.trades(FETCH_LIMIT), POLL_MS);
+  const trades = useMemo(() => ep.data?.trades ?? [], [ep.data]);
   const closed = useMemo(() => trades.filter(isClosedTrade), [trades]);
 
   const markers = useMemo<TradeData[]>(() => {
@@ -51,5 +36,5 @@ export function useTradeHistory() {
     return out;
   }, [trades]);
 
-  return { trades, closed, markers, loading, error };
+  return { trades, closed, markers, loading: !ep.loaded, error: ep.error };
 }
