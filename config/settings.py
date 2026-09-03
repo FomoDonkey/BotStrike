@@ -5,7 +5,7 @@ Define todos los parámetros ajustables: API, estrategias, riesgo, símbolos.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List
+from typing import ClassVar, Dict, List
 import os
 from dotenv import load_dotenv
 
@@ -178,6 +178,12 @@ class TradingConfig:
     trend_pool: str = ("BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,LTCUSDT,TRXUSDT,"
                        "ETCUSDT,EOSUSDT,XLMUSDT,NEOUSDT,IOTAUSDT,ZECUSDT,DASHUSDT,SOLUSDT,"
                        "AVAXUSDT,DOTUSDT,LINKUSDT,ATOMUSDT")
+    # Multi-asset pool validated 11/11 on 2026-09-03 (tasks/research_trend_multi_2026-09-03.md):
+    # Sharpe 1.81 net vs 1.37 crypto-only, maxDD 8.8 % vs 11.9 %, funding charged. Strike-style
+    # markets take their daily history from Yahoo (strategies/daily_sources.py) and execute on the
+    # venue. Set trend_pool to this string and trend_n_assets to 6 to switch the book over.
+    TREND_POOL_MULTI: ClassVar[str] = ("BTCUSDT,ETHUSDT,ADAUSDT,SOLUSDT,XRPUSDT,BNBUSDT,ZECUSDT,"
+                                       "XAU-USD,XAG-USD,SP500-USD,NAS100-USD,WTI-USD")
     # ── Edge monitor (research §4.4 / audit 2026-09-02) ──
     # Per-strategy statistics over the last `edge_window` closed trades. A strategy is
     # killed (no new entries, Telegram alert) when n >= edge_kill_min_trades and either

@@ -58,8 +58,10 @@ SPOT_KLINES_URL = "https://api.binance.com/api/v3/klines"
 
 
 def to_ui_symbol(pool_symbol: str) -> str:
-    """BTCUSDT → BTC-USD (the format the UI/risk manager use)."""
+    """BTCUSDT → BTC-USD. Strike-style markets (XAU-USD, SP500-USD) are already in UI form."""
     s = pool_symbol.upper()
+    if "-" in s:
+        return s
     for quote in ("USDT", "USDC", "BUSD", "USD"):
         if s.endswith(quote) and len(s) > len(quote):
             return f"{s[:-len(quote)]}-USD"
@@ -103,7 +105,12 @@ def fetch_daily_klines(symbol: str, start_ms: int = START_MS, timeout: float = 6
 class DailyDataStore:
     """Parquet cache of complete daily candles + the forming candle of today."""
 
-    def __init__(self, data_dir: str = DEFAULT_DATA_DIR, fetcher: Callable = fetch_daily_klines) -> None:
+    def __init__(self, data_dir: str = DEFAULT_DATA_DIR, fetcher: Optional[Callable] = None) -> None:
+        if fetcher is None:
+            # Route each market to its daily source: Binance spot for the USDT pairs, Yahoo for the
+            # Strike TradFi markets (gold, silver, indices, oil, stocks) — see strategies/daily_sources.py
+            from strategies.daily_sources import make_fetcher
+            fetcher = make_fetcher(fetch_daily_klines)
         self.data_dir = data_dir
         self._fetch = fetcher
         os.makedirs(self.data_dir, exist_ok=True)
