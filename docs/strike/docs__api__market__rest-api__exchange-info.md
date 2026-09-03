@@ -1,0 +1,14 @@
+<!-- source: https://docs.strikefinance.org/api/market/rest-api/exchange-info.md -->
+> For the complete documentation index, see [llms.txt](https://docs.strikefinance.org/llms.txt). Markdown versions of documentation pages are available by appending `.md` to page URLs; this page is available as [Markdown](https://docs.strikefinance.org/api/market/rest-api/exchange-info.md).
+
+# Exchange Info
+
+Trading rules and symbol information
+
+## Exchange Information
+
+> Returns trading rules and symbol information for all listed markets.
+
+```json
+{"openapi":"3.0.3","info":{"title":"Strike Market Data API","version":"2.0.0"},"tags":[{"name":"Exchange Info","description":"Trading rules and symbol information"}],"servers":[{"url":"https://api.strikefinance.org/price","description":"Mainnet"},{"url":"https://api-v2-testnet.strikefinance.org/price","description":"Testnet"}],"paths":{"/v2/exchangeInfo":{"get":{"tags":["Exchange Info"],"summary":"Exchange Information","description":"Returns trading rules and symbol information for all listed markets.","responses":{"200":{"description":"Exchange info","content":{"application/json":{"schema":{"$ref":"#/components/schemas/ExchangeInfoResponse"}}}}}}}},"components":{"schemas":{"ExchangeInfoResponse":{"type":"object","properties":{"timezone":{"type":"string"},"serverTime":{"type":"integer","format":"int64"},"rateLimits":{"type":"array","items":{"$ref":"#/components/schemas/RateLimit"}},"symbols":{"type":"array","items":{"$ref":"#/components/schemas/SymbolInfo"}}}},"RateLimit":{"type":"object","properties":{"rateLimitType":{"type":"string"},"interval":{"type":"string"},"intervalNum":{"type":"integer"},"limit":{"type":"integer"}}},"SymbolInfo":{"type":"object","properties":{"symbol":{"type":"string"},"pair":{"type":"string"},"contractType":{"type":"string"},"status":{"type":"string"},"baseAsset":{"type":"string"},"quoteAsset":{"type":"string"},"marginAsset":{"type":"string"},"pricePrecision":{"type":"integer"},"quantityPrecision":{"type":"integer"},"baseAssetPrecision":{"type":"integer"},"quotePrecision":{"type":"integer"},"underlyingType":{"type":"string"},"underlyingSubType":{"type":"array","items":{"type":"string"}},"settlePlan":{"type":"integer"},"triggerProtect":{"type":"string"},"liquidationFee":{"type":"string"},"limitTakeBound":{"type":"string"},"marketTakeBound":{"type":"string"},"filters":{"type":"array","items":{"$ref":"#/components/schemas/FilterInfo"}},"orderType":{"type":"array","items":{"type":"string"}},"timeInForce":{"type":"array","items":{"type":"string"}}}},"FilterInfo":{"type":"object","properties":{"filterType":{"type":"string"},"maxPrice":{"type":"string"},"minPrice":{"type":"string"},"tickSize":{"type":"string"},"maxQty":{"type":"string"},"minQty":{"type":"string"},"stepSize":{"type":"string"},"limit":{"type":"integer"},"notional":{"type":"string"},"multiplierUp":{"type":"string"},"multiplierDown":{"type":"string"},"multiplierDecimal":{"type":"string"}}}}}}
+```
