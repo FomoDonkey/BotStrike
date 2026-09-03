@@ -11,6 +11,7 @@ import {
   exitLadderOf, pnlDistancePct, positionHoldSec, positionLeverage, positionLiquidation, positionMargin, positionNotional, positionRoe,
 } from "@/lib/market";
 import { ClosePositionButton } from "./ClosePosition";
+import { useClosePosition } from "@/hooks/useClosePosition";
 
 interface PositionsTableProps {
   positions: PositionData[];
@@ -79,6 +80,7 @@ export function PositionsTable({ positions, symbol, compact, emptyText = "No ope
   // Below 1024 px a 1980 px table hides everything that matters (measured on the CT at 390 px:
   // only Symbol/Side/Size/Notional were on screen), so positions render as cards instead.
   const narrow = useMediaQuery("(max-width: 1023px)");
+  const { canClose } = useClosePosition();
 
   const columns: Column<PositionData>[] = [
     { id: "symbol", label: "Symbol", align: "l", sortValue: (p) => p.symbol, render: (p) => <span className="font-semibold">{p.symbol}</span> },
@@ -149,28 +151,44 @@ export function PositionsTable({ positions, symbol, compact, emptyText = "No ope
     { id: "close", label: "", align: "c", stickyRight: true, className: "w-[72px]", render: (p) => <ClosePositionButton position={p} /> },
   );
 
+  // A row of locked Close buttons with the reason hidden in a tooltip reads as a broken feature:
+  // say it once, above the table, with the place that fixes it (2026-09-04).
+  const lockNote = !canClose && positions.length > 0 ? (
+    <div className="px-3 py-1.5 border-b border-hairline text-[12px] font-medium text-amber shrink-0">
+      Manual close is locked: this bridge is remote, so it needs the auth token — Settings → Connection.
+    </div>
+  ) : null;
+
   if (narrow) {
     if (!positions.length) {
       return <div className="p-6 text-center text-[12.5px] font-medium text-text-2">{emptyText}</div>;
     }
     return (
-      <div className="flex flex-col gap-2 p-2">
-        {positions.map((p, i) => (
-          <PositionCard key={`${p.symbol}-${p.strategy ?? ""}-${p.order_id ?? i}`} p={p} now={now}
-                        highlight={Boolean(symbol && p.symbol === symbol)} />
-        ))}
+      <div className="flex flex-col min-h-0">
+        {lockNote}
+        <div className="flex flex-col gap-2 p-2">
+          {positions.map((p, i) => (
+            <PositionCard key={`${p.symbol}-${p.strategy ?? ""}-${p.order_id ?? i}`} p={p} now={now}
+                          highlight={Boolean(symbol && p.symbol === symbol)} />
+          ))}
+        </div>
       </div>
     );
   }
 
   return (
-    <DataTable
-      columns={columns}
-      rows={positions}
-      rowKey={(p, i) => `${p.symbol}-${p.strategy ?? ""}-${p.order_id ?? i}`}
-      rowClassName={(p) => (symbol && p.symbol === symbol ? "is-open" : undefined)}
-      minWidth={compact ? "900px" : "1980px"}
-      emptyText={emptyText}
-    />
+    <div className="flex flex-col min-h-0 flex-1">
+      {lockNote}
+      <div className="flex-1 min-h-0">
+        <DataTable
+          columns={columns}
+          rows={positions}
+          rowKey={(p, i) => `${p.symbol}-${p.strategy ?? ""}-${p.order_id ?? i}`}
+          rowClassName={(p) => (symbol && p.symbol === symbol ? "is-open" : undefined)}
+          minWidth={compact ? "900px" : "1980px"}
+          emptyText={emptyText}
+        />
+      </div>
+    </div>
   );
 }

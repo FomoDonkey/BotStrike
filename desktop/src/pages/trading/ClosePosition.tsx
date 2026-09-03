@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { XCircle } from "lucide-react";
+import { Lock, XCircle } from "lucide-react";
 import type { PositionData } from "@/lib/api";
 import { useClosePosition } from "@/hooks/useClosePosition";
 import { Button } from "@/components/ui/Button";
@@ -37,10 +37,12 @@ export function ClosePositionButton({ position, size = "xs", className, block }:
         disabled={!canClose}
         title={disabledReason ?? `Close ${p.symbol} now at the current price (paper only)`}
         loading={running}
-        icon={block ? <XCircle className="w-3.5 h-3.5" /> : undefined}
+        icon={block ? <XCircle className="w-3.5 h-3.5" /> : !canClose ? <Lock className="w-3 h-3" /> : undefined}
         onClick={() => setOpen(true)}
       >
-        {block ? "Close position (paper)" : "Close"}
+        {/* A disabled button whose reason lives only in a tooltip is a button that looks broken:
+            Edgar asked why it had stopped working (2026-09-04). Say it on the face of the control. */}
+        {block ? (canClose ? "Close position (paper)" : "Close — needs the auth token") : canClose ? "Close" : "Locked"}
       </Button>
       <ConfirmDialog
         open={open}
