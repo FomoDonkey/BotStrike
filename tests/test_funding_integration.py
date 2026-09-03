@@ -41,8 +41,9 @@ ROWS = [
 def test_alltime_counts_two_trades_and_still_moves_equity():
     p = compute_alltime_performance(_repo(ROWS), 1000.0, source="paper")
     assert p["total_trades"] == 2 and p["win_rate"] == pytest.approx(0.5)
-    assert p["pnl"] == pytest.approx(10.0 - 4.0)        # trade PnL only; funding is reported apart
-    assert p.get("funding_paid", None) in (None, pytest.approx(-0.5))
+    assert p["trade_pnl"] == pytest.approx(10.0 - 4.0)  # trades only, for the statistics
+    assert p["pnl"] == pytest.approx(5.5)               # all-time cash: trades + funding
+    assert p["funding_paid"] == pytest.approx(-0.5)
 
 
 def test_edge_stats_ignore_funding_rows():
@@ -108,3 +109,20 @@ def test_engine_prefers_the_venue_funding_rate_over_the_intraday_feed(monkeypatc
     assert rates["BTC-USD"] == pytest.approx(0.000098)   # venue wins over the feed's 0.000037
     assert rates["WTI-USD"] == pytest.approx(-0.00018)   # market outside the feed still charged
     assert rates["ETH-USD"] == pytest.approx(0.000037)   # feed only fills the gap
+
+
+def test_alltime_pnl_and_equity_curve_include_funding():
+    """/api/performance must agree with /api/portfolio and with the account: funding is realized
+    cash. Before this fix performance reported +16.06 while the account held 16.04 (2026-09-03)."""
+    p = compute_alltime_performance(_repo(ROWS), 1000.0, source="paper")
+    assert p["total_trades"] == 2                       # funding rows are not trades
+    assert p["trade_pnl"] == pytest.approx(6.0)
+    assert p["funding_paid"] == pytest.approx(-0.5)
+    assert p["pnl"] == pytest.approx(5.5)               # trades + funding
+    curve = p["equity_curve_ts"]
+    assert curve[-1][1] == pytest.approx(1000.0 + 5.5)  # the curve ends where the account is
+    assert p["peak_equity"] >= curve[-1][1]
+    # a book with no closed trades but paid funding still reports the cash flow
+    only_funding = [r for r in ROWS if r.trade_type != "EXIT"]
+    q = compute_alltime_performance(_repo(only_funding), 1000.0, source="paper")
+    assert q["total_trades"] == 0 and q["pnl"] == pytest.approx(-0.5)

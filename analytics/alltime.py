@@ -49,6 +49,21 @@ def compute_alltime_performance(trade_repo, initial_capital: float,
             [float(t.timestamp), float(v)]
             for t, v in zip(closes, rep.equity_curve[1:])
         ]
+        # fold every funding settlement into the curve at its own timestamp, so the equity chart,
+        # the peak and the drawdown match what the account actually holds
+        fund_rows = sorted(((float(t.timestamp or 0.0), float(t.pnl or 0.0))
+                            for t in trades if t.trade_type == "FUNDING"), key=lambda x: x[0])
+        if fund_rows:
+            merged, fi, cum = [], 0, 0.0
+            for ts, eq in pts:
+                while fi < len(fund_rows) and fund_rows[fi][0] <= ts:
+                    cum += fund_rows[fi][1]
+                    fi += 1
+                merged.append([ts, eq + cum])
+            for ts, amt in fund_rows[fi:]:                 # settlements after the last close
+                cum += amt
+                merged.append([ts, merged[-1][1] + amt if merged else initial + cum])
+            pts = merged
         peak = max(v for _, v in pts)
         last = pts[-1][1]
         current_dd = (peak - last) / peak if peak > 0 else 0.0
@@ -64,7 +79,12 @@ def compute_alltime_performance(trade_repo, initial_capital: float,
         return {
             "initial_capital": initial,
             "total_trades": rep.total_trades,
-            "pnl": round(rep.total_pnl, 4),
+            # Funding is a realized cash flow: it belongs in the all-time PnL and in the equity
+            # curve, but never in the trade statistics. Reporting `pnl` without it made
+            # /api/performance disagree with /api/portfolio and with the account (2026-09-03).
+            "pnl": round(rep.total_pnl + funding_total, 4),
+            "trade_pnl": round(rep.total_pnl, 4),
+            "funding_paid": round(funding_total, 6),
             "win_rate": round(rep.win_rate, 4),
             "sharpe_ratio": round(rep.sharpe_ratio, 2),
             "sortino_ratio": round(rep.sortino_ratio, 2),
