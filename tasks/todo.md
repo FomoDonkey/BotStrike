@@ -1544,3 +1544,26 @@ pestañas, cruzando cada número contra la API. Encontrado y corregido:
 - [x] Gráfico en UTC y tablas en hora local: el mismo fill se leía 19:07 y 21:07
 - [x] Verificado: 8/8 rutas limpias a 1440 y 390, contraste 0 infractores, 292 tests, 0 discrepancias
       entre pantalla y API
+
+## Verificación en el navegador real, clicando yo mismo (2026-09-03, ronda 3)
+Petición: "tu mismo debes poder navegar por el navegador... clicar los botones... revisalo todo".
+Resuelto el bloqueo: la extensión maneja una pestaña en segundo plano y `usePolling` salta los ticks
+con `visibilityState === "hidden"`; forzando la propiedad en la página, el sondeo REST corre y la
+interfaz carga entera. Encontrado clicando, no con scripts:
+- [x] **El WebSocket solo difundía 4 de los 6 mercados**: los símbolos del feed intradía se saltaban
+      asumiendo que el bucle de ticks los emite, y no lo hace sin estrategias intradía. La página de
+      Portfolio lee el socket → mostraba "Positions 4" junto a "Trend book 6"
+- [x] `_trend_symbols_sent` se vaciaba en vez de guardarse: una posición cerrada nunca se limpiaba
+- [x] **index.html se servía sin cabecera de caché**: tras un despliegue el navegador seguía cargando
+      el bundle anterior. Ahora `no-cache, must-revalidate`, y los assets con hash immutable
+- [x] **La escalera de salida no decía si la operación sale en beneficio**: medía solo distancia al
+      precio actual. Ahora cada tramo lleva su resultado contra la entrada y la tarjeta dice qué
+      devuelve la posición si sale desde aquí, y si el beneficio está asegurado o no
+- [x] **MAE/MFE estaba vacío en todas las posiciones**: se calcula desde las barras diarias que el
+      motor ya cachea, plegando el precio actual (si no, MFE salía 0,0 con la posición en verde)
+- [x] Historial de órdenes: "8h settlement" obsoleto y PNL redondeado a "-$0.00"
+- [x] Sistema: "bridge down" en blanco junto a un ALL CLEAR verde, sin decir que era un fallo visto
+      una vez durante un despliegue y aún sin confirmar
+- [x] Riesgo: "0% used" y "100%" en la misma barra, dos porcentajes contradictorios
+- [x] Estrategias: etiqueta "Mean gross" truncada a "Mea..." a 1536 px
+- [x] Verificado: 8/8 rutas limpias a 1440 y 390, contraste 0, 295 tests, 0 textos obsoletos

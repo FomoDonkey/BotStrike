@@ -1179,3 +1179,23 @@
   ticks con la pestaña oculta, y la pestaña de la extensión lo está siempre.
 - **LESSON: mirar la carga, no solo el estado final; y antes de declarar un fallo visto en automación,
   comprobar si es un artefacto del entorno de automación.**
+
+### Una pantalla que lee el socket no ve lo mismo que una que lee REST
+- Portfolio mostraba 4 posiciones y Trading 6: la primera lee el store del WebSocket y la segunda
+  REST. El emisor se saltaba los símbolos del feed intradía "porque ya los emite el bucle de ticks",
+  que no corre sin estrategias intradía. Dos fuentes de verdad, dos respuestas.
+- **LESSON: si dos pantallas muestran lo mismo, tienen que leerlo del mismo sitio, o el emisor debe
+  cubrir el conjunto completo sin depender de quién más emita.**
+
+### El navegador puede enseñar una versión anterior de tu propio arreglo
+- `index.html` se servía solo con ETag, así que Chrome mantuvo una copia y siguió cargando el bundle
+  viejo tras desplegar. Estuve mirando datos nuevos de la API dentro de una interfaz antigua.
+- **LESSON: el documento de entrada de una SPA nunca se cachea; los assets con hash, para siempre.
+  Y al verificar tras un despliegue, comprobar QUÉ bundle cargó la página antes de creer lo que ves.**
+
+### "Va ganando" no es lo mismo que "saldrá ganando"
+- Una posición marcaba +6,5 % con TODOS sus stops por debajo del precio de entrada: si trailea hasta
+  salir, cierra en pérdida. La interfaz medía la escalera contra el precio actual, que responde
+  "cuánto puede caer" y no "¿me llevo el beneficio?".
+- **LESSON: una métrica de salida hay que medirla contra la ENTRADA, que es donde se decide el
+  resultado, además de contra el precio de hoy.**
