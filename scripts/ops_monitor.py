@@ -36,6 +36,11 @@ ALERT_REPEAT_SEC = 6 * 3600
 TREND_DEADLINE_MIN = 20          # the run is scheduled 00:05 UTC; alert if not OK by 00:20
 MAX_TICK_AGE_SEC = 120.0
 MAX_REGIME_FLIPS_PER_HOUR = 8    # after the 15-min/30-min fix we measure 1-2/h in total
+# Transient conditions need to persist for more than one check before waking anyone: a deploy
+# restarts the bridge for ~30 s and on 2026-09-03 17:18Z that produced a "bridge down" alert on a
+# perfectly healthy bot. A false alarm teaches the operator to ignore the real ones.
+CONFIRM_CHECKS = 2
+TRANSIENT = ("bridge_down", "engine_down", "ws_down", "stale_ticks", "degraded")
 SERVICE = "botstrike-bridge"
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -45,6 +50,8 @@ class Report:
     alerts: List[Dict[str, str]] = field(default_factory=list)   # {key, text}
     summary: Optional[str] = None
     facts: Dict = field(default_factory=dict)
+    pending: Dict[str, int] = field(default_factory=dict)        # transient conditions seen, not yet alerted
+    consecutive: Dict[str, int] = field(default_factory=dict)    # new counters to persist
 
 
 # ── data access ──────────────────────────────────────────────────
@@ -95,8 +102,17 @@ def evaluate(now: datetime, health: Optional[dict], trend: Optional[dict], risk:
     rep = Report()
     today = now.strftime("%Y-%m-%d")
     minutes = now.hour * 60 + now.minute
+    prev_counts: Dict[str, int] = dict(state.get("consecutive") or {})
+    counts: Dict[str, int] = {}
 
     def alert(key: str, text: str):
+        base = key.split(":")[0]
+        if base in TRANSIENT:
+            n = prev_counts.get(key, 0) + 1
+            counts[key] = n
+            if n < CONFIRM_CHECKS:
+                rep.pending[key] = n            # seen once: wait for confirmation
+                return
         rep.alerts.append({"key": key, "text": text})
 
     # bridge / engine
@@ -158,6 +174,8 @@ def evaluate(now: datetime, health: Optional[dict], trend: Optional[dict], risk:
     # daily summary: first evaluation after 00:20 UTC, once per day
     if minutes >= TREND_DEADLINE_MIN and state.get("last_summary_date") != today:
         rep.summary = _summary(today, trend, risk, account, journal_24h)
+    rep.consecutive = counts                    # anything not seen this run resets to zero
+    rep.facts["pending"] = rep.pending
     return rep
 
 
@@ -278,11 +296,13 @@ def main() -> int:
     if health and "_error" not in health:
         state["telegram_failures_seen"] = health.get("telegram_failures") or 0
     state["last_alerts"] = last_alerts
+    state["consecutive"] = rep.consecutive
     state["last_run"] = now.isoformat()
     save_json(STATE_PATH, state)
     save_json(LAST_PATH, {"ts": now.isoformat(), "alerts": rep.alerts, "sent": sent, "summary_sent": bool(rep.summary),
-                          "facts": rep.facts, "journal_15": j15, "journal_60": j60})
-    print(f"ops_monitor {now.isoformat()} alerts={len(rep.alerts)} sent={sent} summary={bool(rep.summary)}")
+                          "facts": rep.facts, "pending": rep.pending, "journal_15": j15, "journal_60": j60})
+    print(f"ops_monitor {now.isoformat()} alerts={len(rep.alerts)} pending={rep.pending} "
+          f"sent={sent} summary={bool(rep.summary)}")
     return 0
 
 

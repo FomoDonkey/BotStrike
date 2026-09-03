@@ -43,15 +43,19 @@ export function PositionsTable({ positions, symbol, compact, emptyText = "No ope
     { id: "entry", label: "Entry", sortValue: (p) => p.entry_price, render: (p) => <span className="num" title={typeof p.spread_at_entry_bps === "number" ? `Spread at entry ${p.spread_at_entry_bps.toFixed(2)} bps${typeof p.expected_cost_bps === "number" ? ` · expected cost ${p.expected_cost_bps.toFixed(2)} bps` : ""}${p.order_type ? ` · ${p.order_type}` : ""}` : undefined}>{formatPrice(p.entry_price)}</span> },
     { id: "mark", label: "Mark", hint: HINTS.mark, sortValue: (p) => p.mark_price, render: (p) => <span className="num">{p.mark_price > 0 ? formatPrice(p.mark_price) : "---"}</span> },
   ];
-  if (!compact) {
-    columns.push(
-      { id: "liq", label: "Liq. Price", hint: HINTS.liq, render: (p) => { const liq = positionLiquidation(p); return liq.price ? <span className="num" title={liq.estimated ? "Estimated from the paper formula (bridge did not report it)" : undefined}>{formatPrice(liq.price)}{liq.estimated && <span className="text-[11px] ml-0.5 text-text-2">est</span>}</span> : <span className="text-text-3" title="Leverage 1 — spot-like, no liquidation">---</span>; } },
-      { id: "margin", label: "Margin", hint: HINTS.margin, sortValue: positionMargin, render: (p) => <span className="num">{formatUSD(positionMargin(p))}</span> },
-    );
-  }
+  // Column order = the questions a position must answer, left to right: what it is, where it stands,
+  // WHAT IT COSTS, WHEN IT LEAVES, and only then the reference columns. Measured on the CT
+  // 2026-09-03: with Funding near the end it sat at x=1852 inside a 1425 px container, i.e. the
+  // number existed and nobody could see it.
   columns.push(
-    { id: "lev", label: "Lev", sortValue: positionLeverage, render: (p) => <span className="num">{positionLeverage(p)}x</span> },
     { id: "pnl", label: "PNL (ROE %)", hint: `${HINTS.pnl} ${HINTS.roe}`, sortValue: (p) => p.unrealized_pnl ?? 0, render: (p) => <PnlCell pnl={p.unrealized_pnl ?? 0} roe={positionRoe(p)} inline /> },
+    {
+      id: "funding", label: "Funding", hint: HINTS.fundingPaid,
+      sortValue: (p) => p.funding_paid ?? 0,
+      render: (p) => typeof p.funding_paid === "number"
+        ? <span className={cn("num", p.funding_paid < 0 ? "text-rose" : p.funding_paid > 0 ? "text-mint" : "text-text")}>{formatSignedMoney(p.funding_paid, 4)}</span>
+        : <span className="text-text-3" title="Funding needs bridge ≥ 2.16">---</span>,
+    },
   );
   if (!compact) {
     columns.push(
@@ -88,19 +92,15 @@ export function PositionsTable({ positions, symbol, compact, emptyText = "No ope
   );
   if (!compact) {
     columns.push(
+      { id: "liq", label: "Liq. Price", hint: HINTS.liq, render: (p) => { const liq = positionLiquidation(p); return liq.price ? <span className="num" title={liq.estimated ? "Estimated from the paper formula (bridge did not report it)" : undefined}>{formatPrice(liq.price)}{liq.estimated && <span className="text-[11px] ml-0.5 text-text-2">est</span>}</span> : <span className="text-text-3" title="Leverage 1 — spot-like, no liquidation">---</span>; } },
+      { id: "margin", label: "Margin", hint: HINTS.margin, sortValue: positionMargin, render: (p) => <span className="num">{formatUSD(positionMargin(p))}</span> },
+      { id: "lev", label: "Lev", sortValue: positionLeverage, render: (p) => <span className="num">{positionLeverage(p)}x</span> },
       { id: "trigger", label: "Trigger", align: "l", hint: HINTS.trigger, render: (p) => p.trigger ? <span className="font-medium">{p.trigger}</span> : <span className="text-text-3">---</span> },
       { id: "regime", label: "Regime", align: "l", hint: "Market regime when the position was opened", render: (p) => p.regime_at_entry ? <span className="font-medium">{p.regime_at_entry.replace(/_/g, " ")}</span> : <span className="text-text-3">---</span> },
       { id: "fees", label: "Fees", hint: HINTS.fees, sortValue: (p) => p.fees_paid ?? 0, render: (p) => typeof p.fees_paid === "number" ? <span className="num">{formatUSD(p.fees_paid, 4)}</span> : <span className="text-text-3">---</span> },
     );
   }
   columns.push(
-    {
-      id: "funding", label: "Funding", hint: HINTS.fundingPaid,
-      sortValue: (p) => p.funding_paid ?? 0,
-      render: (p) => typeof p.funding_paid === "number"
-        ? <span className={cn("num", p.funding_paid < 0 ? "text-rose" : p.funding_paid > 0 ? "text-mint" : "text-text")}>{formatSignedMoney(p.funding_paid, 4)}</span>
-        : <span className="text-text-3" title="Funding needs bridge ≥ 2.16">---</span>,
-    },
     { id: "close", label: "", align: "c", stickyRight: true, className: "w-[72px]", render: (p) => <ClosePositionButton position={p} /> },
   );
 
