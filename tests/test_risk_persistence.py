@@ -57,7 +57,9 @@ def test_history_is_safe_when_the_db_fails():
 def test_restore_with_and_without_compounding():
     s = Settings()
     now = time.time()
-    trades = [_close(-40.0, now - 86400 * 3), _close(+10.0, now - 60)]
+    # -8 days is ALWAYS in a previous ISO week; -3 days was only true Wed-Sun (the CT test gate
+    # failed on Thursday 2026-09-03 00:04Z: the loss fell inside the current week → weekly -30)
+    trades = [_close(-40.0, now - 86400 * 8), _close(+10.0, now - 1)]
     hist = compute_historical_risk_state(Repo(trades), 1000.0, now=now)
     rm = RiskManager(s)
     restore_risk_state(rm, hist, compounding=True)
