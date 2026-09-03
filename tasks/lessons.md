@@ -1059,3 +1059,29 @@
   monitor no filtraba nada y cada deploy sumaba 4 "cambios de régimen". Visto en la comprobación de las 00:17Z.
 - **LESSON: antes de hacer `grep`/`in` sobre líneas del journal, quitar ANSI (`re.sub(r"\x1b\[[0-9;]*m", "", l)`)
   o usar `journalctl -o json`. Y escribir parches con `\x1b` desde archivos, nunca por heredoc del shell.**
+
+## Multi-activo en Strike (2026-09-03)
+
+### Validar una regla y programar otra es el peor error posible
+- La investigación seleccionaba el universo por diversidad de clase; el motor lo hacía por volumen en
+  dólares. Al activar el pool multi-activo en el CT, el motor eligió los índices (Yahoo reporta NAS100
+  con 227e12 de "volumen") y descartó los metales (plata: 1.590). Habría operado una estrategia que
+  NADIE validó.
+- **LESSON: el script de research debe LLAMAR a la función del motor, no reimplementarla. Si no se puede,
+  el primer test es comparar sus salidas sobre los mismos datos.**
+
+### El volumen en dólares no se puede comparar entre clases de activo
+- Un índice publica el volumen sumado de sus componentes; un futuro de plata publica contratos. Cualquier
+  ranking por volumen entre clases elige siempre los índices.
+- **LESSON: la liquidez que importa es la del VENUE donde ejecutas, y relativa a tu tamaño de posición
+  (aquí: ≥ 50x el nocional de una posición). Así el universo se encoge solo cuando crece la cuenta.**
+
+### Un cambio de configuración que tarda un mes en aplicarse es un fallo
+- El universo se recalculaba solo el día 1. Cambiar el pool "funcionaba" (la API decía applied) pero el
+  libro seguía igual, sin ningún error visible.
+- **LESSON: toda selección cacheada necesita una clave de invalidación con los parámetros que la generan.**
+
+### Un coste que solo se cobra a parte de la cartera es peor que no cobrarlo
+- El funding se leía del feed intradía (4 símbolos), así que oro, S&P, petróleo y plata no pagaban nada:
+  el libro multi-activo habría parecido más rentable que el de cripto por un artefacto contable.
+- **LESSON: cuando el universo deja de coincidir con el feed, revisar TODO lo que se indexa por símbolo.**
