@@ -180,3 +180,22 @@ def test_the_panel_carries_the_measured_reference_next_to_the_live_rate(tmp_path
     r = bridge._live_funding_rates(eng, 1)
     assert r["BTC-USD"]["annualized_pct"] == pytest.approx(0.1016, abs=1e-4)   # this hour
     assert r["BTC-USD"]["annualized_90d"] == pytest.approx(0.0856)             # normally
+
+
+def test_the_panel_prices_the_markets_the_book_may_buy_tomorrow():
+    """BNB, NAS100, XRP and ZEC sat in the candidate pool with no funding rate anywhere on screen,
+    so the carry of a market the daily run could open was invisible (audit 2026-09-03)."""
+    from types import SimpleNamespace as NS
+    from server import bridge
+
+    eng = NS(_venue_funding={"BTC-USD": 1.6e-05, "BNB-USD": 1.3e-05, "ZEC-USD": -1.9e-05},
+             settings=NS(symbol_names=["BTC-USD"],
+                         trading=NS(funding_interval_hours=1, trend_pool="BTCUSDT,BNBUSDT,ZEC-USD")),
+             market_data=NS(get_snapshot=lambda s: None),
+             _funding_positions=lambda: [{"symbol": "BTC-USD"}])
+    r = bridge._live_funding_rates(eng, 1)
+
+    assert set(r) == {"BTC-USD", "BNB-USD", "ZEC-USD"}
+    assert r["BTC-USD"]["held"] is True and r["BTC-USD"]["candidate"] is True
+    assert r["BNB-USD"]["held"] is False and r["BNB-USD"]["candidate"] is True
+    assert r["ZEC-USD"]["rate"] == pytest.approx(-1.9e-05)      # a market that PAYS the longs

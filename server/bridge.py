@@ -1926,8 +1926,19 @@ def _live_funding_rates(engine, interval_hours: int) -> dict:
         held = {str(p.get("symbol")) for p in (engine._funding_positions() or [])}
     except Exception:  # noqa: BLE001 - a display figure must not break the endpoint
         held = set()
+    # Also price the markets the daily run MAY buy tomorrow: a trend book rotates, and the carry of a
+    # candidate is exactly what decides whether holding it is worth it (audit 2026-09-03: BNB, NAS100,
+    # XRP and ZEC were in the pool with no rate anywhere on screen).
+    pool = set()
+    try:
+        for x in str(getattr(engine.settings.trading, "trend_pool", "") or "").split(","):
+            x = x.strip().upper()
+            if x:
+                pool.add(x if "-" in x else (x[:-4] + "-USD" if x.endswith("USDT") else x))
+    except Exception:  # noqa: BLE001
+        pool = set()
     out, measured = {}, _measured_funding_90d()
-    for sym in sorted(held | set(getattr(engine.settings, "symbol_names", []) or [])):
+    for sym in sorted(held | pool | set(getattr(engine.settings, "symbol_names", []) or [])):
         if sym in venue:
             rate, source = float(venue[sym] or 0.0), "venue"
         else:
@@ -1935,7 +1946,7 @@ def _live_funding_rates(engine, interval_hours: int) -> dict:
             raw = float(snap.funding_rate) if snap is not None and snap.funding_rate else 0.0
             rate, source = raw * scale, ("feed" if raw else "none")
         out[sym] = {"rate": rate, "annualized_pct": round(annualized_pct(rate, interval_hours), 6),
-                    "held": sym in held, "source": source,
+                    "held": sym in held, "candidate": sym in pool, "source": source,
                     "annualized_90d": measured.get(sym)}
     return out
 

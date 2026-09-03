@@ -44,12 +44,14 @@ export function FundingBlock({ funding }: { funding: EndpointState<FundingRespon
         </p>
       ) : (
         <div className="flex flex-col gap-1 pt-1">
-          <p className="text-[12px] font-medium text-text-2">Annualised rate per market: this settlement extrapolated to a year, next to the 90-day median measured on the venue. Outlined = open position.</p>
+          <p className="text-[12px] font-medium text-text-2">Annualised rate per market: this settlement extrapolated to a year, next to the 90-day median measured on the venue. Outlined = open position; the rest are candidates the daily run may buy.</p>
           <div className="flex flex-wrap gap-1.5">
             {rates.map(([sym, r]) => (
               <span key={sym} className={cn("inline-flex items-baseline gap-1 rounded-[6px] px-2 py-1",
                                             r.held ? "bg-panel-2 ring-1 ring-hairline-strong" : "bg-panel-2")}
-                    title={r.held ? "Open position — the book is paying this rate" : "Reference: no open position"}>
+                    title={r.held ? "Open position — the book is paying this rate"
+                                  : r.candidate ? "In the candidate pool — this is what holding it would cost"
+                                  : "Reference: no open position"}>
                 <span className="text-[12px] font-semibold text-text">{marketLabel(sym)}</span>
                 <span className={cn("num text-[12px] font-semibold", (r.annualized_pct ?? 0) > 0 ? "text-rose" : (r.annualized_pct ?? 0) < 0 ? "text-mint" : "text-text")}>
                   {formatPct(r.annualized_pct ?? 0, 1)}

@@ -485,6 +485,7 @@ export interface FundingRate {
   rate: number;
   annualized_pct: number;
   held?: boolean;               // the book has an open position in this market
+  candidate?: boolean;          // in the daily run's candidate pool: it may be bought tomorrow
   source?: "venue" | "feed" | "none";
   annualized_90d?: number | null;   // measured median on the venue, the reference for today's rate
 }
