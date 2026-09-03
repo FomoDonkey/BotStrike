@@ -1977,6 +1977,9 @@ async def get_ops():
                 "journal_15": {}, "state": st}
     return {"available": True, "last_check": last.get("ts"), "alerts": last.get("alerts", []), "sent": last.get("sent", []),
             "summary_sent": bool(last.get("summary_sent")), "facts": last.get("facts", {}),
+            # Faults seen once and not yet confirmed. Without this the page showed a bare
+            # "bridge down" beside a green ALL CLEAR and no way to tell why (audit 2026-09-03).
+            "pending": last.get("pending") or {},
             "journal_15": last.get("journal_15", {}), "journal_60": last.get("journal_60", {}),
             "state": {"last_summary_date": st.get("last_summary_date"), "last_alerts": st.get("last_alerts", {}),
                       "last_run": st.get("last_run")}}

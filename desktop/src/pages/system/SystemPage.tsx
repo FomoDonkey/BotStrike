@@ -107,7 +107,19 @@ export function SystemPage() {
                 <ListRow label="Last check">{formatLocalDateTime(opsData.last_check ?? null)}</ListRow>
                 {opsData.next_timer && <ListRow label="Next timer">{formatLocalDateTime(opsData.next_timer)}</ListRow>}
                 <ListRow label="Daily summary">{opsData.summary_sent ? "sent" : "pending"}{opsData.state?.last_summary_date ? <span className="text-text-2 font-medium"> · {opsData.state.last_summary_date}</span> : null}</ListRow>
-                {Object.entries(facts).map(([k, v]) => <ListRow key={k} label={k.replace(/_/g, " ")}>{factValue(v)}</ListRow>)}
+                {Object.entries(facts).map(([k, v]) => {
+                  const text = factValue(v);
+                  const bad = /^(down|error|failed|halted|late)$/i.test(text.trim());
+                  // A fault seen only once is not an alert yet; saying so stops a bare "down" from
+                  // contradicting the green ALL CLEAR beside it (audit 2026-09-03).
+                  const unconfirmed = bad && Object.keys(opsData?.pending ?? {}).some((key) => key.startsWith(k));
+                  return (
+                    <ListRow key={k} label={k.replace(/_/g, " ")}>
+                      <span className={cn(bad && "text-rose font-semibold")}>{text}</span>
+                      {unconfirmed && <span className="text-text-2 font-medium"> · seen once, not confirmed</span>}
+                    </ListRow>
+                  );
+                })}
               </ListSection>
               {Object.keys(journal).length > 0 && (
                 <ListSection title="Journal · last 15 min">

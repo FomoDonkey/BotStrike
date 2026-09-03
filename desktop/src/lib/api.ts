@@ -740,6 +740,8 @@ export interface OpsResponse {
   sent?: unknown[];
   summary_sent?: boolean;
   facts?: Record<string, string | number | boolean | null>;
+  /** transient faults seen once and not yet confirmed — not alerts */
+  pending?: Record<string, number>;
   journal_15?: Record<string, number>;
   state?: { last_summary_date?: string; last_alerts?: Record<string, unknown>; [k: string]: unknown };
   next_timer?: string | null;
