@@ -132,7 +132,11 @@ class StrikeWebSocket:
                     await ws.send(json.dumps(sub_msg))
                     logger.info("user_ws_connected", account_id=account_id)
 
-                    await self._listen(ws, "user")
+                    ka = asyncio.create_task(self._keepalive(ws))
+                    try:
+                        await self._listen(ws, "user")
+                    finally:
+                        ka.cancel()
 
             except (websockets.ConnectionClosed, ConnectionError, OSError) as e:
                 logger.warning("user_ws_disconnected", error=str(e))
@@ -141,31 +145,41 @@ class StrikeWebSocket:
                     self._user_reconnect_delay * 2, self._max_reconnect_delay
                 )
 
+    @staticmethod
+    def build_logon(private_key_hex: str, public_key_hex: Optional[str] = None, now_ms: Optional[int] = None) -> Dict:
+        """`session.logon` request exactly as documented (docs/strike/docs__api__user__websocket.md):
+        message = f"session.logon:{timestamp_ms}:{apiKey}", Ed25519-signed with the API wallet seed."""
+        signing_key = SigningKey(bytes.fromhex(private_key_hex.strip()[:64]))
+        api_key = (public_key_hex or signing_key.verify_key.encode().hex()).strip().lower()
+        ts = int(now_ms if now_ms is not None else time.time() * 1000)
+        signature = signing_key.sign(f"session.logon:{ts}:{api_key}".encode()).signature.hex()
+        return {"method": "session.logon", "id": 1, "params": {"apiKey": api_key, "signature": signature, "timestamp": ts}}
+
     async def _authenticate_user_ws(self, ws) -> Optional[str]:
-        """Autentica en el WebSocket de user data."""
-        key_bytes = bytes.fromhex(self.settings.api_private_key[:64])
-        signing_key = SigningKey(key_bytes)
-        ts = str(int(time.time() * 1000))
-        pub_key = self.settings.api_public_key
-        message = f"session.logon:{ts}:{pub_key}"
-        signed = signing_key.sign(message.encode())
-        signature = signed.signature.hex()
-
-        auth_msg = {
-            "method": "auth",
-            "apiKey": pub_key,
-            "signature": signature,
-            "timestamp": ts,
-        }
-        await ws.send(json.dumps(auth_msg))
-
-        # Esperar respuesta de auth
+        """Logon on /ws/user-api. Returns the account_id or None (the response carries status 200 +
+        result.authenticated)."""
+        await ws.send(json.dumps(self.build_logon(self.settings.api_private_key, self.settings.api_public_key)))
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=10)
-            data = json.loads(raw)
-            return data.get("account_id")
+            data = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8", errors="replace"))
         except (asyncio.TimeoutError, json.JSONDecodeError):
             return None
+        if data.get("status") not in (None, 200) or data.get("error"):
+            logger.error("user_ws_logon_rejected", response=str(data)[:200])
+            return None
+        result = data.get("result") or data
+        if result.get("authenticated") is False:
+            return None
+        return result.get("account_id") or data.get("account_id")
+
+    async def _keepalive(self, ws) -> None:
+        """App-level ping every 30 s (the server also sends protocol pings every 54 s)."""
+        while True:
+            await asyncio.sleep(30)
+            try:
+                await ws.send(json.dumps({"method": "ping", "id": "hb"}))
+            except Exception:  # noqa: BLE001 — the read loop will notice the closed socket
+                return
 
     # ── Listener genérico ──────────────────────────────────────────
 
@@ -183,6 +197,8 @@ class StrikeWebSocket:
                 except json.JSONDecodeError:
                     continue
 
+                if data.get("method") == "pong" or (data.get("id") is not None and "e" not in data and "result" in data):
+                    continue                                  # keepalive / subscribe ack
                 # Determinar canal/event para dispatch
                 event_type = data.get("e") or data.get("channel") or stream_type
                 await self._dispatch(event_type, data)

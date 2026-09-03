@@ -190,7 +190,11 @@ class BotStrike:
         # Inicializar datos de mercado
         await self.market_data.initialize()
 
-        # Seed with Binance klines for immediate chart data (6h of 1m candles)
+        # Seed with venue klines for immediate chart data (6h of 1m candles)
+        if not self.use_binance and self._venue == ExchangeVenue.STRIKE:
+            seed_hours = self._seed_hours()
+            for sym_config in self.settings.symbols:
+                await self.market_data.seed_from_strike(sym_config.symbol, sym_config, self.client, hours=seed_hours)
         if self.use_binance:
             seed_hours = self._seed_hours()
             for sym_config in self.settings.symbols:

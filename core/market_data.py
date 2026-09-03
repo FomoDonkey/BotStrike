@@ -138,17 +138,40 @@ class MarketDataCollector:
             if not data:
                 return
 
-            rows = []
-            for k in data:
-                rows.append({
-                    "timestamp": int(k[0]) / 1000,  # ms → seconds
-                    "open": float(k[1]),
-                    "high": float(k[2]),
-                    "low": float(k[3]),
-                    "close": float(k[4]),
-                    "volume": float(k[5]),
-                })
+            rows = self._kline_rows(data)
+            self._seed_rows(symbol, sym_config, rows, source="binance", hours=hours)
+        except Exception as e:
+            logger.warning("binance_seed_error", symbol=symbol, error=str(e))
 
+    @staticmethod
+    def _kline_rows(data) -> list:
+        """Binance/Strike kline arrays [[openTime(ms), o, h, l, c, v, …], …] → row dicts."""
+        rows = []
+        for k in data:
+            rows.append({
+                "timestamp": int(k[0]) / 1000,  # ms → seconds
+                "open": float(k[1]), "high": float(k[2]), "low": float(k[3]), "close": float(k[4]),
+                "volume": float(k[5]),
+            })
+        return rows
+
+    async def seed_from_strike(self, symbol: str, sym_config: SymbolConfig, client, hours: int = 6) -> None:
+        """Seed 1m candles from Strike's public klines (venue = strike, paper or live). Strike symbols
+        are native (XAU-USD, SP500-USD…), no mapping. Falls back silently on error."""
+        try:
+            limit = min(max(hours * 60, 60), 1500)
+            data = await client.get_klines(symbol, interval="1m", limit=limit)
+            if not data:
+                logger.warning("strike_seed_empty", symbol=symbol)
+                return
+            self._seed_rows(symbol, sym_config, self._kline_rows(data), source="strike", hours=hours)
+        except Exception as e:
+            logger.warning("strike_seed_error", symbol=symbol, error=str(e))
+
+    def _seed_rows(self, symbol: str, sym_config: SymbolConfig, rows: list, source: str, hours: int) -> None:
+        try:
+            if not rows:
+                return
             df = pd.DataFrame(rows)
             df = Indicators.compute_all(df, {
                 "ema_fast": sym_config.tf_ema_fast,
@@ -176,7 +199,8 @@ class MarketDataCollector:
             # strategy until first WS tick arrives (prevents seed-then-stale gap)
             self._last_data_time[symbol] = time.time()
 
-            logger.info("binance_seed_loaded", symbol=symbol, bars=len(df), hours=hours)
+            logger.info("binance_seed_loaded" if source == "binance" else "strike_seed_loaded",
+                        symbol=symbol, bars=len(df), hours=hours)
 
         except Exception as e:
             logger.warning("binance_seed_error", symbol=symbol, error=str(e))
