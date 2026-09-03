@@ -29,6 +29,7 @@ from exchange.websocket_client import StrikeWebSocket
 from strategies.mean_reversion import MeanReversionStrategy
 from strategies.fibonacci_retracement import FibonacciRetracementStrategy
 from strategies.divergence import DivergenceStrategy
+from analytics.funding import FundingAccrual
 from strategies.base import BaseStrategy
 from risk.risk_manager import RiskManager
 from risk.persistence import compute_historical_risk_state, restore_risk_state
@@ -119,6 +120,10 @@ class BotStrike:
 
         # Trade Database — almacenamiento persistente de trades
         self.trade_repo = TradeRepository("data/trade_database.db")
+        # Perpetual funding accrual (paper): state survives restarts so a settlement is never
+        # charged twice nor silently skipped (analytics/funding.py).
+        self.funding = FundingAccrual.load(
+            interval_hours=int(getattr(settings.trading, "funding_interval_hours", 8) or 8))
         self.trade_db = TradeDBAdapter(
             self.trade_repo, source="paper" if self.paper else "live"
         )
@@ -230,6 +235,7 @@ class BotStrike:
             asyncio.create_task(self._risk_monitor_loop()),
             asyncio.create_task(self._data_refresh_loop()),
             asyncio.create_task(self._metrics_loop()),
+            asyncio.create_task(self._funding_loop()),
         ]
         if self.trend_engine is not None:
             tasks.append(asyncio.create_task(self.trend_engine.run_loop()))
@@ -840,6 +846,66 @@ class BotStrike:
             except Exception as e:
                 logger.error("risk_loop_error", error=str(e))
                 await asyncio.sleep(5)
+
+    def _funding_positions(self) -> list:
+        """Every open perpetual position that pays funding: paper strategies + the trend book."""
+        rows: list = []
+        if self.paper_sim is not None:
+            for p in self.paper_sim.get_position_details():
+                rows.append({"symbol": p["symbol"], "side": p["side"], "notional": p["notional"],
+                             "mark_price": p["mark_price"], "size": p["size"], "strategy": p.get("strategy") or ""})
+        trend = getattr(self, "trend_engine", None)
+        if trend is not None:
+            try:
+                for p in (trend.status().get("positions") or []):
+                    rows.append({"symbol": p.get("ui_symbol") or p.get("symbol"), "side": "BUY",
+                                 "notional": float(p.get("notional") or 0.0), "mark_price": float(p.get("mark_price") or 0.0),
+                                 "size": float(p.get("size") or 0.0), "strategy": "TREND_DAILY"})
+            except Exception as e:  # noqa: BLE001
+                logger.warning("funding_trend_positions_unavailable", error=str(e))
+        return rows
+
+    def _funding_rates(self) -> dict:
+        """Latest funding rate per symbol from the market snapshots (venue truth)."""
+        out = {}
+        for sym in self.settings.symbol_names:
+            snap = self.market_data.get_snapshot(sym)
+            if snap is not None and snap.funding_rate:
+                out[sym] = float(snap.funding_rate)
+        return out
+
+    async def _funding_loop(self) -> None:
+        """Settle perpetual funding on open positions (paper). Live mode gets funding from the
+        exchange itself, so this only runs in paper/dry-run."""
+        if not getattr(self.settings.trading, "funding_enabled", True) or not self.paper:
+            return
+        self.funding.interval_hours = int(getattr(self.settings.trading, "funding_interval_hours", 8) or 8)
+        self.funding.start()
+        while self._running:
+            await asyncio.sleep(60)
+            try:
+                now = time.time()
+                if not self.funding.due(now):
+                    continue
+                payments = self.funding.compute(self._funding_positions(), self._funding_rates(), now)
+                total = self.funding.mark_settled(payments, now)
+                if not payments:
+                    continue
+                equity_before = self.risk_manager.current_equity
+                new_equity = equity_before + total
+                await self.risk_manager.update_equity_safe(new_equity)
+                self.metrics.update_equity(new_equity)
+                await self.risk_manager.record_trade_result_safe(total, strategy=None)
+                for p in payments:
+                    self.trade_db.on_funding(symbol=p.symbol, amount=p.amount, rate=p.rate, notional=p.notional,
+                                             mark_price=p.mark_price, strategy=p.strategy, periods=p.periods,
+                                             equity_before=equity_before, equity_after=new_equity, ts=p.ts)
+                logger.info("funding_settled", total=round(total, 6), positions=len(payments),
+                            cumulative=round(self.funding.total_paid, 4))
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 — funding must never kill the engine
+                logger.error("funding_loop_error", error=str(e))
 
     async def _data_refresh_loop(self) -> None:
         """Refresca datos de mercado periódicamente via REST (backup de WS)."""

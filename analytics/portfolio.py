@@ -64,9 +64,12 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
                       fees_taker: float = 0.0004, fees_maker: float = 0.0002) -> Dict[str, Any]:
     initial = _f(initial_capital)
     rows = sorted(trades, key=lambda t: _f(getattr(t, "timestamp", 0.0)))
-    closes = [t for t in rows if (getattr(t, "trade_type", "") or "ENTRY") != "ENTRY"]
-    fills_notional = [_f(getattr(t, "price", 0.0)) * _f(getattr(t, "quantity", 0.0)) for t in rows]
-    realized = sum(_f(t.pnl) for t in closes)
+    closes = [t for t in rows if (getattr(t, "trade_type", "") or "ENTRY") not in ("ENTRY", "FUNDING")]
+    funding_rows = [t for t in rows if (getattr(t, "trade_type", "") or "") == "FUNDING"]
+    funding_paid = sum(_f(t.pnl) for t in funding_rows)
+    fills_notional = [(_f(getattr(t, "price", 0.0)) * _f(getattr(t, "quantity", 0.0))
+                       if (getattr(t, "trade_type", "") or "") != "FUNDING" else 0.0) for t in rows]
+    realized = sum(_f(t.pnl) for t in closes) + funding_paid
     fees_paid = sum(_f(getattr(t, "fee", 0.0)) for t in rows)
     volume = sum(fills_notional)
     since_ts = _f(rows[0].timestamp) if rows else now_ts
@@ -82,7 +85,10 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
         r = day_row(_day(t.timestamp))
         r["volume"] += notional
         r["fees"] += _f(getattr(t, "fee", 0.0))
-        if (getattr(t, "trade_type", "") or "ENTRY") != "ENTRY":
+        ttype = getattr(t, "trade_type", "") or "ENTRY"
+        if ttype == "FUNDING":
+            r["pnl"] += _f(t.pnl)          # moves the equity curve, but is not a trade
+        elif ttype != "ENTRY":
             r["pnl"] += _f(t.pnl)
             r["trades"] += 1
 
@@ -162,7 +168,7 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
     by_strategy = []
     for s in strategies:
         srows = [t for t in rows if str(getattr(t, "strategy", "") or "") == s]
-        sc = [t for t in srows if (getattr(t, "trade_type", "") or "ENTRY") != "ENTRY"]
+        sc = [t for t in srows if (getattr(t, "trade_type", "") or "ENTRY") not in ("ENTRY", "FUNDING")]
         pnls = [_f(t.pnl) for t in sc]
         gp = sum(p for p in pnls if p > 0)
         gl = -sum(p for p in pnls if p < 0)
@@ -205,6 +211,7 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
         "equity": round(_f(equity), 4), "cash": round(_f(equity) - _f(margin_used), 4), "margin_used": round(_f(margin_used), 4),
         "unrealized_pnl": round(_f(unrealized_pnl), 4), "realized_pnl": round(realized, 4),
         "alltime_pnl": round(realized + _f(unrealized_pnl), 4), "alltime_volume": round(volume, 2), "fees_paid": round(fees_paid, 4),
+        "funding_paid": round(funding_paid, 6),
         "leverage": round(sum(_f(p.get("notional")) for p in positions) / _f(equity), 6) if _f(equity) > 0 else 0.0,
         "margin_usage": round(_f(margin_used) / _f(equity), 6) if _f(equity) > 0 else 0.0,
         "trend_book_notional": round(trend_book, 4),

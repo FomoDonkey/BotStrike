@@ -130,6 +130,29 @@ class TradeDBAdapter:
                      trades=self._trade_count,
                      pnl=round(self._total_pnl, 2))
 
+    # ── Funding (flujo de caja, no un trade) ─────────────────────────
+
+    def on_funding(self, symbol: str, amount: float, rate: float, notional: float, mark_price: float = 0.0,
+                   strategy: str = "", periods: int = 1, equity_before: float = 0.0, equity_after: float = 0.0,
+                   ts: float = 0.0) -> None:
+        """Persist a funding settlement as trade_type='FUNDING'.
+
+        It moves equity like a realized PnL (risk/persistence sums it) but the analytics exclude it
+        from trade statistics (win rate, PF, Sharpe) — see analytics/funding.py.
+        """
+        import time as _t
+        record = TradeRecord(
+            session_id=self._session_id, source=self.source, symbol=symbol,
+            side="FUNDING", price=float(mark_price or 0.0), quantity=0.0, fee=0.0, fee_asset="USD",
+            pnl=float(amount), order_id=f"funding_{int(ts or _t.time())}", strategy=strategy or "",
+            regime="", trade_type="FUNDING", equity_before=equity_before, equity_after=equity_after,
+            entry_price=float(mark_price or 0.0), exit_price=float(mark_price or 0.0), duration_sec=0.0,
+            signal_strength=float(rate), spread_bps=0.0, atr=0.0,
+            pnl_pct=(float(amount) / notional if notional else 0.0),
+            timestamp=float(ts or _t.time()),
+        )
+        self.repo.insert_trade(record)
+
     # ── Registrar trades desde live trading ──────────────────────────
 
     def on_trade(

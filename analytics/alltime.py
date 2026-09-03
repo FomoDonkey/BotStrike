@@ -27,10 +27,13 @@ def compute_alltime_performance(trade_repo, initial_capital: float,
     try:
         initial = float(initial_capital)
         trades = trade_repo.get_trades(source=source)
-        closes = [t for t in trades if t.trade_type and t.trade_type != "ENTRY"]
+        closes = [t for t in trades if t.trade_type and t.trade_type not in ("ENTRY", "FUNDING")]
+        # Funding is a realized cash flow, not a trade: it moves equity but must not pollute
+        # win rate / PF / Sharpe (roadmap P0.1).
+        funding_total = sum(float(t.pnl or 0.0) for t in trades if t.trade_type == "FUNDING")
         if not closes:
             return {
-                "initial_capital": initial, "total_trades": 0, "pnl": 0.0,
+                "initial_capital": initial, "total_trades": 0, "pnl": funding_total, "funding_paid": funding_total,
                 "win_rate": 0.0, "sharpe_ratio": 0.0, "sortino_ratio": 0.0,
                 "max_drawdown": 0.0, "total_fees": 0.0, "avg_win": 0.0,
                 "avg_loss": 0.0, "profit_factor": 0.0, "expectancy": 0.0,

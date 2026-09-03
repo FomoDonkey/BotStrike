@@ -1603,6 +1603,9 @@ async def get_account():
         return {"engine": False, "mode": state.mode, "initial_capital": s.trading.initial_capital}
     out = _account_overview(engine)
     out["engine"] = True
+    acc = getattr(engine, "funding", None)
+    if acc is not None:
+        out["funding_paid"] = round(float(acc.total_paid), 6)
     return _json_safe(out)
 
 
@@ -1721,6 +1724,27 @@ async def get_funding_history(symbol: str, limit: int = 200):
            "source": "binance_fapi", "cached_at": now}
     _FUNDING_CACHE[(symbol, limit)] = out
     return out
+
+
+@app.get("/api/funding")
+async def get_funding():
+    """Perpetual funding accrued on the paper book (analytics/funding.py): cumulative cost, per
+    symbol, recent settlements, and the live rate per symbol with its annualized equivalent."""
+    engine = state.engine
+    if not engine:
+        return {"engine": False, "enabled": bool(getattr(_config_settings().trading, "funding_enabled", True))}
+    from analytics.funding import annualized_pct
+    acc = getattr(engine, "funding", None)
+    out = acc.status() if acc is not None else {"enabled": False}
+    out["enabled"] = bool(getattr(engine.settings.trading, "funding_enabled", True))
+    out["engine"] = True
+    rates = {}
+    for sym in engine.settings.symbol_names:
+        snap = engine.market_data.get_snapshot(sym)
+        rate = float(snap.funding_rate) if snap is not None and snap.funding_rate else 0.0
+        rates[sym] = {"rate": rate, "annualized_pct": round(annualized_pct(rate, out.get("interval_hours", 8)), 6)}
+    out["rates"] = rates
+    return _json_safe(out)
 
 
 @app.get("/api/ops")

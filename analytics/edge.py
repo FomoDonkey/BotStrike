@@ -111,7 +111,7 @@ def compute_edge_stats(trade_repo, source: str = "paper", window: int = 200,
     except Exception as e:
         logger.warning("edge_stats_unavailable", error=str(e), error_type=type(e).__name__)
         trades = []
-    closes = [t for t in trades if t.trade_type and t.trade_type != "ENTRY"]
+    closes = [t for t in trades if t.trade_type and t.trade_type not in ("ENTRY", "FUNDING")]
     closes.sort(key=lambda t: float(t.timestamp or 0.0))
     by_strategy: Dict[str, List[Any]] = {}
     for t in closes:

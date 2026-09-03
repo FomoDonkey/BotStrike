@@ -40,6 +40,7 @@ def compute_historical_risk_state(trade_repo, initial_capital: float, source: st
     except Exception as e:
         logger.warning("risk_history_unavailable", error=str(e), error_type=type(e).__name__)
         return HistoricalRiskState(initial, initial, 0.0, 0.0, 0)
+    # FUNDING rows are cash flows: they count towards equity/day/week PnL exactly like a closed trade
     closes = [t for t in trades if t.trade_type and t.trade_type != "ENTRY"]
     closes.sort(key=lambda t: float(t.timestamp or 0.0))
     today = datetime.fromtimestamp(now, timezone.utc)

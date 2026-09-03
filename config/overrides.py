@@ -72,6 +72,11 @@ GROUPS: List[Dict[str, Any]] = [
         _t("compounding_enabled", "Compound gains", "bool",
            help="Size positions on the all-time equity (initial capital + realized PnL) so gains are reinvested. "
                 "Off = always size on the fixed initial capital."),
+        _t("funding_enabled", "Charge perpetual funding", "bool",
+           help="Every 8 h, open positions pay (or receive) the venue funding rate on their notional. Measured "
+                "on Binance over 166 days: longs paid 1.2-3.2 %/yr of notional. Off = paper ignores funding."),
+        _t("funding_interval_hours", "Funding interval (hours)", "int", min=1, max=24, step=1, unit="h",
+           help="Settlement period of the venue. Binance and Strike both use 8 h."),
         _t("max_drawdown_pct", "Max drawdown from peak", "percent", min=0.01, max=0.5, step=0.005,
            help="Halt and flatten when equity falls this far below its all-time peak (persisted across restarts)."),
         _t("max_daily_loss_pct", "Max daily loss", "percent", min=0.005, max=0.5, step=0.005,
