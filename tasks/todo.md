@@ -1590,3 +1590,22 @@ los activos, y que los colores (verde / rojo / neutro) son correctos.
       verde #4EFAB0 = te lo pagan (ETH, ZEC), blanco = cero exacto (XAU, XAG, SP500, WTI, NAS100).
       Strike pinta todo en verde sin importar el signo, así que allí el color no informa; aquí sí, y
       el gráfico lleva leyenda para no depender de recordarlo
+
+## Funding: color alineado al venue y universo completo de mercados (2026-09-04, ronda 5)
+Edgar, con las dos terminales abiertas, tenía razón en las tres cosas:
+- [x] **El número estaba caducado**: la caché del venue duraba 10 min y la tasa se mueve cada minuto,
+      así que la pantalla enseñaba un valor viejo (0,0034 % frente a 0,0027 % de Strike). TTL a 15 s,
+      y el panel muestra la edad de la cotización para que cualquier diferencia sea un dato y no una duda
+- [x] **El color estaba al revés que el venue Y que nuestro propio selector**: Strike colorea por SIGNO
+      (positivo verde, negativo rojo) y dice la dirección en palabras. Nuestro selector ya iba por
+      signo mientras cabecera, panel y gráfico iban por coste. Todo alineado al signo, y la dirección
+      ("Long pays short" / "Short pays long") va escrita bajo el número, en la fila Direction del
+      detalle y en las leyendas — las palabras no dependen de la paleta a la que estés acostumbrado
+- [x] **El selector solo listaba 4 criptos** teniendo el libro oro, plata, S&P y petróleo abiertos.
+      Nuevo `GET /api/markets` con los 31 mercados del venue, etiquetados: feed / candidato del pool /
+      posición abierta, ordenados por eso, con "daily only" y la tasa del venue en cada uno
+- [x] Elegir un mercado sin feed ya no deja un gráfico vacío sin explicación
+- [x] Columna del selector rotulada "8H Funding" en un venue horario, y se salía del borde
+- [x] Verificado siguiendo los 31 mercados en el tiempo: 26/31 imprimen los mismos 4 decimales en
+      todas las muestras; los 5 más volátiles difieren como mucho 1,6 unidades del último decimal,
+      que es el desfase de muestreo de un valor que cambia cada segundo
