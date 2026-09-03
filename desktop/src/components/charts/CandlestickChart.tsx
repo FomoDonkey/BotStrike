@@ -101,6 +101,13 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
             scaleMargins: { top: 0.08, bottom: 0.24 },
             minimumWidth: CHART_THEME.priceScaleWidth,
           },
+          // lightweight-charts labels the axis in UTC, while every table on these screens uses the
+          // reader's local clock: the same fill read 19:07 on the chart and 21:07 in Trade History
+          // (audit 2026-09-03). One clock, the reader's, everywhere.
+          localization: {
+            timeFormatter: (t: number) =>
+              new Date(t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }),
+          },
           timeScale: {
             borderColor: CHART_THEME.border,
             timeVisible: true,
@@ -109,6 +116,12 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
             barSpacing: 6,          // Compact bars to show more candles
             fixLeftEdge: false,
             fixRightEdge: false,
+            tickMarkFormatter: (t: number, tickType: number) => {
+              const d = new Date(t * 1000);
+              // 0 Year · 1 Month · 2 DayOfMonth · 3 Time · 4 TimeWithSeconds
+              if (tickType <= 2) return d.toLocaleDateString([], { month: "short", day: "numeric" });
+              return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+            },
           },
           handleScroll: { vertTouchDrag: false },
         });

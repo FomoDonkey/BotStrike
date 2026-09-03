@@ -15,10 +15,10 @@ import { formatCountdown, PAPER_MAINTENANCE_MARGIN, positionNotional } from "@/l
 const CONFIG_POLL_MS = 60_000;
 
 const ABOUT: Record<string, string> = {
-  "BTC-USD": "Bitcoin perpetual (USDT-margined on Binance Futures). The largest and most liquid crypto market; the bot's regime reference symbol.",
-  "ETH-USD": "Ether perpetual (USDT-margined on Binance Futures). Second by liquidity; trades in the same trend and mean-reversion books as BTC.",
-  "SOL-USD": "Solana perpetual (USDT-margined on Binance Futures). Higher beta than BTC/ETH — wider ATR stops and smaller sizes.",
-  "ADA-USD": "Cardano perpetual (USDT-margined on Binance Futures). Lower price, larger contract sizes; same risk rules as the other symbols.",
+  "BTC-USD": "Bitcoin perpetual. The largest and most liquid crypto market; the bot's regime reference symbol. Prices from Binance Futures, execution on Strike.",
+  "ETH-USD": "Ether perpetual. Second by liquidity; trades in the same trend and mean-reversion books as BTC. Prices from Binance Futures, execution on Strike.",
+  "SOL-USD": "Solana perpetual. Higher beta than BTC/ETH — wider ATR stops and smaller sizes. Prices from Binance Futures, execution on Strike.",
+  "ADA-USD": "Cardano perpetual. Lower price, larger contract sizes; same risk rules as the other symbols. Prices from Binance Futures, execution on Strike.",
 };
 
 /** Details tab (spec §3.1): About · Order size rules · Funding & fees · Price protection · Regime parameters. */
@@ -48,7 +48,10 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
           <ListSection title={`About ${symbol}`} first>
             <p className="text-[13px] font-medium text-text leading-relaxed">{ABOUT[symbol] ?? `${base} perpetual on ${EXCHANGE_LABELS[exchange] ?? exchange}.`}</p>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[12.5px]">
-              <span className="font-medium text-text-2">Venue <span className="text-text font-semibold">{EXCHANGE_LABELS[exchange] ?? exchange}</span></span>
+              {/* This is where the PRICES come from. Execution is Strike; calling the feed "Venue"
+                  on a page about a market the bot trades elsewhere reads as the wrong claim. */}
+              <span className="font-medium text-text-2">Price feed <span className="text-text font-semibold">{EXCHANGE_LABELS[exchange] ?? exchange}</span></span>
+              <span className="font-medium text-text-2">Execution <span className="text-text font-semibold">Strike · paper</span></span>
               <span className="font-medium text-text-2">Type <span className="text-text font-semibold">Perpetual · paper</span></span>
               <span className="font-medium text-text-2">Base / quote <span className="text-text font-semibold">{base} / USD</span></span>
               {strategies && strategies.length > 0 && (
