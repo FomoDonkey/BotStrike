@@ -1567,3 +1567,26 @@ interfaz carga entera. Encontrado clicando, no con scripts:
 - [x] Riesgo: "0% used" y "100%" en la misma barra, dos porcentajes contradictorios
 - [x] Estrategias: etiqueta "Mean gross" truncada a "Mea..." a 1536 px
 - [x] Verificado: 8/8 rutas limpias a 1440 y 390, contraste 0, 295 tests, 0 textos obsoletos
+
+## Contraste del funding contra Strike, activo por activo (2026-09-03, ronda 4)
+Petición: verificar visualmente contra la UI de Strike que el funding está bien integrado, en todos
+los activos, y que los colores (verde / rojo / neutro) son correctos.
+- [x] **La cuenta real de Edgar en Strike lo confirma**: su historial de funding muestra pagos EN PUNTO
+      CADA HORA (2:00, 3:00, 4:00 … 10:00 AM) sobre un corto de ADA, cobrando con tasa positiva y
+      pagando con negativa
+- [x] **El tooltip de Strike lo dice literalmente**: "Interval 1h", "Funding is paid every hour, on the
+      hour (UTC)", "The 8H figure is the base rate — each hourly payment is one eighth of it" — que es
+      exactamente el escalado `interval_hours / 8` implementado para el feed
+- [x] Su "Annualized Funding Rate 26.22%" contra el 26.4 %/yr del bot en el mismo momento: la fórmula
+      de anualización coincide con la del venue
+- [x] **12 de 12 mercados comprobados a la vez**: tasa idéntica a 4 decimales y 167 liquidaciones de
+      histórico con acumulado idéntico en los doce
+- [x] El WebSocket enviaba la tasa de 8 h del feed: la cabecera marcaba +0,0079 % donde el venue decía
+      +0,0016 % durante los segundos previos al REST. Ahora el socket cita la tasa del venue
+- [x] La caché del venue es de 10 min: bien para el panel, mal para el COBRO. La liquidación horaria
+      fuerza ahora una lectura fresca (en un hilo, fuera del bucle de eventos)
+- [x] Los candidatos del pool (BNB, NAS100, XRP, ZEC) no tenían tasa en ninguna pantalla
+- [x] Colores verificados por color computado: rosa #F43F5E = lo pagas (BTC, SOL, ADA, BNB, XRP),
+      verde #4EFAB0 = te lo pagan (ETH, ZEC), blanco = cero exacto (XAU, XAG, SP500, WTI, NAS100).
+      Strike pinta todo en verde sin importar el signo, así que allí el color no informa; aquí sí, y
+      el gráfico lleva leyenda para no depender de recordarlo

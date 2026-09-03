@@ -1199,3 +1199,15 @@
   "cuánto puede caer" y no "¿me llevo el beneficio?".
 - **LESSON: una métrica de salida hay que medirla contra la ENTRADA, que es donde se decide el
   resultado, además de contra el precio de hoy.**
+
+### El venue documenta lo que tú estabas deduciendo
+- Pasando el ratón por el número de funding en Strike aparece: "Interval 1h", "Funding is paid every
+  hour, on the hour (UTC)" y "The 8H figure is the base rate — each hourly payment is one eighth of
+  it". Es exactamente el modelo y el escalado que había deducido midiendo su API.
+- **LESSON: antes de deducir el comportamiento de un venue desde sus datos, mirar su propia UI con el
+  ratón encima. El tooltip que nadie lee suele ser la especificación.**
+
+### Una caché que vale para mirar no vale para cobrar
+- La tasa del venue se cacheaba 10 minutos. BTC pasó de 0,0020 % a 0,0027 % en cuatro minutos: el
+  panel puede ir con retraso, el asiento contable no.
+- **LESSON: separar la frescura que necesita una pantalla de la que necesita un apunte contable.**
