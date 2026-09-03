@@ -52,6 +52,9 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
+VENUE_FUNDING_TTL_SEC = 45      # the funding loop runs every 60 s, so this refreshes every pass
+
+
 class BotStrike:
     """Orquestador principal del sistema de trading."""
 
@@ -897,7 +900,12 @@ class BotStrike:
         settlement must be priced with the rate that is live at the settlement instant.
         """
         now = time.time()
-        if not force and self._venue_funding and now - self._venue_funding_ts < 600:
+        # 45 s, not 600: the funding loop refreshes on every pass (60 s), so the panel tracks the
+        # venue instead of showing a rate up to ten minutes old. Edgar caught exactly that on
+        # 2026-09-03 — our screen said 0.0034 % while Strike's said 0.0027 %, because the venue had
+        # moved and we were still displaying the cached value. One premiumIndex call a minute is
+        # nothing; a wrong number on screen is not.
+        if not force and self._venue_funding and now - self._venue_funding_ts < VENUE_FUNDING_TTL_SEC:
             return {s: r for s, r in self._venue_funding.items() if s in symbols}
         try:
             import json as _json

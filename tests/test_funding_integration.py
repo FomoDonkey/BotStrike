@@ -237,3 +237,34 @@ def test_the_settlement_is_priced_with_a_fresh_rate_not_a_cached_one():
     assert m.BotStrike._funding_rates(eng)["BTC-USD"] == pytest.approx(1.0e-05)          # panel: cached
     assert m.BotStrike._funding_rates(eng, force=True)["BTC-USD"] == pytest.approx(2.7e-05)  # charge: live
     assert calls == [False, True]
+
+
+def test_the_displayed_rate_cannot_be_ten_minutes_old():
+    """Edgar had both screens open on 2026-09-03: ours said 0.0034 % while Strike's said 0.0027 %.
+    The rate was right when cached and the cache lived for ten minutes, so the screen was stale."""
+    import main as m
+    assert m.VENUE_FUNDING_TTL_SEC <= 60, "the funding loop runs every 60 s: a longer TTL shows a stale rate"
+
+
+def test_a_forced_fetch_ignores_the_cache_however_fresh_it_is(monkeypatch):
+    import main as m
+    from types import SimpleNamespace as NS
+
+    calls = []
+    eng = object.__new__(m.BotStrike)
+    eng._venue_funding = {"BTC-USD": 1.0e-05}
+    eng._venue_funding_ts = 9e18                       # cache from the future: always "fresh"
+
+    def fake_urlopen(req, timeout=0):
+        calls.append(req.full_url)
+        class R:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return b'[{"symbol": "BTC-USD", "fundingRate": "0.000027"}]'
+        return R()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    assert m.BotStrike._venue_funding_rates(eng, {"BTC-USD"})["BTC-USD"] == pytest.approx(1.0e-05)  # cached
+    assert calls == []
+    assert m.BotStrike._venue_funding_rates(eng, {"BTC-USD"}, force=True)["BTC-USD"] == pytest.approx(2.7e-05)
+    assert len(calls) == 1

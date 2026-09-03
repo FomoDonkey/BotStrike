@@ -45,6 +45,13 @@ export function FundingBlock({ funding }: { funding: EndpointState<FundingRespon
       ) : (
         <div className="flex flex-col gap-1 pt-1">
           <p className="text-[12px] font-medium text-text-2">Annualised rate per market: this settlement extrapolated to a year, next to the 90-day median measured on the venue. Outlined = open position; the rest are candidates the daily run may buy.</p>
+          {/* Strike paints every funding figure in its brand mint, sign or not. Ours takes the side of
+              a long-only book, so the colour must say what it means where the numbers are. */}
+          <p className="text-[12px] font-medium text-text-2 flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-rose" />the book pays</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-mint" />the book is paid</span>
+            <span className="opacity-70">the venue shows the same rate without a sign colour</span>
+          </p>
           <div className="flex flex-wrap gap-1.5">
             {rates.map(([sym, r]) => (
               <span key={sym} className={cn("inline-flex items-baseline gap-1 rounded-[6px] px-2 py-1",
