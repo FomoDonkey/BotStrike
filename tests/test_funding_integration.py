@@ -137,3 +137,25 @@ def test_alltime_pnl_and_equity_curve_include_funding():
     only_funding = [r for r in ROWS if r.trade_type != "EXIT"]
     q = compute_alltime_performance(_repo(only_funding), 1000.0, source="paper")
     assert q["total_trades"] == 0 and q["pnl"] == pytest.approx(-0.5)
+
+
+def test_funding_panel_shows_what_the_engine_charges(monkeypatch):
+    """The panel annualised Binance's 8 h rate on the venue's hourly clock (87 %/yr for BTC), listed
+    markets the book does not hold and omitted four it does (audit 2026-09-03)."""
+    from types import SimpleNamespace as NS
+    from server import bridge
+
+    eng = NS(
+        _venue_funding={"BTC-USD": 1.88e-05, "XAU-USD": 0.0},
+        settings=NS(symbol_names=["BTC-USD", "ETH-USD"], trading=NS(funding_interval_hours=1)),
+        market_data=NS(get_snapshot=lambda s: NS(funding_rate=0.0001)),
+        _funding_positions=lambda: [{"symbol": "BTC-USD"}, {"symbol": "XAU-USD"}],
+    )
+    r = bridge._live_funding_rates(eng, 1)
+
+    assert set(r) == {"BTC-USD", "ETH-USD", "XAU-USD"}          # every held market is present
+    assert r["BTC-USD"]["rate"] == pytest.approx(1.88e-05) and r["BTC-USD"]["source"] == "venue"
+    assert r["BTC-USD"]["annualized_pct"] == pytest.approx(0.1647, abs=1e-4)   # 16.5 %/yr, not 87 %
+    assert r["XAU-USD"]["rate"] == 0.0 and r["XAU-USD"]["held"] is True        # a zero rate is shown
+    assert r["ETH-USD"]["held"] is False
+    assert r["ETH-USD"]["rate"] == pytest.approx(0.0001 / 8)     # the feed's 8 h rate, scaled

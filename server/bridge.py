@@ -1859,6 +1859,33 @@ async def set_risk_profile(body: dict):
                        "restart_required": bool(restart_now), "describe": rp.describe(name)})
 
 
+def _live_funding_rates(engine, interval_hours: int) -> dict:
+    """The rate each market is charged at, as the ENGINE charges it — never a different number.
+
+    Before this (audit 2026-09-03) the panel read the intraday feed only: it annualised Binance's
+    8-hour rate on the venue's hourly clock (87 %/yr for BTC), listed two markets the book does not
+    hold and omitted the four it does. Reads cached state only: no network call in a request handler.
+    """
+    from analytics.funding import annualized_pct
+    venue = dict(getattr(engine, "_venue_funding", {}) or {})
+    scale = max(1, int(interval_hours)) / 8.0          # the feed quotes an 8 h rate
+    try:
+        held = {str(p.get("symbol")) for p in (engine._funding_positions() or [])}
+    except Exception:  # noqa: BLE001 - a display figure must not break the endpoint
+        held = set()
+    out = {}
+    for sym in sorted(held | set(getattr(engine.settings, "symbol_names", []) or [])):
+        if sym in venue:
+            rate, source = float(venue[sym] or 0.0), "venue"
+        else:
+            snap = engine.market_data.get_snapshot(sym)
+            raw = float(snap.funding_rate) if snap is not None and snap.funding_rate else 0.0
+            rate, source = raw * scale, ("feed" if raw else "none")
+        out[sym] = {"rate": rate, "annualized_pct": round(annualized_pct(rate, interval_hours), 6),
+                    "held": sym in held, "source": source}
+    return out
+
+
 @app.get("/api/funding")
 async def get_funding():
     """Perpetual funding accrued on the paper book (analytics/funding.py): cumulative cost, per
@@ -1871,12 +1898,7 @@ async def get_funding():
     out = acc.status() if acc is not None else {"enabled": False}
     out["enabled"] = bool(getattr(engine.settings.trading, "funding_enabled", True))
     out["engine"] = True
-    rates = {}
-    for sym in engine.settings.symbol_names:
-        snap = engine.market_data.get_snapshot(sym)
-        rate = float(snap.funding_rate) if snap is not None and snap.funding_rate else 0.0
-        rates[sym] = {"rate": rate, "annualized_pct": round(annualized_pct(rate, out.get("interval_hours", 8)), 6)}
-    out["rates"] = rates
+    out["rates"] = _live_funding_rates(engine, int(out.get("interval_hours") or 1))
     return _json_safe(out)
 
 

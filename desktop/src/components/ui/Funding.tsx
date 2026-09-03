@@ -23,7 +23,9 @@ export const FUNDING_COPY =
 export function FundingBlock({ funding }: { funding: EndpointState<FundingResponse> }) {
   const now = useNow();
   const f = funding.data;
-  const rates = Object.entries(f?.rates ?? {});
+  // Markets the book actually holds first: those are the rates it is paying right now.
+  const rates = Object.entries(f?.rates ?? {}).sort(
+    (a, b) => Number(b[1].held ?? false) - Number(a[1].held ?? false) || a[0].localeCompare(b[0]));
   const left = secondsToSettlement(f?.next_settlement_utc, now);
   const interval = f?.interval_hours ?? 8;
 
@@ -42,10 +44,12 @@ export function FundingBlock({ funding }: { funding: EndpointState<FundingRespon
         </p>
       ) : (
         <div className="flex flex-col gap-1 pt-1">
-          <p className="text-[12px] font-medium text-text-2">Annualised rate per market — what holding costs at today's rate.</p>
+          <p className="text-[12px] font-medium text-text-2">Annualised rate per market — what holding costs at today's rate. Outlined = open position.</p>
           <div className="flex flex-wrap gap-1.5">
             {rates.map(([sym, r]) => (
-              <span key={sym} className="inline-flex items-baseline gap-1 rounded-[6px] bg-panel-2 px-2 py-1">
+              <span key={sym} className={cn("inline-flex items-baseline gap-1 rounded-[6px] px-2 py-1",
+                                            r.held ? "bg-panel-2 ring-1 ring-hairline-strong" : "bg-panel-2")}
+                    title={r.held ? "Open position — the book is paying this rate" : "Reference: no open position"}>
                 <span className="text-[12px] font-semibold text-text">{marketLabel(sym)}</span>
                 <span className={cn("num text-[12px] font-semibold", (r.annualized_pct ?? 0) > 0 ? "text-rose" : (r.annualized_pct ?? 0) < 0 ? "text-mint" : "text-text")}>
                   {formatPct(r.annualized_pct ?? 0, 1)}

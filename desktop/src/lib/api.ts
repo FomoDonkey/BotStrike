@@ -484,6 +484,8 @@ export interface AccountResponse {
 export interface FundingRate {
   rate: number;
   annualized_pct: number;
+  held?: boolean;               // the book has an open position in this market
+  source?: "venue" | "feed" | "none";
 }
 
 /** One settlement charged to the paper book (negative `amount` = the book paid). */
