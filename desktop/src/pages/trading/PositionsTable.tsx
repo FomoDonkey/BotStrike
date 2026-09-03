@@ -62,7 +62,7 @@ function PositionCard({ p, now, highlight }: { p: PositionData; now: number; hig
         <span className="text-[12.5px] text-text-2 font-medium" title={HINTS.exitLadder}>Exits</span>
         {ladder
           ? <><span className="num text-[12.5px]"><span className="font-semibold">{ladder.active}/{ladder.total}</span> legs</span>
-              <span className="ml-auto"><ExitLadderCell ladder={ladder} /></span></>
+              <span className="ml-auto"><ExitLadderCell ladder={ladder} entry={p.entry_price} /></span></>
           : <span className="ml-auto num text-[12.5px] text-text-2">SL {p.stop_loss ? formatPrice(p.stop_loss) : "---"} · TP {p.take_profit ? formatPrice(p.take_profit) : "---"}</span>}
       </div>
       <div className="flex items-center gap-2">
@@ -117,7 +117,7 @@ export function PositionsTable({ positions, symbol, compact, emptyText = "No ope
         id: "sl", label: "SL / Exit ladder", hint: `${HINTS.sl} ${HINTS.exitLadder}`,
         render: (p) => {
           const l = exitLadderOf(p);
-          if (l) return <ExitLadderCell ladder={l} />;
+          if (l) return <ExitLadderCell ladder={l} entry={p.entry_price} />;
           return <Level level={p.stop_loss} mark={p.mark_price > 0 ? p.mark_price : p.entry_price} pct={p.sl_distance_pct} side={p.side} />;
         },
       },
@@ -128,7 +128,7 @@ export function PositionsTable({ positions, symbol, compact, emptyText = "No ope
           return <Level level={p.take_profit} mark={p.mark_price > 0 ? p.mark_price : p.entry_price} pct={p.tp_distance_pct} side={p.side} />;
         },
       },
-      { id: "mae", label: "MAE / MFE", hint: `${HINTS.mae} / ${HINTS.mfe}`, render: (p) => (typeof p.mae_bps === "number" || typeof p.mfe_bps === "number") ? <span className="num"><span className="text-rose">{formatSignedBps(p.mae_bps)}</span><span className="text-text-2"> / </span><span className="text-mint">{formatSignedBps(p.mfe_bps)}</span></span> : <span className="text-text-3" title="MAE/MFE need bridge ≥ 2.15">---</span> },
+      { id: "mae", label: "MAE / MFE", hint: `${HINTS.mae} / ${HINTS.mfe}`, render: (p) => (typeof p.mae_bps === "number" || typeof p.mfe_bps === "number") ? <span className="num"><span className="text-rose">{formatSignedBps(p.mae_bps)}</span><span className="text-text-2"> / </span><span className="text-mint">{formatSignedBps(p.mfe_bps)}</span></span> : <span className="text-text-3" title="No excursion data for this position yet">---</span> },
     );
   }
   columns.push(

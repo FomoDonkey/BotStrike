@@ -254,3 +254,32 @@ def test_state_json_roundtrip():
                     weights={"BTCUSDT": 0.3}, universe=["BTCUSDT"], universe_month="2026-09")
     back = TrendState.from_json(json.loads(json.dumps(st.to_json())))
     assert back.positions["BTCUSDT"].size == 0.01 and back.universe == ["BTCUSDT"]
+
+
+def test_excursions_reports_mae_and_mfe_against_the_entry(tmp_path, monkeypatch):
+    """The MAE/MFE column was empty on every trend position: the daily bars already hold the answer,
+    so heat taken and profit given back are computable without tracking anything (2026-09-03)."""
+    import pandas as pd
+    from strategies.trend_daily import BookPosition, TrendDailyEngine
+
+    idx = pd.to_datetime(["2026-09-01", "2026-09-02", "2026-09-03"])
+    bars = pd.DataFrame({"open": [100.0, 102.0, 108.0], "high": [103.0, 112.0, 109.0],
+                         "low": [96.0, 101.0, 104.0], "close": [102.0, 108.0, 106.0]}, index=idx)
+
+    eng = object.__new__(TrendDailyEngine)
+    eng.config = Settings().trading
+    eng.state = type("S", (), {"positions": {"BTCUSDT": BookPosition(
+        symbol="BTCUSDT", size=1.0, entry_price=100.0, entry_fee_rate=0.0004, weight=0.1,
+        opened="2026-09-02", opened_ts=0.0, mark_price=106.0)}})()
+    eng.store = type("St", (), {"load": staticmethod(lambda syms, today, refresh=False, min_days=0: {"BTCUSDT": bars})})()
+    eng._today = lambda: pd.Timestamp("2026-09-03")
+
+    ex = eng.excursions()["BTCUSDT"]
+    assert ex["days"] == 2                       # only the bars since the position opened
+    assert ex["mfe_bps"] == pytest.approx(1200.0)   # high 112 on entry 100 = +12 %
+    assert ex["mae_bps"] == pytest.approx(0.0)      # the low never went below the entry
+    # a position under water reports the heat it is taking
+    eng.state.positions["BTCUSDT"].entry_price = 110.0
+    ex2 = eng.excursions()["BTCUSDT"]
+    assert ex2["mae_bps"] == pytest.approx((101.0 / 110.0 - 1) * 10_000, abs=0.2)
+    assert ex2["mfe_bps"] == pytest.approx((112.0 / 110.0 - 1) * 10_000, abs=0.2)

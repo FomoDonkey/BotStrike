@@ -203,7 +203,7 @@ function PositionCard({ p, now }: { p: PositionData; now: number }) {
       {ladder && (
         <div className="mt-1.5 pt-1.5 border-t border-hairline flex items-center justify-between gap-2">
           <span className="text-[12px] font-medium text-text-2">Exit ladder</span>
-          <ExitLadderCell ladder={ladder} />
+          <ExitLadderCell ladder={ladder} entry={p.entry_price} />
         </div>
       )}
     </div>

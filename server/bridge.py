@@ -1034,6 +1034,10 @@ def _trend_position_rows(engine) -> list:
         ladders = {}
     acc = getattr(engine, "funding", None)
     funding_by_symbol = dict(getattr(acc, "by_symbol", {}) or {}) if acc is not None else {}
+    try:
+        excursions = trend.excursions()
+    except Exception:  # noqa: BLE001 - a display figure must never break the positions feed
+        excursions = {}
     for p in trend.status().get("positions", []):
         mark = p["mark_price"] or p["entry_price"]
         pos_st = trend.state.positions.get(p["symbol"])
@@ -1046,7 +1050,9 @@ def _trend_position_rows(engine) -> list:
             "stop_loss": 0.0, "take_profit": 0.0, "sl_distance_pct": None, "tp_distance_pct": None,
             "strategy": StrategyType.TREND_DAILY.value,
             "opened_ts": getattr(pos_st, "opened_ts", 0.0), "hold_sec": max(0.0, time.time() - getattr(pos_st, "opened_ts", time.time())),
-            "mae_bps": None, "mfe_bps": None, "entry_fee_rate": getattr(pos_st, "entry_fee_rate", 0.0),
+            "mae_bps": (excursions.get(p["symbol"]) or {}).get("mae_bps"),
+            "mfe_bps": (excursions.get(p["symbol"]) or {}).get("mfe_bps"),
+            "entry_fee_rate": getattr(pos_st, "entry_fee_rate", 0.0),
             "fees_paid": p["entry_price"] * p["size"] * getattr(pos_st, "entry_fee_rate", 0.0),
             "funding_paid": _position_funding(acc, p["ui_symbol"], getattr(pos_st, "opened_ts", 0.0),
                                               funding_by_symbol),

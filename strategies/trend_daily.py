@@ -630,6 +630,46 @@ class TrendDailyEngine:
                 logger.warning("trend_exit_ladder_failed", symbol=sym, error=str(e)[:120])
         return out
 
+    def excursions(self) -> Dict[str, Dict[str, float]]:
+        """MAE / MFE per held market, in basis points against the entry price.
+
+        MAE (maximum adverse excursion) is the deepest the market went AGAINST the position while it
+        was open; MFE (maximum favourable excursion) the furthest it went in favour. Together they
+        say how much heat a winner took and how much of a winner was given back — the numbers that
+        tell you whether the exits are too tight or too slow. The column was empty on every trend
+        position until 2026-09-03; the daily bars hold the answer, so nothing needs to be tracked.
+
+        Daily resolution, which is the resolution this book trades at. Cached frames only.
+        """
+        out: Dict[str, Dict[str, float]] = {}
+        if not self.state.positions:
+            return out
+        params = TrendParams.from_config(self.config)
+        try:
+            data = self.store.load(list(self.state.positions), self._today(), refresh=False,
+                                   min_days=params.min_history_days)
+        except Exception as e:  # noqa: BLE001 — visibility must never break the API
+            logger.warning("trend_excursion_unavailable", error=str(e)[:160])
+            return out
+        for sym, pos in self.state.positions.items():
+            df = data.get(sym)
+            entry = float(pos.entry_price or 0.0)
+            if df is None or not len(df) or entry <= 0:
+                continue
+            try:
+                since = df[df.index >= pd.Timestamp(pos.opened)]
+                if not len(since):
+                    since = df.tail(1)
+                low = float(since["low"].min()) if "low" in since else float(since["close"].min())
+                high = float(since["high"].max()) if "high" in since else float(since["close"].max())
+                # a long position: adverse = the low, favourable = the high
+                out[sym] = {"mae_bps": round((min(low, entry) / entry - 1.0) * 10_000, 1),
+                            "mfe_bps": round((max(high, entry) / entry - 1.0) * 10_000, 1),
+                            "days": int(len(since))}
+            except Exception as e:  # noqa: BLE001
+                logger.warning("trend_excursion_failed", symbol=sym, error=str(e)[:120])
+        return out
+
     def positions_as_positions(self) -> List[Position]:
         out = []
         for sym, p in self.state.positions.items():

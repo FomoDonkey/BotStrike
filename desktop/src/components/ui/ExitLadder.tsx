@@ -12,8 +12,30 @@ export const EXIT_LADDER_COPY =
   "when price closes below one, that share leaves. There is no take profit: trend returns come from " +
   "letting winners run.";
 
-const CARD_W = 306;
-const CARD_H = 250;
+const CARD_W = 330;
+const CARD_H = 268;
+
+/**
+ * What the position returns AGAINST ITS ENTRY if every remaining leg trails out at today's stops.
+ *
+ * The ladder's own `worst_case_pct` is measured from the CURRENT price, which answers "how far can
+ * it still fall" but not the question an operator actually asks: "if this trails out from here, do
+ * I keep a profit?" A position can show +6.5 % unrealised and still have every stop below its entry
+ * (BTC on 2026-09-03: entry 76,571.65, full exit 69,437.15).
+ */
+export function ladderOutcomeVsEntry(ladder: ExitLadder, entry: number | null | undefined): number | null {
+  const levels = ladder.levels ?? [];
+  if (!entry || entry <= 0 || levels.length === 0) return null;
+  let weight = 0;
+  let acc = 0;
+  for (const lv of levels) {
+    const share = lv.share_exiting ?? 0;
+    if (!(share > 0) || !(lv.stop > 0)) continue;
+    weight += share;
+    acc += share * (lv.stop / entry - 1);
+  }
+  return weight > 0 ? acc / weight : null;
+}
 
 /**
  * Segmented bar: one segment per ladder level, sized by the share that leaves there and darkening
@@ -38,31 +60,46 @@ export function ExitWeightBar({ ladder, className, width = "w-[72px]" }: { ladde
 }
 
 /** Full ladder: one row per level with price, distance, share exiting and weight left after it. */
-export function ExitLadderDetail({ ladder, className }: { ladder: ExitLadder; className?: string }) {
+export function ExitLadderDetail({ ladder, entry, className }: { ladder: ExitLadder; entry?: number | null; className?: string }) {
   const levels = ladder.levels ?? [];
+  const outcome = ladderOutcomeVsEntry(ladder, entry);
   return (
     <div className={cn("min-w-0", className)}>
-      <div className="grid grid-cols-[auto_1fr_auto_auto_auto] gap-x-2.5 gap-y-1 text-[12px]">
+      <div className="grid grid-cols-[auto_1fr_auto_auto_auto_auto] gap-x-2.5 gap-y-1 text-[12px]">
         <span className="font-semibold uppercase tracking-[0.04em] text-text-2">Leg</span>
         <span className="font-semibold uppercase tracking-[0.04em] text-text-2 text-right">Stop</span>
         <span className="font-semibold uppercase tracking-[0.04em] text-text-2 text-right">Dist.</span>
+        <span className="font-semibold uppercase tracking-[0.04em] text-text-2 text-right" title="Result against this position's entry price if that leg trails out">vs entry</span>
         <span className="font-semibold uppercase tracking-[0.04em] text-text-2 text-right">Leaves</span>
         <span className="font-semibold uppercase tracking-[0.04em] text-text-2 text-right">Left</span>
         {levels.map((lv, i) => (
-          <LevelRow key={`${lv.lookback}-${i}`} lv={lv} />
+          <LevelRow key={`${lv.lookback}-${i}`} lv={lv} entry={entry} />
         ))}
       </div>
+      {outcome !== null && (
+        <p className="mt-2 text-[12px] font-semibold leading-snug">
+          <span className="text-text-2 font-medium">If it trails out from here: </span>
+          <span className={cn("num", outcome > 0 ? "text-mint" : outcome < 0 ? "text-rose" : "text-text")}>
+            {formatSignedPct(outcome, 1)} vs entry
+          </span>
+          <span className="text-text-2 font-medium">{outcome > 0 ? " — the profit is locked in" : " — a profit is NOT locked in yet"}</span>
+        </p>
+      )}
       <p className="mt-2 text-[12px] font-medium text-text-2 leading-snug">{EXIT_LADDER_COPY}</p>
     </div>
   );
 }
 
-function LevelRow({ lv }: { lv: ExitLadderLevel }) {
+function LevelRow({ lv, entry }: { lv: ExitLadderLevel; entry?: number | null }) {
+  const vsEntry = entry && entry > 0 && lv.stop > 0 ? lv.stop / entry - 1 : null;
   return (
     <>
       <span className="num font-semibold text-text" title={`Donchian lookback ${lv.lookback} days`}>D{lv.lookback}</span>
       <span className="num font-semibold text-text text-right">{formatPrice(lv.stop)}</span>
       <span className="num font-semibold text-rose text-right">{formatSignedPct(lv.distance_pct ?? 0, 1)}</span>
+      <span className={cn("num font-semibold text-right", vsEntry === null ? "text-text-3" : vsEntry > 0 ? "text-mint" : "text-rose")}>
+        {vsEntry === null ? "---" : formatSignedPct(vsEntry, 1)}
+      </span>
       <span className="font-semibold text-text-2 text-right whitespace-nowrap">{ladderLevelLabel(lv)}</span>
       <span className="num font-semibold text-text text-right">{Math.round((lv.weight_after ?? 0) * 100)}%</span>
     </>
@@ -74,7 +111,7 @@ function LevelRow({ lv }: { lv: ExitLadderLevel }) {
  * card listing every level. The card is `position: fixed` so the table's own scroll container
  * never clips it.
  */
-export function ExitLadderCell({ ladder, className }: { ladder: ExitLadder; className?: string }) {
+export function ExitLadderCell({ ladder, entry, className }: { ladder: ExitLadder; entry?: number | null; className?: string }) {
   const [card, setCard] = useState<{ left: number; top: number; bottom: number } | null>(null);
   const [pinned, setPinned] = useState(false);
 
@@ -142,10 +179,10 @@ export function ExitLadderCell({ ladder, className }: { ladder: ExitLadder; clas
           <div className="flex items-baseline gap-2 mb-1.5">
             <span className="text-[12.5px] font-semibold text-text">Exit ladder</span>
             <span className="text-[12px] font-medium text-text-2">
-              {ladder.active}/{ladder.total} legs · worst {formatSignedPct(ladder.worst_case_pct ?? 0, 1)}
+              {ladder.active}/{ladder.total} legs · worst {formatSignedPct(ladder.worst_case_pct ?? 0, 1)} from here
             </span>
           </div>
-          <ExitLadderDetail ladder={ladder} />
+          <ExitLadderDetail ladder={ladder} entry={entry} />
         </div>
       )}
     </div>
