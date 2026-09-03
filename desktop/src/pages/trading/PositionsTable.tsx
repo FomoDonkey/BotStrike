@@ -1,5 +1,6 @@
 import type { PositionData } from "@/lib/api";
 import { useNow } from "@/hooks/useNow";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { HINTS } from "@/lib/hints";
 import { HoldTime, PnlCell } from "@/components/shared/TradeChips";
 import { SideChip, StrategyTag } from "@/components/ui/Chip";
@@ -31,9 +32,53 @@ function Level({ level, mark, pct, side }: { level: number | undefined; mark: nu
   );
 }
 
+
+/** One position as a card: what a phone can actually show. Same numbers as the desktop row. */
+function PositionCard({ p, now, highlight }: { p: PositionData; now: number; highlight?: boolean }) {
+  const ladder = exitLadderOf(p);
+  const funding = p.funding_paid;
+  return (
+    <div className={cn("rounded-[8px] border border-hairline bg-panel-2 p-3 flex flex-col gap-2",
+                       highlight && "border-hairline-strong")}>
+      <div className="flex items-center gap-2">
+        <span className="font-semibold text-[14px]">{p.symbol}</span>
+        <SideChip side={p.side} size="xs" />
+        <span className="ml-auto"><PnlCell pnl={p.unrealized_pnl ?? 0} roe={positionRoe(p)} inline /></span>
+      </div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[12.5px]">
+        <div className="flex justify-between"><span className="text-text-2 font-medium">Size</span><span className="num">{formatSize(p.size)}</span></div>
+        <div className="flex justify-between"><span className="text-text-2 font-medium">Notional</span><span className="num">{formatUSD(positionNotional(p))}</span></div>
+        <div className="flex justify-between"><span className="text-text-2 font-medium">Entry</span><span className="num">{formatPrice(p.entry_price)}</span></div>
+        <div className="flex justify-between"><span className="text-text-2 font-medium">Mark</span><span className="num">{p.mark_price > 0 ? formatPrice(p.mark_price) : "---"}</span></div>
+        <div className="flex justify-between">
+          <span className="text-text-2 font-medium" title={HINTS.fundingPaid}>Funding</span>
+          {typeof funding === "number"
+            ? <span className={cn("num", funding < 0 ? "text-rose" : funding > 0 ? "text-mint" : "text-text")}>{formatSignedMoney(funding, 4)}</span>
+            : <span className="text-text-3">---</span>}
+        </div>
+        <div className="flex justify-between"><span className="text-text-2 font-medium">Hold</span><HoldTime seconds={positionHoldSec(p, now)} /></div>
+      </div>
+      <div className="flex items-center gap-2 border-t border-hairline pt-2">
+        <span className="text-[12.5px] text-text-2 font-medium" title={HINTS.exitLadder}>Exits</span>
+        {ladder
+          ? <><span className="num text-[12.5px]"><span className="font-semibold">{ladder.active}/{ladder.total}</span> legs</span>
+              <span className="ml-auto"><ExitLadderCell ladder={ladder} /></span></>
+          : <span className="ml-auto num text-[12.5px] text-text-2">SL {p.stop_loss ? formatPrice(p.stop_loss) : "---"} · TP {p.take_profit ? formatPrice(p.take_profit) : "---"}</span>}
+      </div>
+      <div className="flex items-center gap-2">
+        <StrategyTag strategy={p.strategy} />
+        <span className="ml-auto"><ClosePositionButton position={p} /></span>
+      </div>
+    </div>
+  );
+}
+
 /** Every §2 field of an open position in one dense, sortable row. Scrolls inside the panel. */
 export function PositionsTable({ positions, symbol, compact, emptyText = "No open positions found" }: PositionsTableProps) {
   const now = useNow();
+  // Below 1024 px a 1980 px table hides everything that matters (measured on the CT at 390 px:
+  // only Symbol/Side/Size/Notional were on screen), so positions render as cards instead.
+  const narrow = useMediaQuery("(max-width: 1023px)");
 
   const columns: Column<PositionData>[] = [
     { id: "symbol", label: "Symbol", align: "l", sortValue: (p) => p.symbol, render: (p) => <span className="font-semibold">{p.symbol}</span> },
@@ -103,6 +148,20 @@ export function PositionsTable({ positions, symbol, compact, emptyText = "No ope
   columns.push(
     { id: "close", label: "", align: "c", stickyRight: true, className: "w-[72px]", render: (p) => <ClosePositionButton position={p} /> },
   );
+
+  if (narrow) {
+    if (!positions.length) {
+      return <div className="p-6 text-center text-[12.5px] font-medium text-text-2">{emptyText}</div>;
+    }
+    return (
+      <div className="flex flex-col gap-2 p-2">
+        {positions.map((p, i) => (
+          <PositionCard key={`${p.symbol}-${p.strategy ?? ""}-${p.order_id ?? i}`} p={p} now={now}
+                        highlight={Boolean(symbol && p.symbol === symbol)} />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <DataTable
