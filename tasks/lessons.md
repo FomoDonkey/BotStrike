@@ -1126,3 +1126,30 @@
 - El funding se leía del feed intradía (4 símbolos), así que oro, S&P, petróleo y plata no pagaban nada:
   el libro multi-activo habría parecido más rentable que el de cripto por un artefacto contable.
 - **LESSON: cuando el universo deja de coincidir con el feed, revisar TODO lo que se indexa por símbolo.**
+
+### Un total acumulado no es un dato "por operación"
+- La columna Funding mostraba `by_symbol`, que suma desde que arrancó el bot. Con el mismo mercado
+  cerrado y reabierto, la posición nueva habría enseñado el carry de la anterior. El tooltip ya decía
+  "desde que se abrió": el texto era correcto y el número no.
+- **LESSON: cuando una etiqueta dice "de esta operación", el dato tiene que venir de la ventana de esa
+  operación. Cada asentamiento lleva su marca de tiempo; sumar el intervalo correcto es gratis.**
+
+### Un flujo de caja no es una orden
+- Las filas de funding entraban en el explotador de fills: aparecían como órdenes ENTRY con lado SELL
+  (SideChip leyendo la cadena "FUNDING"), precio de mercado y tamaño 0, y el gráfico les dibujaba un
+  marcador. Seis órdenes que nunca existieron.
+- **LESSON: al añadir un tipo de fila a una tabla de operaciones, revisar TODOS los consumidores de esa
+  tabla, no solo el que motivó el cambio.**
+
+### Una alarma falsa enseña al operador a ignorar las de verdad
+- Mis propios despliegues dispararon dos alertas a Telegram en una hora ("bridge caído", "reiniciado 3
+  veces") sobre un bot perfectamente sano.
+- **LESSON: distinguir lo planificado de lo averiado. El despliegue sella un marcador; el monitor sube el
+  listón mientras está en vuelo, pero no lo suprime: systemd reintenta cada 10 s, así que un bucle real
+  supera igualmente el umbral alto en minutos.**
+
+### Un script en disco cambia a mitad del despliegue
+- `deploy/update.sh` hace el `git pull` dentro de sí mismo, así que una mejora del propio update.sh solo
+  surte efecto en el despliegue SIGUIENTE. Verifiqué el marcador dos veces creyendo que estaba roto.
+- **LESSON: al tocar el script que se ejecuta a sí mismo, verificar el bloque nuevo ejecutándolo aparte,
+  no esperando que el despliegue en curso ya lo use.**

@@ -1491,3 +1491,22 @@ Entregables: tasks/audit_2026-08-29.md (consolidado), tasks/audit/01..05 (119 ha
 - [x] Bug fix: new_bar_arrived detection (len→tuple key) for backtester
 - [x] Bug fix: cooldown uses bar timestamps in backtest_mode
 - [x] Tests: 36/36 pass
+
+## Auditoría completa del bot y de la UI (2026-09-03)
+Petición: "audita el bot completo... en la UI no sale el funding por operación, total, etc. revisa
+toda la UI al milímetro". Todo lo de abajo está verificado en el CT 104, no de palabra.
+- [x] Auditoría de API: 21 endpoints, consistencia cruzada exacta (performance = portfolio = equity − inicial, dif 0.000000)
+- [x] `/api/performance` ignoraba el funding → plegado en pnl y en la curva de equity
+- [x] Columna Funding invisible (estaba en x=1852 con contenedor de 1425 px) → reordenadas las columnas por
+      lo que una posición debe responder; medida ahora en x=641, valor a la vista
+- [x] Móvil: la tabla mostraba 4 columnas de 16 → tarjeta por posición por debajo de 1024 px
+- [x] Falsa alarma de Telegram "bridge caído" durante mi propio despliegue → CONFIRM_CHECKS = 2
+- [x] Falsa alarma "reiniciado 3 veces en 15 min" por dos despliegues → ventana de mantenimiento
+      (update.sh sella data/maintenance.json; umbral 6 durante el despliegue; 9 sigue alertando)
+- [x] `[object Object]` en /system → el renderizador de facts nunca imprime un objeto crudo
+- [x] **Funding por operación era el acumulado de por vida del mercado**: un símbolo cerrado y reabierto
+      heredaba el carry del anterior, y el tooltip prometía "desde que se abrió" → FundingAccrual.since()
+- [x] **Un cobro de funding se pintaba como orden SELL** en el historial y como marcador en el gráfico →
+      tipo de fila propio ("carry", ámbar) y el gráfico ignora los asentamientos
+- [x] Barrida de las 8 rutas a 1440 y 390: 0 desbordes, 0 errores de consola, 0 [object Object], contraste 0 infractores
+- [x] 287 tests en verde en local y en el CT; despliegues afc8991 y siguientes con RESULT PASS

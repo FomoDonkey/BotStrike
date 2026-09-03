@@ -39,7 +39,7 @@ systemctl daemon-reload
 # Tell the ops monitor these restarts are planned, so a deploy cannot look like a crash loop.
 # git must run as botstrike inside the repo: as root, outside it, it returned an empty commit.
 MAINT_COMMIT=$(su - botstrike -c "cd $APP_DIR && git rev-parse --short HEAD" 2>/dev/null || echo unknown)
-su - botstrike -c "cd $APP_DIR && printf '{\"ts\": \"%s\", \"commit\": \"%s\"}'   \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \"$MAINT_COMMIT\" > data/maintenance.json"
+su - botstrike -c "cd $APP_DIR && printf '{\"ts\": \"%s\", \"commit\": \"%s\"}'   \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \"$MAINT_COMMIT\" > data/maintenance.json" || echo "warn: maintenance marker not written"
 systemctl restart botstrike-bridge
 sleep 6
 curl -sf localhost:9420/api/health && echo && systemctl --no-pager --lines=5 status botstrike-bridge
