@@ -65,7 +65,13 @@ export function FundingChart({ symbol }: { symbol: string }) {
         <Stat label="Last settlement" value={last === null ? "---" : pct(last)} tone={last === null ? undefined : last > 0 ? "rose" : "mint"} />
         <Stat label={`Avg (${RANGES.find((r) => r.id === range)?.label})`} value={avg === null ? "---" : pct(avg)} tone={avg === null ? undefined : avg > 0 ? "rose" : "mint"} />
         <Stat label="Cumulative" value={cumLast === null ? "---" : pct(cumLast, 3)} tone={cumLast === null ? undefined : cumLast > 0 ? "rose" : "mint"} />
-        {fh.data?.source && <span className="ml-auto text-[12px] font-medium text-text-2 whitespace-nowrap">{fh.data.source}</span>}
+        {/* The venue paints every funding figure in its brand mint, sign or not, so the colour there
+            carries no meaning. Here it does — say which, so nobody has to remember. */}
+        <span className="ml-auto flex items-center gap-2 text-[12px] font-medium text-text-2 whitespace-nowrap">
+          <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-rose" />the book pays</span>
+          <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-mint" />the book is paid</span>
+          {fh.data?.source && <span className="opacity-70">· {fh.data.source}</span>}
+        </span>
       </div>
       {fh.missing ? (
         <EmptyState sub="GET /api/market/{symbol}/funding_history needs bridge ≥ 2.16">Funding history not available on this bridge</EmptyState>
