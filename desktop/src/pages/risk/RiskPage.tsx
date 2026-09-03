@@ -125,7 +125,9 @@ export function RiskPage() {
                 <ProgressBar ratio={row.used ?? 0} tone={tone(row.used)} height="h-2.5" />
                 <div className="flex justify-between mt-1 text-[12px] font-medium text-text-2">
                   <span>{row.used === null ? "no limit reported" : `${(row.used * 100).toFixed(0)}% used`}{row.note ? ` · ${row.note}` : ""}</span>
-                  <span>100%</span>
+                  {/* A bare "100%" opposite "0% used" reads as a second, contradictory measurement.
+                      It is the end of the bar: say so. */}
+                  <span>{row.used === null ? "" : `${Math.max(0, 100 - row.used * 100).toFixed(0)}% left`}</span>
                 </div>
               </div>
             ))}
