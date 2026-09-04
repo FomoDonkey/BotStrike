@@ -33,10 +33,14 @@ the cap only binds when a market is quiet enough that the target asks for more t
 Aggressive runs at cap 3 (Edgar, 2026-09-04). The cap is a small lever by construction; the one that
 actually scales is target volatility, measured at cap 3 over the same panel:
 
-    target vol 0.30 -> Sharpe 1.92, CAGR 17.2 %, maxDD 11.3 %, worst day -3.73 %   VALIDATED RANGE
-    target vol 0.45 -> Sharpe 1.92, CAGR 25.8 %, maxDD 16.5 %, worst day -5.60 %
+    target vol 0.10 -> Sharpe 1.93, CAGR  5.6 %, maxDD  3.9 %, worst day -1.24 %   <- CONSERVATIVE
+    target vol 0.30 -> Sharpe 1.92, CAGR 17.2 %, maxDD 11.3 %, worst day -3.73 %
+    target vol 0.45 -> Sharpe 1.92, CAGR 25.8 %, maxDD 16.5 %, worst day -5.60 %   <- BALANCED
     target vol 0.60 -> Sharpe 1.88, CAGR 33.1 %, maxDD 21.4 %, worst day -6.80 %
     target vol 0.80 -> Sharpe 1.84, CAGR 41.5 %, maxDD 27.5 %, worst day -8.28 %   <- AGGRESSIVE
+
+All three shipped levels went through the book's own eleven gates at their own settings and passed
+11/11 (scripts/validate_profile.py — one generic validator, so no level gets an easier exam).
 
 Sharpe is flat across all of it: there is no free return up there, only a bigger position and a
 proportionally bigger hole.
@@ -97,6 +101,7 @@ PROFILES: Dict[str, Dict[str, float]] = {
 # What the research measured for each profile, so the UI never has to guess.
 EXPECTED: Dict[str, Dict[str, float]] = {
     "conservative": {"sharpe": 1.93, "cagr": 0.056, "vol": 0.028, "max_dd": 0.039,
+                     "worst_day": 0.0124, "worst_week": 0.0172, "longest_underwater_days": 592,
                      "gates_passed": 11, "gates_total": 11, "dsr": 1.00},
     "balanced":     {"sharpe": 1.92, "cagr": 0.258, "vol": 0.124, "max_dd": 0.165,
                      "worst_day": 0.0560, "worst_week": 0.0776, "longest_underwater_days": 594,
