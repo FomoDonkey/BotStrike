@@ -164,10 +164,20 @@ class DailyDataStore:
         df = pd.concat([cached, fresh]) if cached is not None else fresh
         df = df[~df.index.duplicated(keep="last")].sort_index()
         complete = df[df.index < today]
+        tmp = f"{path}.{os.getpid()}.tmp"
         try:
-            complete.to_parquet(path)
+            # Atomic: to_parquet truncates first, so a restart landing mid-write leaves a 0-byte file
+            # and the next run must refetch ten years of daily bars for that market — which, if the
+            # fetch then fails, drops it from the rebalance. Seen on WTI-USD during the 02:36Z deploy
+            # (2026-09-04). Write beside the target, then rename, which is atomic on the same volume.
+            complete.to_parquet(tmp)
+            os.replace(tmp, path)
         except Exception as e:
             logger.warning("trend_cache_write_failed", symbol=sym, error=str(e))
+            try:
+                os.unlink(tmp)
+            except Exception:  # noqa: BLE001 - nothing to clean up
+                pass
         return df
 
 

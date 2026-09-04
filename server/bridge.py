@@ -1962,6 +1962,10 @@ def _live_funding_rates(engine, interval_hours: int) -> dict:
     for sym in sorted(held | pool | set(getattr(engine.settings, "symbol_names", []) or [])):
         if sym in venue:
             rate, source = float(venue[sym] or 0.0), "venue"
+        elif (_VENUE_MD["premium"] or {}).get(sym, {}).get("fundingRate") is not None:
+            # same field, same endpoint, already in hand — covers the minute after a restart before
+            # the engine has loaded its own copy (2026-09-04)
+            rate, source = _num(_VENUE_MD["premium"][sym]["fundingRate"]) or 0.0, "venue"
         else:
             snap = engine.market_data.get_snapshot(sym)
             raw = float(snap.funding_rate) if snap is not None and snap.funding_rate else 0.0
@@ -2408,6 +2412,12 @@ def _market_funding_rate(engine, symbol: str, snap):
     venue = getattr(engine, "_venue_funding", None) or {}
     if symbol in venue:
         return float(venue[symbol] or 0.0)
+    # The engine loads its copy once a minute, so for the first minute after a restart every market
+    # on every screen showed no funding at all (measured 60 s after the 02:36Z deploy, 2026-09-04).
+    # The bridge already holds the same field from the same endpoint — use it rather than show "---".
+    prem = (_VENUE_MD["premium"] or {}).get(symbol.upper()) or {}
+    if prem.get("fundingRate") is not None:
+        return _num(prem.get("fundingRate"))
     if snap is not None and snap.funding_rate:
         return float(snap.funding_rate) * _funding_interval(engine) / 8.0
     return None
