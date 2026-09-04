@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMarketStore, type OrderBookLevel } from "@/stores/marketStore";
+import { useUnstreamed } from "@/hooks/useVenueMarkets";
 import { useFlashOnChange } from "@/hooks/useFlash";
 import { SYMBOL_LABELS } from "@/lib/constants";
 import { cn, formatPrice, formatSize } from "@/lib/utils";
@@ -50,6 +51,7 @@ function useLevelsThatFit(ref: React.RefObject<HTMLDivElement | null>): number {
 
 /** Price · Size · Total with cumulative depth bars, mid + spread, and the bid/ask ratio bar. */
 export function OrderBookPanel({ symbol }: { symbol: string }) {
+  const unstreamed = useUnstreamed(symbol);
   const ob = useMarketStore((s) => s.orderbooks[symbol]);
   const price = useMarketStore((s) => s.prices[symbol] || 0);
   const prev = useMarketStore((s) => s.prevPrices[symbol] || 0);
@@ -91,7 +93,7 @@ export function OrderBookPanel({ symbol }: { symbol: string }) {
         <span className="text-right">Total ({base})</span>
       </div>
       {empty ? (
-        <div ref={listRef} className="flex-1 flex items-center justify-center text-text-faint text-xs">Waiting for order book…</div>
+        <div ref={listRef} className="flex-1 flex items-center justify-center text-text-faint text-xs px-4 text-center" title="This market has no intraday stream on this bridge, so there is no live ladder or tape for it. Its price, funding, spread and top of book on the header and the Details tab are the venue's own.">{unstreamed ? "Not streamed for this market" : "Waiting for order book…"}</div>
       ) : (
       <div ref={listRef} className="flex-1 min-h-0 overflow-hidden">
         {asks.map((r) => <Level key={`a${r.price}`} row={r} side="ask" maxTotal={maxTotal} />)}

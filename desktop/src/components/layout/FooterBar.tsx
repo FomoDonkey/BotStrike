@@ -14,7 +14,9 @@ import { useVenueMarkets } from "@/hooks/useVenueMarkets";
 import { SignedPct } from "@/components/shared/TradeChips";
 
 const TickerItem = memo(function TickerItem({ symbol, change }: { symbol: string; change: number | null }) {
-  const price = useMarketStore((s) => s.prices[symbol] || 0);
+  const streamed = useMarketStore((s) => s.prices[symbol] || 0);
+  const { byMarket } = useVenueMarkets();
+  const price = byMarket.get(symbol)?.price || streamed;   // the venue's mark, as everywhere else
   return (
     <Link to="/trading" className="inline-flex items-center gap-1.5 px-3 whitespace-nowrap text-[12.5px] hover:bg-hover h-8">
       <span className="font-semibold text-text">{SYMBOL_LABELS[symbol] ?? symbol}</span>

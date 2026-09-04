@@ -1,14 +1,16 @@
 import { useMarketStore } from "@/stores/marketStore";
+import { useUnstreamed } from "@/hooks/useVenueMarkets";
 import { SYMBOL_LABELS } from "@/lib/constants";
 import { cn, formatPrice, formatSize, formatTimeShort } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/Panel";
 
 /** Live tape: last 60 market trades (Price · Size · Time), coloured price, newest first. */
 export function TradesTape({ symbol }: { symbol: string }) {
+  const unstreamed = useUnstreamed(symbol);
   const tape = useMarketStore((s) => s.tape[symbol]);
   const base = SYMBOL_LABELS[symbol] ?? "";
 
-  if (!tape?.length) return <EmptyState>Waiting for trades…</EmptyState>;
+  if (!tape?.length) return <EmptyState>{unstreamed ? "Not streamed for this market" : "Waiting for trades…"}</EmptyState>;
 
   return (
     <div className="flex flex-col flex-1 min-h-0 text-[12.5px]">

@@ -20,3 +20,12 @@ export function useVenueMarkets(enabled = true) {
     return { byMarket, list: ep.data?.markets ?? [], missing: ep.missing, quoteAgeSec: ep.data?.quote_age_sec ?? null };
   }, [ep.data, ep.missing]);
 }
+
+
+/** True when the bridge does not stream this market: its ladder, tape and chart never fill in, so a
+ *  "waiting…" placeholder is a promise the terminal cannot keep (2026-09-04). */
+export function useUnstreamed(symbol: string): boolean {
+  const { byMarket } = useVenueMarkets();
+  const row = byMarket.get(symbol);
+  return row ? row.feed === false : false;
+}

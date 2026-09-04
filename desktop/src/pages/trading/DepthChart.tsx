@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { Area, AreaChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useMarketStore } from "@/stores/marketStore";
+import { useUnstreamed } from "@/hooks/useVenueMarkets";
 import { CHART_TEXT, CHART_TOOLTIP_ITEM, CHART_TOOLTIP_LABEL, CHART_TOOLTIP_STYLE, COLOR_DOWN, COLOR_UP, SYMBOL_LABELS } from "@/lib/constants";
 import { formatPrice, formatSize } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/Panel";
@@ -13,6 +14,7 @@ interface Point {
 
 /** Cumulative depth of the top-of-book levels the bridge broadcasts (10 per side), mint / rose areas, mid label. */
 export function DepthChart({ symbol }: { symbol: string }) {
+  const unstreamed = useUnstreamed(symbol);
   const ob = useMarketStore((s) => s.orderbooks[symbol]);
   const base = SYMBOL_LABELS[symbol] ?? "";
 
@@ -27,7 +29,7 @@ export function DepthChart({ symbol }: { symbol: string }) {
     return [...bids.reverse(), ...asks];
   }, [ob]);
 
-  if (!data.length) return <EmptyState>Waiting for order book…</EmptyState>;
+  if (!data.length) return <EmptyState>{unstreamed ? "Not streamed for this market" : "Waiting for order book…"}</EmptyState>;
   const mid = ob?.mid_price ?? null;
 
   return (
