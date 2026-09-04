@@ -239,8 +239,13 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--extra", action="store_true")
+    # The study's own §6 says the verdict changes only on a FRESH window. Six markets it never saw
+    # is a genuine out-of-sample: same rule, data it was not tuned on (2026-09-04).
+    ap.add_argument("--symbols", default="", help="comma-separated override, e.g. an out-of-sample set")
     args = ap.parse_args()
-    data = {s: load(s) for s in SYMS if os.path.exists(os.path.join(DATA_DIR, f"{s}.parquet"))}
+    syms = [x.strip().upper() for x in args.symbols.split(",") if x.strip()] or SYMS
+    data = {s: load(s) for s in syms if os.path.exists(os.path.join(DATA_DIR, f"{s}.parquet"))}
+    print(f"== markets: {sorted(data)}")
     for s, d in data.items():
         d.attrs["symbol"] = s
     print(f"== data: {len(data)} symbols, {min(len(d) for d in data.values())} bars each (1h)")
