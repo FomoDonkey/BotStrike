@@ -326,3 +326,146 @@ def test_target_weights_clamp_shorts_away_unless_enabled():
 
     shorting = TrendParams(lookbacks=(20,), vol_window=30, n_assets=1, allow_shorts=True, short_size=0.5)
     assert target_weights(data, ["BTCUSDT"], idx[-1], shorting)["BTCUSDT"] < 0.0
+
+
+# ── the executor: signed notional, one path for both directions ───────────────
+def _exec_engine(allow_shorts=False, short_size=0.5):
+    """A TrendDailyEngine wired to nothing but its own state, so a single symbol can be driven."""
+    import asyncio as _aio
+    s = Settings()
+    s.trading.trend_min_order_usd = 10.0
+    s.trading.slippage_bps = 10.0          # 10 bps, so the fill side is visible in the numbers
+    s.trading.taker_fee = 0.0004
+    s.trading.trend_allow_shorts = allow_shorts
+    s.trading.trend_short_size = short_size
+    fills = []
+
+    async def on_fill(t):
+        fills.append(t)
+
+    eng = object.__new__(TrendDailyEngine)
+    eng.config = s.trading
+    eng.state = TrendState()
+    eng._on_fill = on_fill
+    eng.last_marks = {}
+    return eng, fills, _aio
+
+
+def test_executor_long_path_is_unchanged_by_the_signed_rewrite():
+    """The long book is live money: entry, partial rebalance and full exit must come out exactly as
+    they did before the rewrite that added the short side (2026-09-04)."""
+    eng, fills, aio = _exec_engine()
+    run = lambda **kw: aio.get_event_loop_policy().new_event_loop().run_until_complete(
+        TrendDailyEngine._execute_symbol(eng, **kw))
+
+    run(sym="BTCUSDT", target_w=0.10, price=100.0, equity=1000.0, today_key="2026-09-04", now=1.0)
+    pos = eng.state.positions["BTCUSDT"]
+    assert pos.size > 0 and pos.side == "BUY"
+    assert pos.entry_price == pytest.approx(100.10)          # bought through 10 bps of slippage
+    assert pos.size == pytest.approx(100.0 / 100.10)          # 10 % of 1000 at the fill
+    assert fills[-1].side is Side.BUY and fills[-1].pnl == 0.0
+
+    # halve it: a partial close that realises PnL on the part sold
+    size_after_entry = pos.size
+    run(sym="BTCUSDT", target_w=0.05, price=120.0, equity=1000.0, today_key="2026-09-04", now=2.0)
+    # The quantity comes from the delta measured at the REFERENCE price and is filled through
+    # slippage, so the position lands a hair off the exact target. That is how the long-only version
+    # behaved and the rewrite keeps it: changing it would move live numbers for no reason.
+    qty_sold = (size_after_entry * 120.0 - 50.0) / (120.0 * 0.999)
+    assert eng.state.positions["BTCUSDT"].size == pytest.approx(size_after_entry - qty_sold, rel=1e-9)
+    assert fills[-1].side is Side.SELL and fills[-1].pnl > 0
+    assert fills[-1].signal_features["exit_reason"] == "REBALANCE"
+
+    # and out
+    run(sym="BTCUSDT", target_w=0.0, price=130.0, equity=1000.0, today_key="2026-09-04", now=3.0)
+    assert "BTCUSDT" not in eng.state.positions
+    assert fills[-1].signal_features["exit_reason"] == "TREND_EXIT" and fills[-1].pnl > 0
+
+
+def test_executor_opens_closes_and_flips_a_short():
+    eng, fills, aio = _exec_engine(allow_shorts=True)
+    run = lambda **kw: aio.get_event_loop_policy().new_event_loop().run_until_complete(
+        TrendDailyEngine._execute_symbol(eng, **kw))
+
+    # open a short: the order SELLS, so it fills BELOW the reference price
+    run(sym="BTCUSDT", target_w=-0.10, price=100.0, equity=1000.0, today_key="2026-09-04", now=1.0)
+    pos = eng.state.positions["BTCUSDT"]
+    assert pos.size < 0 and pos.side == "SELL" and pos.is_short
+    assert pos.entry_price == pytest.approx(99.90)
+    assert pos.notional == pytest.approx(abs(pos.size) * pos.mark_price)   # notional is never negative
+    assert fills[-1].side is Side.SELL and fills[-1].pnl == 0.0
+
+    # price falls: the short is in profit, and the unrealised figure says so
+    pos.mark_price = 80.0
+    assert pos.unrealized_pnl > 0
+
+    # close half of it: closing a short BUYS, so it fills ABOVE the reference
+    run(sym="BTCUSDT", target_w=-0.05, price=80.0, equity=1000.0, today_key="2026-09-04", now=2.0)
+    assert eng.state.positions["BTCUSDT"].size < 0
+    assert fills[-1].side is Side.BUY and fills[-1].pnl > 0        # bought back cheaper than sold
+    assert fills[-1].signal_features["direction"] == "short"
+    assert fills[-1].signal_features["pnl_bps"] > 0                # bps are signed by direction too
+
+    # flip to long in one run: that is TWO trades, not one delta
+    before = len(fills)
+    run(sym="BTCUSDT", target_w=+0.10, price=90.0, equity=1000.0, today_key="2026-09-04", now=3.0)
+    assert len(fills) == before + 2
+    assert fills[-2].signal_features["exit_reason"] == "TREND_FLIP"
+    assert fills[-1].side is Side.BUY and fills[-1].signal_features["direction"] == "long"
+    flipped = eng.state.positions["BTCUSDT"]
+    assert flipped.size > 0 and flipped.entry_price == pytest.approx(90.09)   # fresh entry, not averaged
+
+
+def test_the_executor_cannot_open_a_short_while_the_switch_is_off():
+    eng, fills, aio = _exec_engine(allow_shorts=False)
+    aio.get_event_loop_policy().new_event_loop().run_until_complete(
+        TrendDailyEngine._execute_symbol(eng, sym="BTCUSDT", target_w=-0.10, price=100.0,
+                                         equity=1000.0, today_key="2026-09-04", now=1.0))
+    assert eng.state.positions == {} and fills == []
+
+
+def test_a_short_is_coherent_end_to_end_from_the_engine_to_the_row_the_ui_reads():
+    """Every consumer of a position had been written for a long book. This walks one short through
+    all of them and checks they agree: side, magnitudes, return sign and funding direction."""
+    import asyncio as _aio
+    from server import bridge
+
+    eng, fills, _ = _exec_engine(allow_shorts=True)
+    _aio.get_event_loop_policy().new_event_loop().run_until_complete(
+        TrendDailyEngine._execute_symbol(eng, sym="BTCUSDT", target_w=-0.10, price=100.0,
+                                         equity=1000.0, today_key="2026-09-04", now=1.0))
+    pos = eng.state.positions["BTCUSDT"]
+    pos.mark_price = 90.0                      # the market fell: the short is winning
+
+    # 1. the engine's own status (build the rows the way status() does, without its config plumbing)
+    st = {"positions": [{
+        "symbol": "BTCUSDT", "ui_symbol": to_ui_symbol("BTCUSDT"), "size": round(pos.size, 8),
+        "side": pos.side, "short": pos.is_short,
+        "entry_price": round(pos.entry_price, 6), "mark_price": round(pos.mark_price, 6),
+        "notional": round(pos.notional, 4), "unrealized_pnl": round(pos.unrealized_pnl, 4),
+        "weight": round(pos.weight, 4), "opened": pos.opened,
+    }]}
+    row = st["positions"][0]
+    assert row["side"] == "SELL" and row["short"] is True
+    assert row["size"] < 0                                   # signed for the engine
+    assert row["notional"] > 0                               # a magnitude for everyone else
+    assert row["unrealized_pnl"] > 0                         # falling price pays a short
+
+    # 2. the row the positions table reads
+    class _Trend:
+        state = eng.state
+        status = staticmethod(lambda: st)
+        exit_ladders = staticmethod(lambda: {})
+        excursions = staticmethod(lambda: {})
+    engine_stub = type("E", (), {"trend_engine": _Trend(), "funding": None,
+                                 "settings": type("S", (), {"trading": eng.config})()})()
+    ui = bridge._trend_position_rows(engine_stub)[0]
+    assert ui["side"] == "SELL" and ui["size"] > 0            # magnitude + side, like every venue
+    assert ui["pnl_pct"] > 0 and ui["roe_pct"] > 0            # the return is mirrored, not negated twice
+    assert ui["unrealized_pnl"] > 0
+
+    # 3. what the funding engine is told
+    import main as m
+    feed = type("E", (), {"paper_sim": None, "trend_engine": _Trend()})()
+    frow = m.BotStrike._funding_positions(feed)[0]
+    assert frow["side"] == "SELL" and frow["size"] > 0 and frow["notional"] > 0

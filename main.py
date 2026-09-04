@@ -867,9 +867,15 @@ class BotStrike:
         if trend is not None:
             try:
                 for p in (trend.status().get("positions") or []):
-                    rows.append({"symbol": p.get("ui_symbol") or p.get("symbol"), "side": "BUY",
-                                 "notional": float(p.get("notional") or 0.0), "mark_price": float(p.get("mark_price") or 0.0),
-                                 "size": float(p.get("size") or 0.0), "strategy": "TREND_DAILY"})
+                    # The SIDE decides who pays: a long pays when the rate is positive, a short is
+                    # paid. Hard-coding BUY here would have charged a short book the wrong way round
+                    # on every settlement (2026-09-04).
+                    size = float(p.get("size") or 0.0)
+                    side = str(p.get("side") or ("SELL" if size < 0 else "BUY")).upper()
+                    rows.append({"symbol": p.get("ui_symbol") or p.get("symbol"), "side": side,
+                                 "notional": abs(float(p.get("notional") or 0.0)),
+                                 "mark_price": float(p.get("mark_price") or 0.0),
+                                 "size": abs(size), "strategy": "TREND_DAILY"})
             except Exception as e:  # noqa: BLE001
                 logger.warning("funding_trend_positions_unavailable", error=str(e))
         return rows

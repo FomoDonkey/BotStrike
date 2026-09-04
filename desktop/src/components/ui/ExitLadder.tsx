@@ -8,9 +8,9 @@ import { cn, formatPrice, formatSignedPct } from "@/lib/utils";
  * requires wherever the ladder is shown.
  */
 export const EXIT_LADDER_COPY =
-  "This position exits in steps. Each Donchian lookback has its own trailing stop that never falls; " +
-  "when price closes below one, that share leaves. There is no take profit: trend returns come from " +
-  "letting winners run.";
+  "This position exits in steps. Each Donchian lookback has its own trailing stop that only moves in " +
+  "the position's favour; when price closes through one, that share leaves. There is no take profit: " +
+  "trend returns come from letting winners run.";
 
 const CARD_W = 330;
 const CARD_H = 268;
@@ -52,7 +52,7 @@ export function ExitLadderDetail({ ladder, entry, className }: { ladder: ExitLad
         <span className="font-semibold uppercase tracking-[0.04em] text-text-2 text-right">Leaves</span>
         <span className="font-semibold uppercase tracking-[0.04em] text-text-2 text-right">Left</span>
         {levels.map((lv, i) => (
-          <LevelRow key={`${lv.lookback}-${i}`} lv={lv} entry={entry} />
+          <LevelRow key={`${lv.lookback}-${i}`} lv={lv} entry={entry} short={ladder.short} />
         ))}
       </div>
       {outcome !== null && (
@@ -69,8 +69,8 @@ export function ExitLadderDetail({ ladder, entry, className }: { ladder: ExitLad
   );
 }
 
-function LevelRow({ lv, entry }: { lv: ExitLadderLevel; entry?: number | null }) {
-  const vsEntry = entry && entry > 0 && lv.stop > 0 ? lv.stop / entry - 1 : null;
+function LevelRow({ lv, entry, short }: { lv: ExitLadderLevel; entry?: number | null; short?: boolean }) {
+  const vsEntry = entry && entry > 0 && lv.stop > 0 ? (lv.stop / entry - 1) * (short ? -1 : 1) : null;
   return (
     <>
       <span className="num font-semibold text-text" title={`Donchian lookback ${lv.lookback} days`}>D{lv.lookback}</span>
@@ -158,7 +158,7 @@ export function ExitLadderCell({ ladder, entry, className }: { ladder: ExitLadde
           <div className="flex items-baseline gap-2 mb-1.5">
             <span className="text-[12.5px] font-semibold text-text">Exit ladder</span>
             <span className="text-[12px] font-medium text-text-2">
-              {ladder.active}/{ladder.total} legs · worst {formatSignedPct(ladder.worst_case_pct ?? 0, 1)} from here
+              {ladder.active}/{ladder.total} legs · {ladder.short ? "short · " : ""}worst {formatSignedPct(ladder.worst_case_pct ?? 0, 1)} from here
             </span>
           </div>
           <ExitLadderDetail ladder={ladder} entry={entry} />

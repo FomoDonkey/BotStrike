@@ -192,8 +192,11 @@ class TradingConfig:
     # book has against expensive funding (a short RECEIVES it). But it SUBTRACTED return in the last
     # four years (2022+: 1.73 vs 1.94): a hedge with a premium, not an edge. Symmetric shorts (full
     # size) measured 1.57 and are the version that was rejected earlier.
-    # NOTE: enabling this needs the EXECUTION path reviewed — the exit ladder, the funding sign and
-    # the paper fill logic are all written for a long book.
+    # The EXECUTION path was completed on 2026-09-04: signed notional in the executor (including the
+    # long->short flip, which is two trades), a mirrored exit ladder, MAE/MFE that swap roles, the
+    # funding side taken from the position (a short RECEIVES it) and magnitudes with a side in every
+    # API row. Turning this on now trades shorts correctly; it stays OFF because the evidence says it
+    # is a hedge with a premium, not an edge — see the research note before flipping it.
     trend_allow_shorts: bool = False
     trend_short_size: float = 0.5
     trend_pool: str = ("BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,LTCUSDT,TRXUSDT,"

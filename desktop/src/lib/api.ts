@@ -384,8 +384,10 @@ export interface ExitLadder {
   first_exit: number;
   /** Lowest stop — where the position is fully out */
   full_exit: number;
-  /** Distance from `price` down to `full_exit`, as a ratio */
+  /** Distance from `price` to `full_exit` as a ratio — always the loss still on the table */
   worst_case_pct: number;
+  /** true when the ladder belongs to a SHORT: its stops sit above the price */
+  short?: boolean;
 }
 
 /**

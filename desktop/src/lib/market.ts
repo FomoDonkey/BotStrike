@@ -252,13 +252,15 @@ export function tradeHoldSec(t: TradeRecord): number | null {
 export function ladderOutcomeVsEntry(ladder: ExitLadder, entry: number | null | undefined): number | null {
   const levels = ladder.levels ?? [];
   if (!entry || entry <= 0 || levels.length === 0) return null;
+  // A SHORT earns when the stop is BELOW its entry, so the result is the mirror of the price move.
+  const sign = ladder.short ? -1 : 1;
   let weight = 0;
   let acc = 0;
   for (const lv of levels) {
     const share = lv.share_exiting ?? 0;
     if (!(share > 0) || !(lv.stop > 0)) continue;
     weight += share;
-    acc += share * (lv.stop / entry - 1);
+    acc += share * (lv.stop / entry - 1) * sign;
   }
   return weight > 0 ? acc / weight : null;
 }

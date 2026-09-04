@@ -184,11 +184,23 @@ class BookPosition:
     mark_price: float = 0.0
 
     @property
+    def is_short(self) -> bool:
+        """`size` is SIGNED: positive is long, negative is short. Every formula below is written so
+        that the sign carries the direction — that is what keeps the long path bit-identical while
+        the short path comes out right (2026-09-04)."""
+        return self.size < 0
+
+    @property
+    def side(self) -> str:
+        return "SELL" if self.is_short else "BUY"
+
+    @property
     def notional(self) -> float:
-        return self.size * (self.mark_price or self.entry_price)
+        return abs(self.size) * (self.mark_price or self.entry_price)
 
     @property
     def unrealized_pnl(self) -> float:
+        # signed size does the work: a short with mark < entry gives (negative)x(negative) > 0
         return (self.mark_price - self.entry_price) * self.size if self.mark_price else 0.0
 
 
@@ -454,76 +466,122 @@ class TrendDailyEngine:
 
     async def _execute_symbol(self, sym: str, target_w: float, price: float, equity: float,
                               today_key: str, now: float) -> None:
+        """Move one market from what we hold to what the model wants, in SIGNED notional.
+
+        Everything here is expressed as signed exposure (positive long, negative short) so one path
+        serves both sides. Three things can happen and they are not the same trade:
+
+          * the exposure GROWS in its current direction -> an entry, averaged into the position;
+          * the exposure SHRINKS toward zero            -> a close, realising PnL on the part closed;
+          * the sign FLIPS                              -> close everything, then open the other way.
+
+        The flip is the case that only exists with shorts enabled, and folding it into a single delta
+        would corrupt both the average entry price and the realised PnL, so it is executed as two
+        legs. With `allow_shorts` off the target can never be negative and this behaves exactly as the
+        long-only version did (2026-09-04).
+        """
         st = self.state
         pos = st.positions.get(sym)
-        current_notional = pos.size * price if pos else 0.0
-        target_notional = max(0.0, target_w) * equity
-        delta = target_notional - current_notional
+        p = TrendParams.from_config(self.config)
+        current = pos.size * price if pos else 0.0                 # signed exposure held
+        target = (target_w if p.allow_shorts else max(0.0, target_w)) * equity   # signed exposure wanted
         min_order = float(self.config.trend_min_order_usd)
-        if abs(delta) < min_order and not (pos and target_w <= 0):
+
+        # A sign flip is two trades: flatten, then open the other way.
+        if pos and target * current < 0:
+            await self._close_part(sym, pos, abs(pos.size), price, now, target_w=0.0, reason="flip")
+            pos = st.positions.get(sym)
+            current = 0.0
+
+        delta = target - current
+        closing = pos is not None and abs(target) < abs(current) - 1e-12
+        if abs(delta) < min_order and not (pos and target == 0.0):
             st.weights[sym] = float(st.weights.get(sym, 0.0)) if pos else 0.0
             return
+
+        if closing:
+            fill_price = price * (1.0 - float(self.config.slippage_bps) / 10_000.0 * (1 if pos.size > 0 else -1))
+            qty = abs(pos.size) if target == 0.0 else min(abs(pos.size), abs(delta) / fill_price)
+            await self._close_part(sym, pos, qty, price, now, target_w=target_w, reason="exit")
+            return
+
+        # entry or add, in the direction of `delta`
+        slip = float(self.config.slippage_bps) / 10_000.0
+        buying = delta > 0
+        fill = price * (1.0 + slip) if buying else price * (1.0 - slip)
+        taker = float(self.config.taker_fee)
+        size = abs(delta) / fill * (1 if buying else -1)            # signed
+        if pos:
+            total = pos.size + size
+            pos.entry_price = (pos.entry_price * abs(pos.size) + fill * abs(size)) / abs(total)
+            pos.entry_fee_rate = (pos.entry_fee_rate * abs(pos.size) + taker * abs(size)) / abs(total)
+            pos.size = total
+        else:
+            pos = BookPosition(symbol=sym, size=size, entry_price=fill, entry_fee_rate=taker,
+                               weight=target_w, opened=today_key, opened_ts=now, mark_price=fill)
+            st.positions[sym] = pos
+        pos.weight = target_w
+        pos.mark_price = fill
+        st.weights[sym] = target_w
+        trade = Trade(
+            symbol=to_ui_symbol(sym), side=Side.BUY if buying else Side.SELL, price=fill,
+            quantity=abs(size), fee=0.0,
+            order_id=f"trend_entry_{uuid.uuid4().hex[:8]}", strategy=StrategyType.TREND_DAILY,
+            timestamp=now, pnl=0.0, expected_price=price,
+            actual_slippage_bps=abs(fill - price) / price * 1e4,
+            signal_features={"action": "entry_trend", "target_weight": target_w,
+                             "equity_basis": equity, "open_price": price, "pool_symbol": sym,
+                             "direction": "short" if size < 0 else "long"},
+        )
+        await self._on_fill(trade)
+        logger.info("trend_entry_fill", symbol=sym, size=round(size, 6), price=round(fill, 4),
+                    weight=round(target_w, 4), direction="short" if size < 0 else "long")
+
+    async def _close_part(self, sym: str, pos: "BookPosition", qty: float, price: float, now: float,
+                          target_w: float, reason: str) -> None:
+        """Close `qty` units of a position, whichever way it points, realising the PnL of that part."""
+        st = self.state
         slip = float(self.config.slippage_bps) / 10_000.0
         taker = float(self.config.taker_fee)
-        if delta > 0:
-            fill = price * (1.0 + slip)
-            size = delta / fill
-            if pos:
-                total = pos.size + size
-                pos.entry_price = (pos.entry_price * pos.size + fill * size) / total
-                pos.entry_fee_rate = (pos.entry_fee_rate * pos.size + taker * size) / total
-                pos.size = total
-            else:
-                pos = BookPosition(symbol=sym, size=size, entry_price=fill, entry_fee_rate=taker,
-                                   weight=target_w, opened=today_key, opened_ts=now, mark_price=fill)
-                st.positions[sym] = pos
+        long_pos = pos.size > 0
+        # closing a long SELLS (fills lower), closing a short BUYS (fills higher)
+        fill = price * (1.0 - slip) if long_pos else price * (1.0 + slip)
+        qty = min(abs(qty), abs(pos.size))
+        if qty <= 0:
+            return
+        signed_qty = qty if long_pos else -qty
+        gross = (fill - pos.entry_price) * signed_qty          # sign carries the direction
+        fees = pos.entry_price * qty * pos.entry_fee_rate + fill * qty * taker
+        pnl = gross - fees
+        hold = max(0.0, now - pos.opened_ts)
+        full_exit = qty >= abs(pos.size) - 1e-12
+        trade = Trade(
+            symbol=to_ui_symbol(sym), side=Side.SELL if long_pos else Side.BUY, price=fill,
+            quantity=qty, fee=fees,
+            order_id=f"trend_{'exit' if full_exit else 'rebalance'}_{uuid.uuid4().hex[:8]}",
+            strategy=StrategyType.TREND_DAILY, timestamp=now, pnl=pnl, expected_price=pos.entry_price,
+            actual_slippage_bps=abs(fill - price) / price * 1e4,
+            signal_features={"action": "exit_trend" if full_exit else "exit_trend_rebalance",
+                             "exit_reason": ("TREND_FLIP" if reason == "flip" else
+                                             "TREND_EXIT" if full_exit else "REBALANCE"),
+                             "entry_price": pos.entry_price, "exit_price": fill,
+                             "hold_time_sec": hold, "target_weight": target_w,
+                             "pnl_bps": ((fill / pos.entry_price - 1.0) * (1 if long_pos else -1) * 1e4
+                                         if pos.entry_price else 0.0),
+                             "open_price": price, "pool_symbol": sym,
+                             "direction": "long" if long_pos else "short"},
+        )
+        if full_exit:
+            st.positions.pop(sym, None)
+            st.weights[sym] = 0.0
+        else:
+            pos.size = pos.size - signed_qty
             pos.weight = target_w
             pos.mark_price = fill
             st.weights[sym] = target_w
-            trade = Trade(
-                symbol=to_ui_symbol(sym), side=Side.BUY, price=fill, quantity=size, fee=0.0,
-                order_id=f"trend_entry_{uuid.uuid4().hex[:8]}", strategy=StrategyType.TREND_DAILY,
-                timestamp=now, pnl=0.0, expected_price=price,
-                actual_slippage_bps=abs(fill - price) / price * 1e4,
-                signal_features={"action": "entry_trend", "target_weight": target_w,
-                                 "equity_basis": equity, "open_price": price, "pool_symbol": sym},
-            )
-            await self._on_fill(trade)
-            logger.info("trend_entry_fill", symbol=sym, size=round(size, 6), price=round(fill, 4),
-                        weight=round(target_w, 4))
-        else:
-            if not pos:
-                return
-            fill = price * (1.0 - slip)
-            size = min(pos.size, -delta / fill) if target_w > 0 else pos.size
-            gross = (fill - pos.entry_price) * size
-            fees = pos.entry_price * size * pos.entry_fee_rate + fill * size * taker
-            pnl = gross - fees
-            hold = max(0.0, now - pos.opened_ts)
-            full_exit = size >= pos.size - 1e-12 or target_w <= 0
-            trade = Trade(
-                symbol=to_ui_symbol(sym), side=Side.SELL, price=fill, quantity=size, fee=fees,
-                order_id=f"trend_{'exit' if full_exit else 'rebalance'}_{uuid.uuid4().hex[:8]}",
-                strategy=StrategyType.TREND_DAILY, timestamp=now, pnl=pnl, expected_price=pos.entry_price,
-                actual_slippage_bps=abs(fill - price) / price * 1e4,
-                signal_features={"action": "exit_trend" if full_exit else "exit_trend_rebalance",
-                                 "exit_reason": "TREND_EXIT" if full_exit else "REBALANCE",
-                                 "entry_price": pos.entry_price, "exit_price": fill,
-                                 "hold_time_sec": hold, "target_weight": target_w,
-                                 "pnl_bps": (fill / pos.entry_price - 1.0) * 1e4 if pos.entry_price else 0.0,
-                                 "open_price": price, "pool_symbol": sym},
-            )
-            if full_exit:
-                st.positions.pop(sym, None)
-                st.weights[sym] = 0.0
-            else:
-                pos.size -= size
-                pos.weight = target_w
-                pos.mark_price = fill
-                st.weights[sym] = target_w
-            await self._on_fill(trade)
-            logger.info("trend_exit_fill", symbol=sym, size=round(size, 6), price=round(fill, 4),
-                        pnl=round(pnl, 4), full=full_exit)
+        await self._on_fill(trade)
+        logger.info("trend_exit_fill", symbol=sym, size=round(qty, 6), price=round(fill, 4),
+                    pnl=round(pnl, 4), full=full_exit, direction="long" if long_pos else "short")
 
     def _record_tracking(self, today_key: str, opens: Dict[str, float], turnover: float,
                          equity: float) -> None:
@@ -625,7 +683,8 @@ class TrendDailyEngine:
             return out
         for sym, df in data.items():
             try:
-                out[sym] = exit_ladder(df["close"], params)
+                pos = self.state.positions.get(sym)
+                out[sym] = exit_ladder(df["close"], params, short=bool(pos and pos.is_short))
             except Exception as e:  # noqa: BLE001
                 logger.warning("trend_exit_ladder_failed", symbol=sym, error=str(e)[:120])
         return out
@@ -662,14 +721,21 @@ class TrendDailyEngine:
                     since = df.tail(1)
                 low = float(since["low"].min()) if "low" in since else float(since["close"].min())
                 high = float(since["high"].max()) if "high" in since else float(since["close"].max())
+                # For a SHORT the roles swap: the high is what hurts, the low is what pays.
+                if pos.is_short:
+                    low, high = high, low
                 # Fold in the LIVE mark: a position opened today has a daily bar that does not yet
                 # contain today's move, so MFE read 0.0 beside a position showing +0.5 % on screen.
                 mark = float(pos.mark_price or 0.0)
                 if mark > 0:
                     low, high = min(low, mark), max(high, mark)
-                # a long position: adverse = the low, favourable = the high
-                out[sym] = {"mae_bps": round((min(low, entry) / entry - 1.0) * 10_000, 1),
-                            "mfe_bps": round((max(high, entry) / entry - 1.0) * 10_000, 1),
+                # adverse is always the move against the position, favourable the one in its favour,
+                # and both are reported as a signed excursion of the ENTRY price
+                sign = -1.0 if pos.is_short else 1.0
+                adverse = (min(low, entry) / entry - 1.0) if not pos.is_short else (max(low, entry) / entry - 1.0)
+                favour = (max(high, entry) / entry - 1.0) if not pos.is_short else (min(high, entry) / entry - 1.0)
+                out[sym] = {"mae_bps": round(adverse * sign * 10_000, 1),
+                            "mfe_bps": round(favour * sign * 10_000, 1),
                             "days": int(len(since))}
             except Exception as e:  # noqa: BLE001
                 logger.warning("trend_excursion_failed", symbol=sym, error=str(e)[:120])
@@ -679,7 +745,8 @@ class TrendDailyEngine:
         out = []
         for sym, p in self.state.positions.items():
             mark = p.mark_price or p.entry_price
-            out.append(Position(symbol=to_ui_symbol(sym), side=Side.BUY, size=p.size,
+            out.append(Position(symbol=to_ui_symbol(sym), side=Side.SELL if p.is_short else Side.BUY,
+                                size=abs(p.size),
                                 entry_price=p.entry_price, mark_price=mark,
                                 unrealized_pnl=(mark - p.entry_price) * p.size,
                                 strategy=StrategyType.TREND_DAILY, timestamp=p.opened_ts))
@@ -710,10 +777,11 @@ class TrendDailyEngine:
         exposure = 0.0
         for sym, p in st.positions.items():
             mark = p.mark_price or p.entry_price
-            notional = p.size * mark
+            notional = abs(p.size) * mark          # exposure is a magnitude; the side carries direction
             exposure += notional
             positions.append({
                 "symbol": sym, "ui_symbol": to_ui_symbol(sym), "size": round(p.size, 8),
+                "side": p.side, "short": p.is_short,
                 "entry_price": round(p.entry_price, 6), "mark_price": round(mark, 6),
                 "notional": round(notional, 4), "unrealized_pnl": round((mark - p.entry_price) * p.size, 4),
                 "weight": round(p.weight, 4), "opened": p.opened,

@@ -291,7 +291,7 @@ def model_daily_return(weights_prev: Dict[str, float], open_prev: Dict[str, floa
     return g - turnover * cost_bps / 10_000.0
 
 
-def exit_ladder(close: pd.Series, p: TrendParams) -> Dict[str, Any]:
+def exit_ladder(close: pd.Series, p: TrendParams, short: bool = False) -> Dict[str, Any]:
     """Where this position actually exits, and how much leaves at each level.
 
     A trend book has no single stop-loss: the weight is the average of `len(p.lookbacks)`
@@ -313,8 +313,10 @@ def exit_ladder(close: pd.Series, p: TrendParams) -> Dict[str, Any]:
     out["price"] = price
     levels = []
     for n in p.lookbacks:
-        pos, stop = sub_strategy_positions(close, n)
-        if len(pos) == 0 or float(pos.iloc[-1]) <= 0:
+        pos, stop = sub_strategy_positions(close, n, p.allow_shorts, p.short_size)
+        last = float(pos.iloc[-1]) if len(pos) else 0.0
+        # a short position's legs are the ones holding SHORT, and their stops sit ABOVE the price
+        if (last <= 0) if not short else (last >= 0):
             continue
         s = float(stop.iloc[-1])
         if np.isnan(s):
@@ -322,7 +324,8 @@ def exit_ladder(close: pd.Series, p: TrendParams) -> Dict[str, Any]:
         levels.append((int(n), s))
     if not levels:
         return out
-    levels.sort(key=lambda x: -x[1])                       # nearest stop first
+    # nearest stop first: below the price for a long, above it for a short
+    levels.sort(key=lambda x: x[1] if short else -x[1])
     out["active"] = len(levels)
     share = 1.0 / len(levels)                              # of the CURRENT position, not of the max
     remaining = 1.0
@@ -335,5 +338,9 @@ def exit_ladder(close: pd.Series, p: TrendParams) -> Dict[str, Any]:
         })
     out["first_exit"] = out["levels"][0]["stop"]
     out["full_exit"] = out["levels"][-1]["stop"]
-    out["worst_case_pct"] = round(out["full_exit"] / price - 1.0, 6) if price else None
+    out["short"] = bool(short)
+    # "worst case" is always the loss it can still take: for a short that is price RISING to the stop
+    if price:
+        move = out["full_exit"] / price - 1.0
+        out["worst_case_pct"] = round(-move if short else move, 6)
     return out

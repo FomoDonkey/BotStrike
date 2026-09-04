@@ -268,3 +268,42 @@ def test_a_forced_fetch_ignores_the_cache_however_fresh_it_is(monkeypatch):
     assert calls == []
     assert m.BotStrike._venue_funding_rates(eng, {"BTC-USD"}, force=True)["BTC-USD"] == pytest.approx(2.7e-05)
     assert len(calls) == 1
+
+
+def test_a_short_RECEIVES_funding_when_the_rate_is_positive():
+    """The sign of funding is the one thing that must not be wrong: hard-coding BUY for every trend
+    position would have charged a short book backwards on every hourly settlement (2026-09-04)."""
+    from analytics.funding import FundingAccrual
+
+    acc = FundingAccrual(path=None, interval_hours=1)
+    acc.start(3600.0)                                   # a zero timestamp leaves the clock unarmed
+    long_pos = {"symbol": "BTC-USD", "side": "BUY", "notional": 1000.0, "mark_price": 100.0, "size": 10.0}
+    short_pos = {"symbol": "BTC-USD", "side": "SELL", "notional": 1000.0, "mark_price": 100.0, "size": 10.0}
+
+    paid = acc.compute([long_pos], {"BTC-USD": 1e-04}, 7200.0 + 1)
+    got = acc.compute([short_pos], {"BTC-USD": 1e-04}, 7200.0 + 1)
+    assert paid[0].amount == pytest.approx(-0.10)      # the long PAYS
+    assert got[0].amount == pytest.approx(+0.10)       # the short IS PAID
+    # and it reverses with the rate, which is what makes WTI profitable to be long on Strike
+    assert acc.compute([long_pos], {"BTC-USD": -1e-04}, 7200.0 + 1)[0].amount == pytest.approx(+0.10)
+
+
+def test_the_engine_reports_a_short_trend_position_with_the_right_side(monkeypatch):
+    """`_funding_positions` fed 'BUY' for every trend row regardless of the book's direction."""
+    import main as m
+    from types import SimpleNamespace as NS
+
+    trend = NS(status=lambda: {"positions": [
+        {"ui_symbol": "BTC-USD", "symbol": "BTCUSDT", "size": -0.5, "side": "SELL", "short": True,
+         "notional": 500.0, "mark_price": 1000.0},
+        {"ui_symbol": "XAU-USD", "symbol": "XAU-USD", "size": 2.0, "side": "BUY", "short": False,
+         "notional": 800.0, "mark_price": 400.0},
+    ]})
+    eng = object.__new__(m.BotStrike)
+    eng.paper_sim = None
+    eng.trend_engine = trend
+    rows = {r["symbol"]: r for r in m.BotStrike._funding_positions(eng)}
+
+    assert rows["BTC-USD"]["side"] == "SELL" and rows["BTC-USD"]["size"] == 0.5   # magnitude + side
+    assert rows["BTC-USD"]["notional"] == 500.0                                    # never negative
+    assert rows["XAU-USD"]["side"] == "BUY"

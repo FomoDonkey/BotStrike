@@ -1048,11 +1048,17 @@ def _trend_position_rows(engine) -> list:
     for p in trend.status().get("positions", []):
         mark = p["mark_price"] or p["entry_price"]
         pos_st = trend.state.positions.get(p["symbol"])
+        # A short's return is the mirror of the price move, and its size is reported as a magnitude
+        # with the direction in `side` — the table, the chips and the PnL colours all read that.
+        short = bool(p.get("short")) or float(p.get("size") or 0.0) < 0
+        move = (mark / p["entry_price"] - 1.0) if p["entry_price"] else 0.0
+        ret = -move if short else move
         rows.append({
-            "symbol": p["ui_symbol"], "side": "BUY", "size": p["size"], "entry_price": p["entry_price"],
+            "symbol": p["ui_symbol"], "side": "SELL" if short else "BUY", "size": abs(p["size"]),
+            "entry_price": p["entry_price"],
             "mark_price": mark, "notional": p["notional"], "unrealized_pnl": p["unrealized_pnl"],
-            "pnl_pct": (mark / p["entry_price"] - 1.0) if p["entry_price"] else 0.0,
-            "roe_pct": (mark / p["entry_price"] - 1.0) if p["entry_price"] else 0.0,
+            "pnl_pct": ret,
+            "roe_pct": ret,
             "leverage": 1, "margin": p["notional"], "liquidation_price": 0.0,
             "stop_loss": 0.0, "take_profit": 0.0, "sl_distance_pct": None, "tp_distance_pct": None,
             "strategy": StrategyType.TREND_DAILY.value,
