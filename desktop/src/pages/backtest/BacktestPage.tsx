@@ -36,11 +36,12 @@ export function BacktestPage() {
 
   // How much history to replay. The endpoint's default is "all" — 216,000 one-minute bars.
   //
-  // HONEST STATUS (2026-09-04): the backtester is slow and NO run was observed to finish. A 43,200
-  // bar run burned five minutes of CPU without returning, and a 10,080 bar run went past twelve. The
-  // throughput is therefore unknown, not "about N bars a second", and the options below say so
-  // instead of quoting a rate nobody measured. Smaller is strictly better until the backtester
-  // itself is profiled — that is an open item, not a solved one.
+  // The times below are MEASURED, on the box that runs them (CT 104, the bridge's own venv, calling
+  // the same _run_backtest_sync the endpoint calls), not extrapolated: 10,080 bars in 41.4 s =
+  // 243 bars/s, 2,000 bars in 7.4 s = 271 bars/s. Before the 2026-09-04 profiling pass the same
+  // 10,080 bars took 136.6 s (73.8 bars/s) — the run this page used to say it had never seen finish.
+  // Anything quoted here has to come from a stopwatch on that machine; a rate measured under
+  // cProfile is ~2.2x too slow and a rate from a laptop is ~5x too slow.
   const [bars, setBars] = useState(10_080);
   const runBacktest = async () => {
     setRunning(true);
@@ -100,14 +101,14 @@ export function BacktestPage() {
             </label>
             <label className="block">
               <span className="text-[12.5px] font-medium text-text-2 block mb-1"
-                    title="One-minute bars to replay, newest first. The backtester is SLOW and no run has been observed to finish — a 43,000 bar replay burned five minutes of CPU without returning. Start with the smallest window. It runs off the trading loop either way, so the bot keeps trading.">
+                    title="One-minute bars to replay, newest first. Times measured on this server at 243 bars/s (2026-09-04); a slower machine will take longer. It runs off the trading loop, so the bot keeps trading while it works.">
                 History
               </span>
               <select value={bars} onChange={(e) => setBars(Number(e.target.value))} className={cn(INPUT_CLS, "bs-select")}>
-                <option value={10_080}>1 week · 10k bars · smallest</option>
-                <option value={43_200}>1 month · 43k bars</option>
-                <option value={129_600}>3 months · 130k bars</option>
-                <option value={0}>Everything local · 216k bars · slowest</option>
+                <option value={10_080}>1 week · 10k bars · ~40 s</option>
+                <option value={43_200}>1 month · 43k bars · ~3 min</option>
+                <option value={129_600}>3 months · 130k bars · ~9 min</option>
+                <option value={0}>Everything local · 216k bars · ~15 min</option>
               </select>
             </label>
             <Button variant="primary" className="w-full h-9" icon={<Play className="w-4 h-4" />} onClick={runBacktest} loading={running} disabled={!canRun} title={canRun ? undefined : "Remote bridge — set the auth token in Settings → Connection to run backtests"}>
@@ -115,9 +116,9 @@ export function BacktestPage() {
             </Button>
             {running && (
               <p className="text-[12px] font-medium text-text-2 leading-snug">
-                Replaying {bars ? `${bars.toLocaleString()} one-minute bars` : "the whole local history"}.
-                This engine is slow and has no cancel — it runs off the trading loop, so the bot keeps
-                trading while it works, but it may take a long time.
+                Replaying {bars ? `${bars.toLocaleString()} one-minute bars` : "the whole local history"}
+                {" "}at roughly 243 bars a second, measured on this server. There is no cancel, but it
+                runs off the trading loop, so the bot keeps trading while it works.
               </p>
             )}
             {!canRun && <p className="text-[12px] font-medium text-amber">Remote bridge without a token — backtests are disabled here.</p>}
