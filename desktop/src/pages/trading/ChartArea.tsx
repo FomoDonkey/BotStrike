@@ -4,6 +4,7 @@ import { Camera, Maximize2, RotateCcw } from "lucide-react";
 import type { PositionData } from "@/lib/api";
 import type { SignalData, TradeData } from "@/stores/tradingStore";
 import { useUiStore } from "@/stores/uiStore";
+import { useUnstreamed } from "@/hooks/useVenueMarkets";
 import type { MarketView } from "@/hooks/useMarketInfo";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import { TabBar } from "@/components/ui/TabBar";
@@ -41,6 +42,8 @@ interface ChartAreaProps {
   markers: TradeData[];
   positions: PositionData[];
   signals: SignalData[];
+  /** the interval the venue could actually fill, when it is coarser than the one asked for */
+  servedInterval?: string | null;
 }
 
 interface Elements {
@@ -50,9 +53,11 @@ interface Elements {
 }
 
 /** Chart · Funding · Depth · Signals · Details with Strike's toolbar (spec §3.1). */
-export function ChartArea({ market, timeframe, onTimeframe, markers, positions, signals }: ChartAreaProps) {
+export function ChartArea({ market, timeframe, onTimeframe, markers, positions, signals, servedInterval }: ChartAreaProps) {
   const symbol = market.symbol;
-  const hasFeed = (SYMBOLS as readonly string[]).includes(symbol);
+  // NOT the hard-coded four: whether a market is streamed is something the bridge reports, and
+  // every market has a chart now — the difference is only how it arrives (2026-09-04).
+  const hasFeed = !useUnstreamed(symbol);
   const [tab, setTab] = useState<ChartTab>("chart");
   const [indicator, setIndicator] = useState<Indicator>("macd");
   const [priceMode, setPriceMode] = useState<PriceMode>("last");
@@ -183,6 +188,13 @@ export function ChartArea({ market, timeframe, onTimeframe, markers, positions, 
           <span className="text-text font-semibold">{symbol}</span> is polled from the venue rather than
           streamed: the chart, book and tape refresh every few seconds instead of tick by tick. The
           numbers are Strike's own.
+          {servedInterval && (
+            <>
+              {" "}This market does not trade often enough to fill a {timeframe} bar, so the chart is
+              drawn at <span className="text-text font-semibold">{servedInterval}</span> — the venue
+              writes a candle only for a period in which something traded.
+            </>
+          )}
         </div>
       )}
       {tab === "chart" && (

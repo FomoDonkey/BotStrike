@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useMarketStore, type Candle, type OrderBookData, type Tick } from "@/stores/marketStore";
 import { useUnstreamed } from "./useVenueMarkets";
@@ -22,6 +22,9 @@ const TAPE_POLL_MS = 4_000;
  */
 export function useVenueFallback(symbol: string, timeframe: string) {
   const unstreamed = useUnstreamed(symbol);
+  // what the venue could actually fill: a market too thin for the chosen bar gets a
+  // coarser one, and the chart has to say so rather than mislabel its own candles
+  const [servedInterval, setServedInterval] = useState<string | null>(null);
 
   // ── candles ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -33,6 +36,7 @@ export function useVenueFallback(symbol: string, timeframe: string) {
       try {
         const r = await api.marketKlines(symbol, interval, 500);
         if (!alive || !r?.candles?.length) return;
+        setServedInterval(r.interval && r.interval !== interval ? r.interval : null);
         const candles: Candle[] = r.candles.map((c) => ({
           time: c.timestamp, open: c.open, high: c.high, low: c.low, close: c.close,
           volume: c.volume,
@@ -111,5 +115,5 @@ export function useVenueFallback(symbol: string, timeframe: string) {
     return () => { alive = false; clearInterval(t); };
   }, [symbol, unstreamed]);
 
-  return unstreamed;
+  return { unstreamed, servedInterval };
 }

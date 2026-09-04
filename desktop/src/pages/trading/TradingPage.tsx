@@ -42,7 +42,7 @@ export function TradingPage() {
   // Markets the engine does not stream get their candles, book and prints from the venue over
   // REST, written into the same store the socket writes into — so the chart, the indicators,
   // the ladder, the depth chart and the tape all work on all 31 markets (2026-09-04).
-  useVenueFallback(symbol, timeframe);
+  const { servedInterval } = useVenueFallback(symbol, timeframe);
   const setTimeframe = (tf: Timeframe) => { setTimeframeState(tf); try { localStorage.setItem(TF_KEY, tf); } catch { /* ignore */ } };
   const [mobileTab, setMobileTab] = useState<MobileTab>("book");
   const isLg = useMediaQuery("(min-width: 1024px)");
@@ -73,7 +73,7 @@ export function TradingPage() {
   const showBook = layout.orderBook;
   const chart = layout.chart && (
     <Panel className="flex flex-col min-h-[440px] lg:min-h-0 overflow-hidden">
-      <ChartArea market={market} timeframe={timeframe} onTimeframe={setTimeframe} markers={markers} positions={positions} signals={signals} />
+      <ChartArea market={market} timeframe={timeframe} onTimeframe={setTimeframe} markers={markers} positions={positions} signals={signals} servedInterval={servedInterval} />
     </Panel>
   );
   const bottom = layout.tables && (

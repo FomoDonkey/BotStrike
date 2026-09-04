@@ -973,7 +973,9 @@ export function probeBridge(baseUrl: string): Promise<HealthResponse> {
 /** `/api/market/{sym}/klines` — the venue's candles for any market it lists. */
 export interface VenueKlinesResponse {
   symbol: string;
+  /** the interval the venue could actually fill — coarser than asked on a thin market */
   interval: string;
+  requested_interval?: string;
   source?: string;
   candles: { timestamp: number; open: number; high: number; low: number; close: number; volume: number }[];
 }
