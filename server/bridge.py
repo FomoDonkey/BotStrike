@@ -982,7 +982,11 @@ def _merged_performance() -> Optional[Dict]:
     unrealized = _paper_unrealized_pnl()
     out = dict(cum)
     equity = cum["initial_capital"] + cum["pnl"] + unrealized
-    peak = max(float(cum.get("peak_equity", cum["initial_capital"])), equity)
+    # ONE peak on every screen: the risk manager's is mark-to-market and ≥ the realised chain's,
+    # so the Account panel (rm.equity_peak) and Portfolio (this) no longer show two peaks
+    # (1,009.64 next to 1,010.30 at the same instant, audit 2026-09-05).
+    rm_peak = float(getattr(engine.risk_manager, "equity_peak", 0.0) or 0.0)
+    peak = max(float(cum.get("peak_equity", cum["initial_capital"])), rm_peak, equity)
     out.update({
         "equity": round(equity, 4),
         "pnl": round(cum["pnl"] + unrealized, 4),
@@ -1029,6 +1033,7 @@ async def metrics_broadcast_loop():
 
 
 _trend_symbols_sent: Set[str] = set()
+_positions_sent: Dict[str, str] = {}      # symbol -> the rows last broadcast, minus the clock
 
 
 def _leverage_of(engine):
@@ -1148,11 +1153,22 @@ async def _broadcast_trend_positions() -> None:
     for row in _paper_position_rows(engine):
         by_symbol.setdefault(row["symbol"], []).append(row)
     for sym, rows in by_symbol.items():
-        await state.channels.broadcast("trading", {"type": "positions", "symbol": sym, "data": rows})
+        # Every two seconds, every symbol, whether or not anything moved: 22 identical frames per
+        # market per 40 s on the socket (measured 2026-09-05). A frame goes out when the rows
+        # changed; the retained copy is what a client that connects in between receives. `hold_sec`
+        # is a clock, not a change — the UI derives it from `opened_ts` itself.
+        key = json.dumps([{k: v for k, v in r.items() if k != "hold_sec"} for r in rows],
+                         sort_keys=True, default=_json_default)
+        if _positions_sent.get(sym) == key:
+            continue
+        _positions_sent[sym] = key
+        await state.channels.broadcast("trading", {"type": "positions", "symbol": sym, "data": rows},
+                                       retain=f"positions:{sym}")
     for sym in sorted(_trend_symbols_sent - set(by_symbol)):
-        await state.channels.broadcast("trading", {"type": "positions", "symbol": sym, "data": []})
+        _positions_sent.pop(sym, None)
+        await state.channels.broadcast("trading", {"type": "positions", "symbol": sym, "data": []},
+                                       retain=f"positions:{sym}")
     _trend_symbols_sent.clear()
-    _trend_symbols_sent.update(by_symbol)
     _trend_symbols_sent.update(by_symbol)
 
 
@@ -3160,15 +3176,21 @@ async def get_trades(limit: int = 100):
     try:
         # newest_first: `limit` must keep the LAST N trades, not the first N
         # (audit R2 persistence-02). The rows still arrive chronologically.
-        records = state.engine.trade_repo.get_trades(
-            source="paper", limit=limit, newest_first=True,
-        )
-        trades = []
-        for r in records:
-            trades.append(_trade_row(r))
+        #
+        # `limit` counts FILLS. Funding settles hourly on every open market — six positions write
+        # 144 rows a day — so a limit shared with them would soon hold a day or two of carry and
+        # no trades at all (2026-09-05). The settlements are still returned: those that fall inside
+        # the window the fills span, so Order History shows the carry next to the fills it belongs to.
+        repo = state.engine.trade_repo
+        records = repo.get_trades(source="paper", limit=limit, newest_first=True, exclude_trade_type="FUNDING")
+        if records:
+            oldest = min(float(getattr(r, "timestamp", 0.0) or 0.0) for r in records)
+            records = records + repo.get_trades(source="paper", trade_type="FUNDING", start_time=oldest, newest_first=True)
+            records.sort(key=lambda r: float(getattr(r, "timestamp", 0.0) or 0.0))
+        trades = [_trade_row(r) for r in records]
         # Return most recent first
         trades.reverse()
-        return {"trades": trades[:limit]}
+        return {"trades": trades}
     except Exception as e:
         logger.debug("trades_api_error", error=str(e))
         return {"trades": []}

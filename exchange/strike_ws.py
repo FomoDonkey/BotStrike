@@ -145,14 +145,18 @@ class StrikeMarketWebSocket:
             await asyncio.sleep(DEPTH_POLL_SEC)
 
     async def _mark_loop(self) -> None:
-        """Mark, index and funding for every market in one request — no stream exists for these."""
+        """Mark, index and funding for every market in one request — no stream exists for these.
+
+        Every market the venue quotes is emitted, not only the streamed four: the trend book holds
+        gold, silver, oil and the S&P, and their marks came from a 15 s poll re-read once a minute,
+        so an open position's PnL moved once a minute while the header moved every five seconds
+        (Edgar, 2026-09-05). The response is the same one request either way."""
         while self._running:
             try:
                 rows = await self._rest("/premiumIndex", {})
-                wanted = set(self.symbols)
                 for row in rows if isinstance(rows, list) else [rows]:
                     sym = str(row.get("symbol", "")).upper()
-                    if sym not in wanted:
+                    if not sym:
                         continue
                     await self._emit("markPrice", {
                         "s": sym, "p": str(row.get("markPrice") or "0"),

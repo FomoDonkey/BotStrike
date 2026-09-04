@@ -504,3 +504,68 @@ def test_the_wider_spread_reaches_the_fill():
     btc_fill = eng.state.positions["BTCUSDT"].entry_price
     xau_fill = eng.state.positions["XAU-USD"].entry_price
     assert xau_fill > btc_fill        # the metal's entry is worse, because its book is thinner
+
+
+# ── the venue's mark reaches an open position the moment the venue publishes it ────────────────
+def test_set_venue_mark_revalues_the_position_at_once(tmp_path):
+    """The loop re-marks the book once a minute off a 15 s copy of the venue marks, so an open
+    position's PnL on screen moved once a minute while the header moved every five seconds
+    (Edgar, 2026-09-05). The feed now hands the mark over as it arrives."""
+    eng, _, _ = _engine(tmp_path, {"BTCUSDT": _frame("up"), "XAU-USD": _frame("up", seed=2)})
+    eng.state.positions["BTCUSDT"] = BookPosition(symbol="BTCUSDT", size=0.001, entry_price=78_000.0,
+                                                  entry_fee_rate=0.0005, weight=0.1, opened="2026-09-01",
+                                                  opened_ts=NOW - 86_400, mark_price=79_000.0)
+    eng.state.positions["XAU-USD"] = BookPosition(symbol="XAU-USD", size=-0.01, entry_price=4_500.0,
+                                                  entry_fee_rate=0.0005, weight=0.1, opened="2026-09-01",
+                                                  opened_ts=NOW - 86_400, mark_price=4_500.0)
+    # the pool symbol is found through its UI form, and a Strike-style symbol through itself
+    eng.set_venue_mark("BTC-USD", 79_500.0)
+    eng.set_venue_mark("xau-usd", 4_480.0)
+    assert eng.state.positions["BTCUSDT"].mark_price == 79_500.0
+    assert eng.state.positions["BTCUSDT"].unrealized_pnl == pytest.approx(1.5)
+    assert eng.state.positions["XAU-USD"].mark_price == 4_480.0
+    assert eng.state.positions["XAU-USD"].unrealized_pnl == pytest.approx(0.2)      # a short gains
+    assert eng.last_marks == {"BTCUSDT": 79_500.0, "XAU-USD": 4_480.0}
+    assert eng.venue_marks == {"BTC-USD": 79_500.0, "XAU-USD": 4_480.0}
+    # a market without a position is remembered for the next entry; junk is ignored
+    eng.set_venue_mark("WTI-USD", 91.2)
+    eng.set_venue_mark("BTC-USD", 0)
+    eng.set_venue_mark("BTC-USD", "nan")
+    eng.set_venue_mark("", 5.0)
+    assert eng.venue_marks["WTI-USD"] == 91.2
+    assert eng.state.positions["BTCUSDT"].mark_price == 79_500.0
+
+
+def test_tracking_records_one_honest_row_per_day(tmp_path):
+    """Six rows for three days and every paper return exactly 0.0 (CT, 2026-09-05): the caller had
+    overwritten `equity_basis` before the record was cut, and every run appended."""
+    eng, _, _ = _engine(tmp_path, {"BTCUSDT": _frame("up")})
+    st = eng.state
+    st.opens_prev = {"BTCUSDT": 100.0}
+    st.weights = {"BTCUSDT": 0.5}
+    st.last_run_date = "2026-09-01"
+    st.equity_basis = 1_005.0                       # already today's equity, as run_once sets it
+    eng._record_tracking("2026-09-02", {"BTCUSDT": 101.0}, 0.0, 1_005.0, prev_equity=1_000.0)
+    assert st.tracking == [{"date": "2026-09-02", "model_ret": 0.005, "paper_ret": 0.005, "turnover": 0.0}]
+    # a re-run of the same day (restart, manual run) does not add a second row for it
+    st.last_run_date = "2026-09-02"
+    eng._record_tracking("2026-09-02", {"BTCUSDT": 101.0}, 0.35, 1_006.0, prev_equity=1_005.0)
+    assert len(st.tracking) == 1 and st.tracking[0]["turnover"] == 0.0
+    # the next day is a new row; without a previous basis the paper return is unknown, not 0 %
+    st.opens_prev = {"BTCUSDT": 101.0}                # run_once moves the opens on after recording
+    eng._record_tracking("2026-09-03", {"BTCUSDT": 99.0}, 0.0, 1_000.0, prev_equity=0.0)
+    assert [r["date"] for r in st.tracking] == ["2026-09-02", "2026-09-03"]
+    assert st.tracking[-1]["model_ret"] == pytest.approx(0.5 * (99.0 / 101.0 - 1.0), abs=1e-6)
+    assert st.tracking[-1]["paper_ret"] == 0.0
+
+
+def test_state_load_keeps_one_tracking_row_per_day():
+    st = TrendState.from_json({"tracking": [
+        {"date": "2026-09-02", "model_ret": 0.0, "paper_ret": 0.0, "turnover": 0.0},
+        {"date": "2026-09-03", "model_ret": -0.000628, "paper_ret": 0.0, "turnover": 0.0},
+        {"date": "2026-09-03", "model_ret": 0.0, "paper_ret": 0.0, "turnover": 0.0},
+        {"date": "2026-09-03", "model_ret": -0.000195, "paper_ret": 0.0, "turnover": 0.3548},
+        {"date": "2026-09-04", "model_ret": 0.00927, "paper_ret": 0.0, "turnover": 0.1491},
+    ]})
+    assert [r["date"] for r in st.tracking] == ["2026-09-02", "2026-09-03", "2026-09-04"]
+    assert st.tracking[1]["turnover"] == 0.3548          # the run that completed the day

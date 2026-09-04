@@ -255,7 +255,7 @@ def test_every_open_market_reaches_the_socket_and_closures_are_cleared(monkeypat
     sent = []
 
     class _Ch:
-        async def broadcast(self, channel, msg):
+        async def broadcast(self, channel, msg, retain=None):
             sent.append((msg["symbol"], len(msg["data"])))
 
     rows = [{"symbol": s} for s in ("BTC-USD", "SOL-USD", "SP500-USD", "WTI-USD")]
@@ -263,6 +263,7 @@ def test_every_open_market_reaches_the_socket_and_closures_are_cleared(monkeypat
     monkeypatch.setattr(bridge.state, "engine", type("E", (), {"trend_engine": object()})())
     monkeypatch.setattr(bridge.state, "channels", _Ch())
     bridge._trend_symbols_sent.clear()
+    bridge._positions_sent.clear()
 
     asyncio.get_event_loop_policy().new_event_loop().run_until_complete(bridge._broadcast_trend_positions())
     assert sorted(sent) == [("BTC-USD", 1), ("SOL-USD", 1), ("SP500-USD", 1), ("WTI-USD", 1)]
@@ -274,6 +275,39 @@ def test_every_open_market_reaches_the_socket_and_closures_are_cleared(monkeypat
     asyncio.get_event_loop_policy().new_event_loop().run_until_complete(bridge._broadcast_trend_positions())
     assert ("WTI-USD", 0) in sent
     assert "WTI-USD" not in bridge._trend_symbols_sent
+
+
+def test_positions_go_out_when_they_change_and_are_retained_for_newcomers(monkeypatch):
+    """22 identical position frames per market per 40 s were on the socket (2026-09-05). A frame is
+    sent when the rows changed — the mark moved, the size changed — never for the clock alone, and
+    the last frame is retained so a client connecting in between still gets it at once."""
+    sent = []
+
+    class _Ch:
+        async def broadcast(self, channel, msg, retain=None):
+            sent.append((msg["symbol"], msg["data"][0]["mark_price"] if msg["data"] else None, retain))
+
+    rows = [{"symbol": "XAU-USD", "mark_price": 4433.0, "hold_sec": 100.0}]
+    monkeypatch.setattr(bridge, "_paper_position_rows", lambda eng: [dict(r) for r in rows])
+    monkeypatch.setattr(bridge.state, "engine", type("E", (), {"trend_engine": object()})())
+    monkeypatch.setattr(bridge.state, "channels", _Ch())
+    bridge._trend_symbols_sent.clear()
+    bridge._positions_sent.clear()
+    run = lambda: asyncio.get_event_loop_policy().new_event_loop().run_until_complete(bridge._broadcast_trend_positions())
+
+    run()
+    assert sent == [("XAU-USD", 4433.0, "positions:XAU-USD")]
+    rows[0]["hold_sec"] = 102.0                  # only the clock moved
+    run()
+    assert len(sent) == 1
+    rows[0]["mark_price"] = 4440.5               # the venue's mark moved
+    run()
+    assert sent[-1] == ("XAU-USD", 4440.5, "positions:XAU-USD")
+    rows.clear()                                 # closed: said once, and retained as empty
+    run()
+    assert sent[-1] == ("XAU-USD", None, "positions:XAU-USD")
+    run()
+    assert len(sent) == 3
 
 
 def test_markets_endpoint_lists_the_whole_venue_not_only_the_feed(st, monkeypatch):

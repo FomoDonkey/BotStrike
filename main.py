@@ -253,6 +253,7 @@ class BotStrike:
             asyncio.create_task(self._data_refresh_loop()),
             asyncio.create_task(self._metrics_loop()),
             asyncio.create_task(self._funding_loop()),
+            asyncio.create_task(self._risk_mark_loop()),
         ]
         if self.trend_engine is not None:
             tasks.append(asyncio.create_task(self.trend_engine.run_loop()))
@@ -293,16 +294,25 @@ class BotStrike:
         Si un task no-crítico (metrics, data_refresh) muere, se reinicia.
         Si un task crítico (strategy, mm, risk, websocket) muere 3 veces, se hace shutdown.
         """
-        task_names = ["ws_market", "strategy", "risk_monitor", "data_refresh", "metrics"]
+        # POSITIONAL: this list must mirror the `tasks` list in run(), entry for entry. It had
+        # stopped at "metrics" while run() had grown a funding loop, so every name after it was
+        # off by one — a crash of the funding loop was logged as "trend_daily" and restarted the
+        # TREND loop (a second copy of it), and a crash of the trend loop was "ws_user", which is
+        # not restartable: the book would have stopped trading in silence (audit 2026-09-05).
+        task_names = ["ws_market", "strategy", "risk_monitor", "data_refresh", "metrics", "funding", "risk_mark"]
         if self.trend_engine is not None:
             task_names.append("trend_daily")
         if len(tasks) > len(task_names):
             task_names.append("ws_user")
+        if len(tasks) != len(task_names):
+            logger.error("task_supervision_misaligned", tasks=len(tasks), names=task_names)
 
         # Tasks que pueden reiniciarse (no-críticos)
         restartable_methods = {
             "metrics": self._metrics_loop,
             "data_refresh": self._data_refresh_loop,
+            "funding": self._funding_loop,
+            "risk_mark": self._risk_mark_loop,
         }
         if self.trend_engine is not None:
             restartable_methods["trend_daily"] = self.trend_engine.run_loop
@@ -431,10 +441,16 @@ class BotStrike:
         async def on_mark_price(data: Dict):
             try:
                 symbol = str(data.get("s") or "")
+                mark = float(data.get("p") or 0)
+                # The trend book is valued at the venue's mark; give it the mark the moment the
+                # venue publishes it, for every market — not once a minute off a 15 s copy.
+                te = getattr(self, "trend_engine", None)
+                if te is not None and symbol and mark > 0:
+                    te.set_venue_mark(symbol, mark)
+                    self._venue_marks[symbol.upper()] = mark
                 snap = self.market_data.get_snapshot(symbol) if symbol else None
                 if snap is None:
                     return
-                mark = float(data.get("p") or 0)
                 index = float(data.get("i") or 0)
                 rate = float(data.get("r") or 0)
                 if mark > 0:
@@ -473,8 +489,8 @@ class BotStrike:
                         self.trade_db.on_trade(
                             trade,
                             regime=regime,
-                            equity_before=self.risk_manager.current_equity,
-                            equity_after=self.risk_manager.current_equity + trade.pnl,
+                            equity_before=self.risk_manager.realized_equity,
+                            equity_after=self.risk_manager.realized_equity + trade.pnl,
                             micro_vpin=micro.vpin.vpin if micro and micro.vpin else 0,
                             micro_risk_score=micro.risk_score if micro else 0,
                         )
@@ -754,10 +770,11 @@ class BotStrike:
             for strategy in self.strategies:
                 if strategy.strategy_type == trade.strategy and hasattr(strategy, "notify_external_exit"):
                     strategy.notify_external_exit(trade.symbol, time.time())
-        # Capturar equity ANTES de actualizar
-        equity_before = self.risk_manager.current_equity
+        # Capturar equity ANTES de actualizar — the REALISED ledger: current_equity is now
+        # mark-to-market and already carries this position's open PnL
+        equity_before = self.risk_manager.realized_equity
         new_equity = equity_before + trade.pnl
-        await self.risk_manager.update_equity_safe(new_equity)
+        await self.risk_manager.update_equity_safe(new_equity, unrealized=self._unrealized_total())
         self.metrics.update_equity(new_equity)
         if trade.pnl != 0:
             await self.risk_manager.record_trade_result_safe(trade.pnl, strategy=trade.strategy)
@@ -1075,9 +1092,9 @@ class BotStrike:
                 total = self.funding.mark_settled(payments, now)
                 if not payments:
                     continue
-                equity_before = self.risk_manager.current_equity
+                equity_before = self.risk_manager.realized_equity
                 new_equity = equity_before + total
-                await self.risk_manager.update_equity_safe(new_equity)
+                await self.risk_manager.update_equity_safe(new_equity, unrealized=self._unrealized_total())
                 self.metrics.update_equity(new_equity)
                 await self.risk_manager.record_trade_result_safe(total, strategy=None)
                 for p in payments:
@@ -1187,8 +1204,24 @@ class BotStrike:
         the fixed initial capital otherwise."""
         tc = self.settings.trading
         if tc.compounding_enabled:
-            return max(1.0, float(self.risk_manager.current_equity) + self._unrealized_total())
+            # the ledger plus the open PnL as it stands NOW — not the mark the risk loop took up
+            # to five seconds ago
+            return max(1.0, float(self.risk_manager.realized_equity) + self._unrealized_total())
         return float(tc.initial_capital)
+
+    async def _risk_mark_loop(self, poll_sec: float = 5.0) -> None:
+        """Hand the risk manager the open PnL every few seconds.
+
+        The backtester that validated the risk profiles fed the risk manager mark-to-market equity
+        on every bar; the live engine fed it fills only, so the drawdown halt and the circuit
+        breaker could not see a book that was under water until it closed (audit 2026-09-05).
+        """
+        while self._running:
+            try:
+                await self.risk_manager.update_unrealized_safe(self._unrealized_total())
+            except Exception as e:  # noqa: BLE001 - a marking error must not stop the loop
+                logger.debug("risk_mark_error", error=str(e)[:160])
+            await asyncio.sleep(poll_sec)
 
     # ── Edge monitor (analytics/edge.py) ──────────────────────────────
     async def _edge_monitor_tick(self, force: bool = False) -> None:

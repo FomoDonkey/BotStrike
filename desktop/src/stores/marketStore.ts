@@ -253,6 +253,14 @@ export const useMarketStore = create<MarketState>((set, get) => ({
       updates.marketInfo = { ...s.marketInfo, [sym]: next };
     }
 
+    // Liveness: a mark or a price in the snapshot is the venue talking, whether or not anything
+    // traded. The footer's "feed age" counted trades only, so on a thin market it climbed to
+    // minutes while the mark moved every five seconds (audit 2026-09-05).
+    if (isFiniteNum(data.mark_price) || (typeof data.price === "number" && data.price > 0)) {
+      const nowMs = Date.now();
+      if (nowMs - s.lastTickAt >= 1000) updates.lastTickAt = nowMs;
+    }
+
     if (Object.keys(updates).length > 0) {
       set(updates);
     }

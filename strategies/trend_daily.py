@@ -269,6 +269,14 @@ class TrendState:
                   "last_run_late"):
             if k in d:
                 setattr(st, k, d[k])
+        # One tracking row per day. Files written before 2026-09-05 hold a row per RUN — a restart
+        # or a manual run on a day already recorded added a second row for it (six rows for three
+        # days on the CT). The last row of a day is the one cut by the run that completed it.
+        seen: Dict[str, Dict[str, Any]] = {}
+        for rec in st.tracking or []:
+            if isinstance(rec, dict) and rec.get("date"):
+                seen[str(rec["date"])] = rec
+        st.tracking = list(seen.values())
         return st
 
 
@@ -472,6 +480,7 @@ class TrendDailyEngine:
                 logger.warning("trend_late_run_fills_at_current_price", lag_hours=round((now - sched) / 3600, 1))
             st.last_run_late = late
             equity = float(self._equity_provider())
+            prev_basis = float(st.equity_basis or 0.0)
             st.equity_basis = equity
             turnover = 0.0
             for sym, w in sorted(exec_w.items()):
@@ -482,7 +491,7 @@ class TrendDailyEngine:
                 turnover += abs(w - float(st.weights.get(sym, 0.0)))
                 await self._execute_symbol(sym, w, price, equity, today_key, now)
             st.targets = {s: round(w, 6) for s, w in targets.items() if s in st.universe or w > 0}
-            self._record_tracking(today_key, opens, turnover, equity)
+            self._record_tracking(today_key, opens, turnover, equity, prev_basis)
             st.opens_prev = opens
             st.last_run_date = today_key
             st.last_run_ts = now
@@ -652,18 +661,29 @@ class TrendDailyEngine:
                     pnl=round(pnl, 4), full=full_exit, direction="long" if long_pos else "short")
 
     def _record_tracking(self, today_key: str, opens: Dict[str, float], turnover: float,
-                         equity: float) -> None:
+                         equity: float, prev_equity: float = 0.0) -> None:
+        """One record per trading day: the model's open-to-open return against the book's.
+
+        Two faults lived here (found 2026-09-05 on the CT: six records for three days, every
+        `paper_ret` exactly 0.0, and a 7.4 % "tracking error" built on them). The caller had
+        already overwritten `equity_basis` with today's equity before this ran, so the paper
+        return compared today with itself; and every run appended, so a restart or a manual
+        `/api/trend/run` on a day already recorded added a second row for it — with the model
+        return of a zero-length day. The previous basis is now handed in, and a day is recorded once.
+        """
         st = self.state
         if not st.opens_prev or not st.last_run_date:
             return
+        if st.last_run_date == today_key:
+            return                                   # a re-run of a day already on the record
         cost_bps = float(self.config.taker_fee) * 1e4 + float(self.config.slippage_bps)
         weights_prev = {s: w for s, w in st.weights.items()}  # weights held since the previous run
         model_ret = model_daily_return(weights_prev, st.opens_prev, opens, turnover, cost_bps)
-        prev_eq = float(st.equity_basis) if st.equity_basis else equity
+        prev_eq = float(prev_equity) if prev_equity and prev_equity > 0 else 0.0
         paper_ret = (equity / prev_eq - 1.0) if prev_eq > 0 else 0.0
         rec = {"date": today_key, "model_ret": round(model_ret, 6), "paper_ret": round(paper_ret, 6),
                "turnover": round(turnover, 4)}
-        st.tracking = (st.tracking + [rec])[-400:]
+        st.tracking = ([r for r in st.tracking if r.get("date") != today_key] + [rec])[-400:]
 
     async def close_all(self, reason: str = "risk_halt") -> int:
         """Close every book position at the latest known price (risk halt only —
@@ -796,6 +816,28 @@ class TrendDailyEngine:
                 mark = float(df["close"].iloc[-1])
             pos.mark_price = float(mark)
             self.last_marks[sym] = pos.mark_price
+
+    def set_venue_mark(self, ui_symbol: str, mark: float) -> None:
+        """A fresh venue mark for one market, straight from the feed's premiumIndex poll (5 s).
+
+        `run_loop` re-marks the book once a minute, and the venue marks it reads were themselves
+        refreshed on a 15 s clock — so an open position's PnL on screen moved once a minute while
+        the header's mark moved every few seconds (Edgar, 2026-09-05). The valuation is the venue's
+        either way; this only makes it land when the venue publishes it. Signals still come from
+        closing bars, untouched.
+        """
+        try:
+            m = float(mark)
+        except (TypeError, ValueError):
+            return
+        if not m > 0 or not ui_symbol:
+            return
+        key = str(ui_symbol).upper()
+        self.venue_marks[key] = m
+        for sym, pos in self.state.positions.items():
+            if str(sym).upper() == key or to_ui_symbol(sym) == key:
+                pos.mark_price = m
+                self.last_marks[sym] = m
 
     def exit_ladders(self) -> Dict[str, Dict[str, Any]]:
         """Exit ladder per held market: the price levels at which each Donchian sub-strategy drops

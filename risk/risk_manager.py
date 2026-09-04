@@ -44,7 +44,13 @@ class RiskManager:
 
         # Estado de riesgo
         self._equity_peak: float = self.config.initial_capital
-        self._current_equity: float = self.config.initial_capital
+        self._current_equity: float = self.config.initial_capital   # realised ledger
+        # Open PnL, marked by the engine every few seconds (update_unrealized). Every limit,
+        # the peak and the drawdown read realised + open: the backtester that validated the
+        # profiles fed this manager mark-to-market equity on every bar, while the live engine
+        # fed it fills only — so a book 20 % under water would not have tripped the 36 %
+        # drawdown halt until it closed (audit 2026-09-05).
+        self._unrealized: float = 0.0
         self._positions: Dict[str, Position] = {}
         self._daily_pnl: float = 0.0
         self._weekly_pnl: float = 0.0
@@ -268,7 +274,7 @@ class RiskManager:
                         drawdown_pct=round(self.current_drawdown_pct, 4))
 
         # 1a. Verificar daily loss limit (escalera de drawdown, nivel 1)
-        max_daily_loss = self._current_equity * self.config.max_daily_loss_pct
+        max_daily_loss = self._mtm() * self.config.max_daily_loss_pct
         if self._daily_pnl < 0 and abs(self._daily_pnl) >= max_daily_loss:
             logger.warning("daily_loss_limit_reached",
                            daily_pnl=round(self._daily_pnl, 2),
@@ -276,7 +282,7 @@ class RiskManager:
             return None
 
         # 1a'. Verificar weekly loss limit (nivel 2; restaurado desde la DB al arrancar)
-        max_weekly_loss = self._current_equity * getattr(self.config, "max_weekly_loss_pct", 1.0)
+        max_weekly_loss = self._mtm() * getattr(self.config, "max_weekly_loss_pct", 1.0)
         if self._weekly_pnl < 0 and abs(self._weekly_pnl) >= max_weekly_loss:
             logger.warning("weekly_loss_limit_reached",
                            weekly_pnl=round(self._weekly_pnl, 2),
@@ -312,9 +318,9 @@ class RiskManager:
         max_lev = min(sym_config.leverage, self.config.max_leverage)
         position_value = adjusted_size
         required_margin = position_value / max_lev
-        if required_margin > self._current_equity * 0.5:
+        if required_margin > self._mtm() * 0.5:
             # Reducir tamaño para cumplir con margen (sin exceder límites previos)
-            adjusted_size = min(adjusted_size, self._current_equity * 0.5 * max_lev)
+            adjusted_size = min(adjusted_size, self._mtm() * 0.5 * max_lev)
             logger.info("size_reduced_margin", symbol=signal.symbol,
                         new_size=adjusted_size)
 
@@ -353,7 +359,7 @@ class RiskManager:
         With $300, 60% exposure, 5x leverage: max = $900 notional.
         """
         total_exposure = sum(p.notional for p in self._positions.values())
-        max_exposure = self._current_equity * self.config.max_total_exposure_pct * self.config.max_leverage
+        max_exposure = self._mtm() * self.config.max_total_exposure_pct * self.config.max_leverage
         return (total_exposure + signal.size_usd) > max_exposure
 
     def _adjust_position_size(
@@ -381,7 +387,7 @@ class RiskManager:
 
         # Límite por riesgo por trade (use Kelly if enough data, else default)
         kelly_pct = self.get_kelly_risk_pct(signal.strategy)
-        max_risk = self._current_equity * kelly_pct
+        max_risk = self._mtm() * kelly_pct
         risk_per_unit = abs(signal.entry_price - signal.stop_loss)
         # Guard entry ≈ stop: RELATIVE threshold (audit R2 risk_sizing-01). The old
         # absolute `< 0.001` was in PRICE units — on ADA at $0.20 it demanded a
@@ -419,19 +425,44 @@ class RiskManager:
 
     # ── Estado del portafolio ──────────────────────────────────────
 
-    def update_equity(self, equity: float, timestamp: float = 0.0) -> None:
+    def update_equity(self, equity: float, timestamp: float = 0.0,
+                      unrealized: Optional[float] = None) -> None:
         """Actualiza equity actual y peak.
 
         Thread-safe via _state_lock cuando se llama desde async context.
         Sync callers (backtester) pueden llamar directamente — single-threaded.
         """
         self._current_equity = equity
-        if equity > self._equity_peak:
-            self._equity_peak = equity
+        # A fill moves open PnL onto the ledger: the caller hands over the open PnL that remains,
+        # or the peak would be read off the ledger PLUS the PnL just realised (5 s of double count).
+        if unrealized is not None and unrealized == unrealized:
+            self._unrealized = float(unrealized)
+        if self._mtm() > self._equity_peak:
+            self._equity_peak = self._mtm()
 
         # Alimentar volatility targeting
-        self.vol_targeting.on_equity_update(equity, timestamp or time.time())
+        self.vol_targeting.on_equity_update(self._mtm(), timestamp or time.time())
+        self._arm_circuit_breaker_if_severe()
 
+    def update_unrealized(self, unrealized: float) -> None:
+        """Mark the open positions: the peak, the drawdown, the circuit breaker and every
+        limit see realised + open from here on, as they do in the backtester."""
+        try:
+            u = float(unrealized)
+        except (TypeError, ValueError):
+            return
+        if u != u:                                   # NaN
+            return
+        self._unrealized = u
+        if self._mtm() > self._equity_peak:
+            self._equity_peak = self._mtm()
+        self._arm_circuit_breaker_if_severe()
+
+    async def update_unrealized_safe(self, unrealized: float) -> None:
+        async with self._state_lock:
+            self.update_unrealized(unrealized)
+
+    def _arm_circuit_breaker_if_severe(self) -> None:
         # Activar circuit breaker si drawdown es severo (>80% of max)
         if self.current_drawdown_pct > self.config.max_drawdown_pct * 0.8:
             if not self._circuit_breaker_active:
@@ -446,10 +477,11 @@ class RiskManager:
                 self._circuit_breaker_active = True
                 self._circuit_breaker_until = time.time() + 300  # 5 min cooldown
 
-    async def update_equity_safe(self, equity: float, timestamp: float = 0.0) -> None:
+    async def update_equity_safe(self, equity: float, timestamp: float = 0.0,
+                                 unrealized: Optional[float] = None) -> None:
         """Async-safe version of update_equity — acquires lock."""
         async with self._state_lock:
-            self.update_equity(equity, timestamp)
+            self.update_equity(equity, timestamp, unrealized=unrealized)
 
     def update_position(self, symbol: str, position: Optional[Position]) -> None:
         """Actualiza posición registrada."""
@@ -492,11 +524,11 @@ class RiskManager:
         if strategy and strategy in self.kelly:
             self.kelly[strategy].record_trade(pnl)
         # Recalcular Risk of Ruin (portfolio + la estrategia que cerró el trade)
-        self.risk_of_ruin.compute(self._current_equity)
+        self.risk_of_ruin.compute(self._mtm())
         if strategy is not None:
             model = self._ror_for(strategy)
             model.record_trade(pnl)
-            model.compute(self._current_equity)
+            model.compute(self._mtm())
 
     async def record_trade_result_safe(self, pnl: float, strategy: Optional[StrategyType] = None) -> None:
         """Async-safe version of record_trade_result — acquires lock."""
@@ -616,11 +648,20 @@ class RiskManager:
     def current_drawdown_pct(self) -> float:
         if self._equity_peak == 0:
             return 0.0
-        return (self._equity_peak - self._current_equity) / self._equity_peak
+        return (self._equity_peak - self._mtm()) / self._equity_peak
 
     @property
     def current_equity(self) -> float:
+        """Mark-to-market: realised ledger + open PnL (what every limit is measured against)."""
+        return self._mtm()
+
+    @property
+    def realized_equity(self) -> float:
+        """The realised ledger alone — what a fill adds its PnL to, and what the trade DB chains."""
         return self._current_equity
+
+    def _mtm(self) -> float:
+        return self._current_equity + self._unrealized
 
     @property
     def is_circuit_breaker_active(self) -> bool:
@@ -660,15 +701,15 @@ class RiskManager:
         slip = self.slippage_tracker.get_stats()
 
         return {
-            "equity": self._current_equity,
+            "equity": self._mtm(),
             "equity_peak": self._equity_peak,
             "drawdown_pct": round(self.current_drawdown_pct, 4),
             "total_exposure": self.total_exposure,
             "daily_pnl": self._daily_pnl,
-            "max_daily_loss": round(self._current_equity * self.config.max_daily_loss_pct, 2),
+            "max_daily_loss": round(self._mtm() * self.config.max_daily_loss_pct, 2),
             "weekly_pnl": self._weekly_pnl,
             "max_weekly_loss": round(
-                self._current_equity * getattr(self.config, "max_weekly_loss_pct", 1.0), 2),
+                self._mtm() * getattr(self.config, "max_weekly_loss_pct", 1.0), 2),
             "drawdown_halted": self._drawdown_halted,
             "total_pnl": self._total_pnl,
             "consecutive_losses": self._consecutive_losses,

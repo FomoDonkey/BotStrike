@@ -104,7 +104,8 @@ def test_mark_index_and_funding_are_polled_because_no_stream_carries_them():
         assert path == "/premiumIndex"
         return [{"symbol": "BTC-USD", "markPrice": "80818.7", "indexPrice": "80814.9",
                  "fundingRate": "0.0000597", "nextFundingTime": 1788498000000},
-                {"symbol": "ETH-USD", "markPrice": "2503.9"}]        # not subscribed: ignored
+                {"symbol": "ETH-USD", "markPrice": "2503.9"},        # not subscribed: still emitted —
+                {"symbol": ""}]                                      # the trend book holds unstreamed markets
 
     async def run():
         ws.on("markPrice", cb)
@@ -118,8 +119,11 @@ def test_mark_index_and_funding_are_polled_because_no_stream_carries_them():
         await asyncio.gather(ws._mark_loop(), stop_soon())
 
     asyncio.run(run())
-    assert len(seen) == 1 and seen[0]["s"] == "BTC-USD"
+    # every market the venue quotes, in one poll: the trend book is valued at these marks and
+    # holds gold, silver, oil and the S&P, none of which is a streamed symbol (2026-09-05)
+    assert [d["s"] for d in seen] == ["BTC-USD", "ETH-USD"]
     assert seen[0]["p"] == "80818.7" and seen[0]["i"] == "80814.9" and seen[0]["r"] == "0.0000597"
+    assert seen[1]["p"] == "2503.9"
 
 
 # ── the thin-venue consequence: bars come from the venue, not from ticks ──────────────────────

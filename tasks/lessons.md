@@ -1516,3 +1516,18 @@ decae el peso; `rolling().std()` es muestral (ddof=1); el RSI del motor da 100 e
 ratio; el z-score usa `mr_lookback` = 100, no 20. Reproducir eso en TS es lo que hace que el número
 de la leyenda sea el número que decide el bot. Ocultar los primeros n valores de una EMA sembrada es
 presentación, no cálculo.
+
+## Medir la frescura, no suponerla (2026-09-05)
+"Las posiciones van con retraso" se resolvió muestreando el DOM cada 500 ms y contando cambios por campo
+junto a los frames del socket: la cabecera cambió 6 veces en 40 s, la posición 0–1. Sin esa tabla, la
+respuesta habría sido "el socket emite cada 1,2 s, está bien" — emitía, pero el mismo número.
+
+## La validación solo vale si el motor en vivo alimenta al riesgo igual que el backtester (2026-09-05)
+El backtester pasaba equity mark-to-market al RiskManager cada barra; el motor solo pasaba fills. Los
+perfiles "validados 11/11" tenían en vivo un freno por drawdown que no veía el libro abierto. Cuando se
+valida con un componente, hay que comprobar que el mismo componente recibe las mismas entradas en producción.
+
+## Una lista posicional de nombres es una trampa (2026-09-05)
+`task_names` y `tasks` se construían por separado; al añadir un bucle a uno y no al otro, el supervisor
+reiniciaba el bucle equivocado. Si dos listas deben ir emparejadas, construirlas en un solo sitio o
+comprobar su longitud al arrancar.

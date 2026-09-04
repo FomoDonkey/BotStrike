@@ -259,6 +259,7 @@ class TradeRepository:
         end_time: Optional[float] = None,
         limit: int = 0,
         newest_first: bool = False,
+        exclude_trade_type: Optional[str] = None,
     ) -> List[TradeRecord]:
         """Consulta trades con filtros opcionales.
 
@@ -288,6 +289,10 @@ class TradeRepository:
         if trade_type:
             conditions.append("trade_type = ?")
             params.append(trade_type)
+        if exclude_trade_type:
+            # legacy rows carry no trade_type: they are fills, and stay
+            conditions.append("(trade_type IS NULL OR trade_type != ?)")
+            params.append(exclude_trade_type)
         if start_time is not None:
             conditions.append("timestamp >= ?")
             params.append(start_time)

@@ -2179,3 +2179,14 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
 - [ ] Un mercado solo-venue a 1d va un día por detrás (Strike publica la diaria al cierre; XAG 1d tenía
       46 h): se podría fundir la marca viva en la última vela
 - [ ] Verlo en Chrome real con Edgar
+
+## Auditoría integral (2026-09-05) — ver `tasks/audit_2026-09-05.md`
+- [x] R1 posiciones en tiempo real (marca del venue cada 5 s → libro trend → socket solo si cambia, retenido)
+- [x] R2 risk manager mark-to-market como el backtester (drawdown / breaker / exposición ven pérdidas abiertas)
+- [x] R3 supervisor de tareas desalineado (funding ↔ trend_daily ↔ ws_user)
+- [x] R4 tracking modelo vs paper (paper_ret siempre 0, filas duplicadas)
+- [x] R5 `/api/trades` cuenta fills, no funding
+- [x] R6 un solo poll de `/api/markets` (antes 12 en 16 s)
+- [x] R7 "feed age" cuenta trade o marca
+- [ ] Desplegar y volver a medir la frescura de las posiciones en el CT
+- [ ] Decidir: Daily/Weekly PnL realizados vs MTM; "2x" en la cabecera del bot vs posiciones 1x
