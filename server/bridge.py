@@ -137,25 +137,40 @@ class ChannelManager:
         self._channels: Dict[str, Set[WebSocket]] = {
             ch: set() for ch in self.VALID_CHANNELS
         }
+        # The last message per (channel, key), replayed to a client the moment it connects. The
+        # candle loop only broadcasts when a bar CHANGED, and on a market where 91 % of the bars
+        # are flat the next change can be minutes away — a freshly opened page sat on an empty
+        # chart until then, which read as a broken chart (2026-09-04).
+        self._retained: Dict[str, Dict[str, str]] = {ch: {} for ch in self.VALID_CHANNELS}
 
     async def connect(self, channel: str, ws: WebSocket):
         if channel not in self._channels:
             return
         await ws.accept()
         self._channels[channel].add(ws)
+        for message in tuple(self._retained[channel].values()):
+            try:
+                await ws.send_text(message)
+            except Exception:
+                self._channels[channel].discard(ws)
+                return
 
     def disconnect(self, channel: str, ws: WebSocket):
         if channel in self._channels:
             self._channels[channel].discard(ws)
 
-    async def broadcast(self, channel: str, data: dict):
+    async def broadcast(self, channel: str, data: dict, retain: Optional[str] = None):
+        """Send `data` to every client on `channel`. With `retain`, the message is also kept under
+        that key and replayed to the next client that connects — for snapshots, never for ticks."""
         if channel not in self._channels:
             return
+        message = json.dumps(data, default=_json_default)
+        if retain is not None:
+            self._retained[channel][retain] = message
         clients = self._channels[channel]
         if not clients:
             return
         dead = []
-        message = json.dumps(data, default=_json_default)
         # Snapshot: send_text awaits, and a client can disconnect (set.discard) meanwhile.
         # Iterating the live set raised "Set changed size during iteration" 348x on the CT
         # (2026-09-02 04:28Z) and dropped that tick's market broadcast for everyone.
@@ -881,7 +896,7 @@ async def candle_broadcast_loop():
                             "type": "candles",
                             "symbol": symbol,
                             "data": candles,
-                        })
+                        }, retain=f"candles:{symbol}")
         except Exception as e:
             logger.warning("candle_broadcast_error", error=str(e), error_type=type(e).__name__)
         await asyncio.sleep(1)  # 1s broadcast — real-time feel
@@ -2240,6 +2255,87 @@ _INTERVAL_SEC = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
 _LADDER = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w"]
 _COARSER = {iv: _LADDER[i + 1:] for i, iv in enumerate(_LADDER)}
 
+
+def _engine_klines(sym: str, interval: str, limit: int) -> Optional[list]:
+    """The engine's own bars for a market it streams, resampled to `interval` — or None.
+
+    The socket sends the last 500 one-minute bars every second: enough for a 5 m chart, two
+    candles on a 4 h one. The engine holds ninety days of 1 m history for the symbols it trades,
+    and that is what the chart asks for when it opens; the socket then only carries the live edge.
+    The venue's klines are deliberately NOT used for these markets: the engine's frame is Binance
+    history with Strike's live prints on top, and a Strike window joined onto it would meet at a
+    seam between two different tapes (2026-09-04).
+    """
+    engine = state.engine
+    if engine is None or not state.running:
+        return None
+    try:
+        if sym not in {s.symbol for s in engine.settings.symbols}:
+            return None
+        secs = _INTERVAL_SEC.get(interval)
+        if not secs:
+            return None
+        df = engine.market_data.get_dataframe(sym)
+        if df is None or df.empty or "timestamp" not in df.columns:
+            return None
+        import pandas as pd
+        # a bucket needs secs/60 one-minute rows; one extra covers the bucket the tail starts in
+        tail = df.tail(limit * max(1, secs // 60) + secs // 60)
+        col = tail["timestamp"]
+        if pd.api.types.is_datetime64_any_dtype(col):
+            ts = col.astype("int64") / 1e9
+        else:
+            ts = pd.to_numeric(col, errors="coerce").astype(float)
+            ts = ts.where(ts <= 1e12, ts / 1000.0)          # ms → s, like the socket loop
+        frame = pd.DataFrame({
+            "open": tail["open"].astype(float).to_numpy(),
+            "high": tail["high"].astype(float).to_numpy(),
+            "low": tail["low"].astype(float).to_numpy(),
+            "close": tail["close"].astype(float).to_numpy(),
+            "volume": tail["volume"].astype(float).to_numpy() if "volume" in tail.columns else 0.0,
+        }, index=pd.to_datetime(ts.to_numpy(), unit="s", utc=True))
+        frame = frame[~frame.index.isna()]
+        bars = frame.resample(f"{secs}s", label="left", closed="left").agg(
+            {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+        ).dropna(subset=["open"]).tail(limit)
+        return [{"timestamp": float(t.timestamp()), "open": float(r.open), "high": float(r.high),
+                 "low": float(r.low), "close": float(r.close),
+                 "volume": float(r.volume) if r.volume == r.volume else 0.0}
+                for t, r in bars.iterrows()]
+    except Exception as e:  # noqa: BLE001 - the venue path below is the fallback
+        logger.debug("engine_klines_error", symbol=sym, interval=interval, error=str(e)[:160])
+        return None
+
+
+async def _venue_kline_rows(fetch, interval: str, limit: int, now: Optional[float] = None) -> list:
+    """The venue's newest `limit` bars at `interval`, walking the window forward page by page.
+
+    The venue answers the FIRST bars after `startTime`, and caps each answer. Asked for 1,000
+    daily bars in one request it returned the oldest of them — a BTC chart that ended at
+    64,870 $ under a header reading 79,798 $ (2026-09-04). So the window opens `limit` bars back
+    and is walked forward until it reaches the present, keeping the newest `limit` bars. A market
+    that answers fewer bars than the cap is done in one request, as before.
+    """
+    secs = _INTERVAL_SEC.get(interval, 60)
+    now = time.time() if now is None else now
+    start = int((now - limit * secs) * 1000)
+    rows: list = []
+    seen: set = set()
+    for _ in range(8):
+        batch = [k for k in await fetch({"interval": interval, "limit": limit, "startTime": start})
+                 if isinstance(k, list) and len(k) >= 6 and k[0] not in seen]
+        if not batch:
+            break
+        seen.update(k[0] for k in batch)
+        rows.extend(batch)
+        last_ms = float(batch[-1][0])
+        if len(batch) < 2 or last_ms >= (now - 2 * secs) * 1000:
+            break
+        start = int(last_ms + secs * 1000)
+    rows.sort(key=lambda k: float(k[0]))
+    return rows[-limit:]
+
+
 @app.get("/api/market/{symbol}/klines")
 async def get_market_klines(symbol: str, interval: str = "1m", limit: int = 500):
     """Candles for ANY market the venue lists, not only the four the engine streams.
@@ -2253,6 +2349,9 @@ async def get_market_klines(symbol: str, interval: str = "1m", limit: int = 500)
     """
     sym, iv = symbol.upper(), str(interval or "1m")
     limit = max(1, min(int(limit or 500), 1500))
+    engine_bars = _engine_klines(sym, iv, limit)
+    if engine_bars is not None:
+        return {"symbol": sym, "interval": iv, "requested_interval": iv, "candles": engine_bars, "source": "engine"}
     key = f"{sym}:{iv}:{limit}"
     cached = _VENUE_MD.setdefault("klines", {}).get(key)
     if cached and time.time() - cached[0] < KLINES_TTL_SEC:
@@ -2262,13 +2361,13 @@ async def get_market_klines(symbol: str, interval: str = "1m", limit: int = 500)
     try:
         async with httpx.AsyncClient(timeout=15.0, headers={"User-Agent": "botstrike/1.0"}) as c:
 
-            async def page(interval: str) -> list:
-                secs = _INTERVAL_SEC.get(interval, 60)
-                r = await c.get(f"{STRIKE_PRICE_BASE}/klines",
-                                params={"symbol": sym, "interval": interval, "limit": limit,
-                                        "startTime": int((time.time() - limit * secs) * 1000)})
+            async def fetch(params: dict) -> list:
+                r = await c.get(f"{STRIKE_PRICE_BASE}/klines", params={"symbol": sym, **params})
                 r.raise_for_status()
-                return [k for k in r.json() if isinstance(k, list) and len(k) >= 6]
+                return r.json()
+
+            async def page(interval: str) -> list:
+                return await _venue_kline_rows(fetch, interval, limit)
 
             # The venue writes a bar only for a period in which something TRADED, and it returns the
             # FIRST `limit` bars after startTime — so on a thin market a 1 m window holds a single

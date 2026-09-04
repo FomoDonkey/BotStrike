@@ -1,48 +1,49 @@
 import { useEffect, useRef, useState } from "react";
-import type { IChartApi, ISeriesApi, LogicalRange, MouseEventParams, UTCTimestamp } from "lightweight-charts";
-import { useMarketStore, type Candle } from "@/stores/marketStore";
-import { macd, resampleCandles, rsi } from "@/lib/indicators";
-import { CHART_THEME, TF_SECONDS, type Timeframe } from "./chartConfig";
-
-export type IndicatorKind = "rsi" | "macd";
+import type { AutoscaleInfo, IChartApi, ISeriesApi, LogicalRange, MouseEventParams, UTCTimestamp } from "lightweight-charts";
+import { X } from "lucide-react";
+import { useMarketStore } from "@/stores/marketStore";
+import { chartInputs, readChartCandles } from "@/lib/chartData";
+import { CHART_THEME, type Timeframe } from "./chartConfig";
+import { formatIndicatorValue, indicatorPrecision, type IndicatorDef, type SeriesSpec } from "./chartIndicators";
 
 interface IndicatorPaneProps {
   symbol: string;
   timeframe: Timeframe;
-  /** seconds per bar already in the store — see CandlestickChart; 60 for the streamed symbols */
-  sourceSeconds?: number;
-  kind: IndicatorKind;
+  def: IndicatorDef;
   /** The main candlestick chart — time scale and crosshair are kept in sync both ways */
   mainChart: IChartApi | null;
+  onRemove?: () => void;
   className?: string;
 }
 
-const LINE_COLOR = "#5AA9FF";   // MACD line: spec --blue
-const RSI_COLOR = "#4EFAB0";    // RSI: mint
-const SIGNAL_COLOR = "#F5B942"; // spec --amber
-const HIST_UP = "rgba(78,250,176,0.6)";
-const HIST_DOWN = "rgba(244,63,94,0.6)";
+/** lightweight-charts LineStyle values (Solid=0, Dotted=1, Dashed=2) without the runtime enum. */
+const LINE_STYLE = { solid: 0, dotted: 1, dashed: 2 } as const;
 
-interface PaneSeries {
-  a: ISeriesApi<"Line"> | null;
-  b: ISeriesApi<"Line"> | null;
-  h: ISeriesApi<"Histogram"> | null;
-}
+type PaneSeries =
+  | { kind: "line"; api: ISeriesApi<"Line"> }
+  | { kind: "histogram"; api: ISeriesApi<"Histogram"> };
 
 /**
- * Second lightweight-charts instance under the price chart (RSI 14 or MACD 12/26/9), synced with
- * the main chart: same right-scale width, mirrored visible logical range and crosshair.
- * The legend is written straight to the DOM (no state) so a candle burst never re-renders React.
+ * One indicator under the price chart — a second lightweight-charts instance synced with the
+ * main one: same right-scale width, mirrored visible logical range, mirrored crosshair.
+ *
+ * The axis follows the bars ON SCREEN, computed here from the indicator's own values rather than
+ * left to the library: the MACD pane used to run to −400 while every visible value sat between
+ * 0 and 56, squashing the lines into the top fifth of the pane (2026-09-04). A fixed-scale
+ * indicator (RSI) keeps its fixed scale. The legend is written straight to the DOM (no state)
+ * so a candle burst never re-renders React, and it follows the crosshair like Strike's.
  */
-export function IndicatorPane({ symbol, timeframe, kind, mainChart, className, sourceSeconds = 60 }: IndicatorPaneProps) {
+export function IndicatorPane({ symbol, timeframe, def, mainChart, onRemove, className }: IndicatorPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const legendRef = useRef<HTMLDivElement>(null);
+  const legendRef = useRef<HTMLSpanElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<PaneSeries>({ a: null, b: null, h: null });
-  /** time → value of the primary line, for crosshair sync */
-  const valuesRef = useRef<Map<number, number>>(new Map());
+  const seriesRef = useRef<PaneSeries[]>([]);
+  const specsRef = useRef<SeriesSpec[]>([]);
+  /** time → index of the drawn bars, for the crosshair legend */
+  const indexRef = useRef<Map<number, number>>(new Map());
+  const countRef = useRef(0);
+  const refPriceRef = useRef(0);
   const [ready, setReady] = useState(false);
-  const tfSeconds = TF_SECONDS[timeframe];
 
   // create / destroy the chart
   useEffect(() => {
@@ -61,7 +62,7 @@ export function IndicatorPane({ symbol, timeframe, kind, mainChart, className, s
             vertLine: { color: CHART_THEME.crosshair, width: 1, style: 2, labelBackgroundColor: CHART_THEME.labelBg },
             horzLine: { color: CHART_THEME.crosshair, width: 1, style: 2, labelBackgroundColor: CHART_THEME.labelBg },
           },
-          rightPriceScale: { borderColor: CHART_THEME.border, scaleMargins: { top: 0.15, bottom: 0.08 }, minimumWidth: CHART_THEME.priceScaleWidth },
+          rightPriceScale: { borderColor: CHART_THEME.border, scaleMargins: { top: 0.22, bottom: 0.08 }, minimumWidth: CHART_THEME.priceScaleWidth },
           timeScale: { borderColor: CHART_THEME.border, timeVisible: true, secondsVisible: false, rightOffset: 5, barSpacing: 6, visible: false },
           handleScroll: { vertTouchDrag: false },
         });
@@ -84,85 +85,163 @@ export function IndicatorPane({ symbol, timeframe, kind, mainChart, className, s
         chartRef.current.remove();
         chartRef.current = null;
       }
-      seriesRef.current = { a: null, b: null, h: null };
+      seriesRef.current = [];
     };
   }, []);
 
-  // (re)build series for the indicator kind and feed data from the store
+  // (re)build the series for this indicator and feed them from the store
   useEffect(() => {
     const chart = chartRef.current;
     if (!ready || !chart) return;
-    const prev = seriesRef.current;
-    for (const s of [prev.a, prev.b, prev.h]) {
-      if (s) { try { chart.removeSeries(s); } catch { /* disposed */ } }
+    for (const s of seriesRef.current) {
+      try { chart.removeSeries(s.api); } catch { /* disposed */ }
     }
-    const cur: PaneSeries = { a: null, b: null, h: null };
-    seriesRef.current = cur;
-    valuesRef.current = new Map();
+    seriesRef.current = [];
+    indexRef.current = new Map();
+    countRef.current = 0;
 
-    if (kind === "rsi") {
-      cur.a = chart.addLineSeries({
-        color: RSI_COLOR, lineWidth: 1, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false,
-        priceFormat: { type: "price", precision: 1, minMove: 0.1 },
-        // fixed 0–100 scale like every RSI pane
-        autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
+    // The axis: fixed for a bounded oscillator, otherwise the min/max of every series over the
+    // bars currently visible (plus zero when the indicator lives around it).
+    const autoscale = (original: () => AutoscaleInfo | null): AutoscaleInfo | null => {
+      try {
+        const fixed = def.scale?.fixed;
+        if (fixed) return { priceRange: { minValue: fixed[0], maxValue: fixed[1] } };
+        const n = countRef.current;
+        if (!n) return original();
+        const vis = chart.timeScale().getVisibleLogicalRange();
+        const from = vis ? Math.max(0, Math.floor(vis.from)) : 0;
+        const to = vis ? Math.min(n - 1, Math.ceil(vis.to)) : n - 1;
+        let lo = Infinity;
+        let hi = -Infinity;
+        for (const spec of specsRef.current) {
+          const v = spec.values;
+          for (let i = from; i <= to; i++) {
+            const x = v[i];
+            if (!Number.isFinite(x)) continue;
+            if (x < lo) lo = x;
+            if (x > hi) hi = x;
+          }
+        }
+        if (def.scale?.includeZero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+        if (!Number.isFinite(lo) || !Number.isFinite(hi)) return original();
+        if (hi === lo) {
+          const p = Math.abs(hi) * 0.05 || 1;
+          return { priceRange: { minValue: lo - p, maxValue: hi + p } };
+        }
+        const pad = (hi - lo) * 0.08;
+        return { priceRange: { minValue: lo - pad, maxValue: hi + pad } };
+      } catch {
+        return original();
+      }
+    };
+    const priceFormat = () => {
+      const p = indicatorPrecision(def, refPriceRef.current);
+      return { type: "custom" as const, formatter: (v: number) => formatIndicatorValue(def, v, refPriceRef.current), minMove: Math.pow(10, -p) };
+    };
+
+    const specs = def.compute([]);
+    specsRef.current = specs;
+    const created: PaneSeries[] = specs.map((spec) => {
+      const common = { priceLineVisible: false, lastValueVisible: true, priceFormat: priceFormat(), autoscaleInfoProvider: autoscale };
+      if (spec.kind === "histogram") {
+        return { kind: "histogram", api: chart.addHistogramSeries({ ...common, color: spec.color, lastValueVisible: false }) };
+      }
+      return {
+        kind: "line",
+        api: chart.addLineSeries({ ...common, color: spec.color, lineWidth: spec.width ?? 1, lineStyle: LINE_STYLE[spec.style ?? "solid"], crosshairMarkerVisible: false }),
+      };
+    });
+    seriesRef.current = created;
+    const anchor = created[0]?.api;
+    if (anchor) {
+      for (const lv of def.scale?.levels ?? []) {
+        anchor.createPriceLine({ price: lv.value, color: lv.color, lineWidth: 1, lineStyle: 1, axisLabelVisible: false, title: "" });
+      }
+    }
+
+    const writeLegend = (idx: number | null) => {
+      const el = legendRef.current;
+      if (!el) return;
+      const n = countRef.current;
+      const i = idx ?? n - 1;
+      const frag = document.createDocumentFragment();
+      specsRef.current.forEach((spec, k) => {
+        const v = i >= 0 ? spec.values[i] : NaN;
+        const span = document.createElement("span");
+        span.style.color = spec.kind === "histogram" && spec.colorOf && Number.isFinite(v) ? spec.colorOf(v) : spec.color;
+        span.style.marginLeft = k ? "10px" : "8px";
+        span.textContent = formatIndicatorValue(def, v, refPriceRef.current);
+        span.title = spec.name;
+        frag.append(span);
       });
-      cur.a.createPriceLine({ price: 70, color: "rgba(244,63,94,0.6)", lineWidth: 1, lineStyle: 1, axisLabelVisible: false, title: "" });
-      cur.a.createPriceLine({ price: 30, color: "rgba(78,250,176,0.6)", lineWidth: 1, lineStyle: 1, axisLabelVisible: false, title: "" });
-    } else {
-      cur.h = chart.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false, priceFormat: { type: "price", precision: 2, minMove: 0.01 } });
-      cur.a = chart.addLineSeries({ color: LINE_COLOR, lineWidth: 1, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false });
-      cur.b = chart.addLineSeries({ color: SIGNAL_COLOR, lineWidth: 1, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false });
-    }
+      el.replaceChildren(frag);
+    };
 
-    const setLegend = (text: string) => { if (legendRef.current) legendRef.current.textContent = text; };
-    let lastRef: Candle[] | undefined;
     let lastHash = "";
+    let lastPrecision = -1;
     const feed = () => {
-      const raw = useMarketStore.getState().candles[symbol];
-      if (!raw?.length) return;
-      const candles = tfSeconds > sourceSeconds ? resampleCandles(raw, tfSeconds) : raw;
+      const { candles } = readChartCandles(useMarketStore.getState(), symbol, timeframe);
+      if (!candles.length) return;
       const last = candles[candles.length - 1];
-      const hash = `${candles.length}_${last.time}_${last.close}`;
+      const hash = `${candles.length}_${last.time}_${last.close}_${last.high}_${last.low}`;
       if (hash === lastHash) return;
       lastHash = hash;
       try {
-        const values = new Map<number, number>();
-        // The indicators drop their warm-up bars (RSI 14, MACD 26+9). The main chart and this pane
-        // are synced by LOGICAL index, so the pane must hold one point per candle: pad the warm-up
-        // with whitespace points, otherwise the pane is shifted by the warm-up length (at 390 px
-        // that pushed the whole MACD out of the visible window).
-        const pad = (firstTime: number) =>
-          candles.filter((c) => c.time < firstTime).map((c) => ({ time: c.time as UTCTimestamp }));
-        if (kind === "rsi" && cur.a) {
-          const pts = rsi(candles, 14);
-          const ws = pts.length ? pad(pts[0].time) : [];
-          cur.a.setData([...ws, ...pts.map((p) => ({ time: p.time as UTCTimestamp, value: p.value }))]);
-          for (const p of pts) values.set(p.time, p.value);
-          const v = pts.length ? pts[pts.length - 1].value : NaN;
-          setLegend(`RSI 14   ${Number.isFinite(v) ? v.toFixed(1) : "---"}`);
-        } else if (kind === "macd" && cur.h && cur.a && cur.b) {
-          const pts = macd(candles, 12, 26, 9);
-          const ws = pts.length ? pad(pts[0].time) : [];
-          cur.h.setData([...ws, ...pts.map((p) => ({ time: p.time as UTCTimestamp, value: p.hist, color: p.hist >= 0 ? HIST_UP : HIST_DOWN }))]);
-          cur.a.setData([...ws, ...pts.map((p) => ({ time: p.time as UTCTimestamp, value: p.macd }))]);
-          cur.b.setData([...ws, ...pts.map((p) => ({ time: p.time as UTCTimestamp, value: p.signal }))]);
-          for (const p of pts) values.set(p.time, p.macd);
-          const l = pts[pts.length - 1];
-          setLegend(l ? `MACD 12 26 close 9   ${l.macd.toFixed(2)}   ${l.signal.toFixed(2)}   ${l.hist.toFixed(2)}` : "MACD 12 26 close 9");
+        refPriceRef.current = last.close;
+        const p = indicatorPrecision(def, last.close);
+        if (p !== lastPrecision) {
+          lastPrecision = p;
+          for (const s of seriesRef.current) s.api.applyOptions({ priceFormat: priceFormat() });
         }
-        valuesRef.current = values;
+        const computed = def.compute(candles);
+        specsRef.current = computed;
+        // one point per candle, whitespace where the indicator has no value: the main chart and
+        // this pane are synced by LOGICAL index, so the pane must not be shifted by the warm-up
+        computed.forEach((spec, k) => {
+          const s = seriesRef.current[k];
+          if (!s) return;
+          if (s.kind === "histogram") {
+            s.api.setData(candles.map((c, i) => {
+              const v = spec.values[i];
+              return Number.isFinite(v)
+                ? { time: c.time as UTCTimestamp, value: v, color: spec.colorOf ? spec.colorOf(v) : spec.color }
+                : { time: c.time as UTCTimestamp };
+            }));
+          } else {
+            s.api.setData(candles.map((c, i) => {
+              const v = spec.values[i];
+              return Number.isFinite(v) ? { time: c.time as UTCTimestamp, value: v } : { time: c.time as UTCTimestamp };
+            }));
+          }
+        });
+        const index = new Map<number, number>();
+        candles.forEach((c, i) => index.set(c.time, i));
+        indexRef.current = index;
+        countRef.current = candles.length;
+        writeLegend(null);
       } catch (e) {
         console.error("[IndicatorPane] data error:", e);
       }
     };
+    let lastInputs: unknown[] = [];
     const unsub = useMarketStore.subscribe((state) => {
-      const c = state.candles[symbol];
-      if (c !== lastRef) { lastRef = c; feed(); }
+      const inputs = chartInputs(state, symbol, timeframe);
+      if (inputs[0] !== lastInputs[0] || inputs[1] !== lastInputs[1]) { lastInputs = inputs; feed(); }
     });
     feed();
-    return () => { unsub(); };
-  }, [ready, kind, symbol, tfSeconds]);
+
+    // the legend follows the main chart's crosshair, and returns to the last bar when it leaves
+    const onMainCrosshair = (param: MouseEventParams) => {
+      const t = typeof param.time === "number" ? param.time : null;
+      const idx = t !== null ? indexRef.current.get(t) : undefined;
+      writeLegend(idx === undefined ? null : idx);
+    };
+    mainChart?.subscribeCrosshairMove(onMainCrosshair);
+    return () => {
+      unsub();
+      try { mainChart?.unsubscribeCrosshairMove(onMainCrosshair); } catch { /* disposed */ }
+    };
+  }, [ready, def, symbol, timeframe, mainChart]);
 
   // time-scale + crosshair sync with the main chart (both directions, loop-guarded)
   useEffect(() => {
@@ -183,14 +262,16 @@ export function IndicatorPane({ symbol, timeframe, kind, mainChart, className, s
     if (initial) fromMain(initial);
 
     const onMainCrosshair = (param: MouseEventParams) => {
-      const s = seriesRef.current.a;
+      const s = seriesRef.current.find((x) => x.kind === "line") ?? seriesRef.current[0];
       if (!s) return;
       try {
         if (param.time === undefined) { sub.clearCrosshairPosition(); return; }
         const t = param.time as UTCTimestamp;
-        const v = valuesRef.current.get(t as number);
-        if (v === undefined) { sub.clearCrosshairPosition(); return; }
-        sub.setCrosshairPosition(v, t, s);
+        const idx = indexRef.current.get(t as number);
+        const k = seriesRef.current.indexOf(s);
+        const v = idx === undefined ? NaN : specsRef.current[k]?.values[idx];
+        if (!Number.isFinite(v)) { sub.clearCrosshairPosition(); return; }
+        sub.setCrosshairPosition(v, t, s.api);
       } catch { /* series without that time */ }
     };
     mainChart.subscribeCrosshairMove(onMainCrosshair);
@@ -207,9 +288,22 @@ export function IndicatorPane({ symbol, timeframe, kind, mainChart, className, s
   return (
     <div className={className} style={{ position: "absolute", inset: 0 }}>
       <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
-      <div ref={legendRef} className="absolute left-2 top-1 z-[2] text-[11px] font-medium num text-text pointer-events-none select-none whitespace-pre">
-        {kind === "rsi" ? "RSI 14" : "MACD 12 26 close 9"}
+      <div className="absolute left-2 top-1 z-[2] flex items-center text-[11px] font-medium num text-text pointer-events-none select-none whitespace-pre" title={`engine: ${def.engine}`}>
+        <span className="font-semibold">{def.short}</span>
+        <span ref={legendRef} />
       </div>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          title={`Remove ${def.label}`}
+          aria-label={`Remove ${def.label}`}
+          className="absolute top-0.5 z-[2] inline-flex items-center justify-center w-5 h-5 rounded-[4px] text-text-2 hover:text-text hover:bg-hover transition-colors"
+          style={{ right: CHART_THEME.priceScaleWidth + 6 }}
+        >
+          <X className="w-3 h-3" />
+        </button>
+      )}
     </div>
   );
 }

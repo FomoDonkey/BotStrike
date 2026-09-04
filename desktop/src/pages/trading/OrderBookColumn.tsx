@@ -6,7 +6,6 @@ import { useFlashOnChange } from "@/hooks/useFlash";
 import { SYMBOL_LABELS } from "@/lib/constants";
 import { cn, formatPrice, formatSize } from "@/lib/utils";
 import { Hint } from "@/components/shared/Hint";
-import { HINTS } from "@/lib/hints";
 import { TabBar } from "@/components/ui/TabBar";
 import { IconButton } from "@/components/ui/Button";
 import { Popover, MenuItem, DropdownTrigger } from "@/components/ui/Popover";

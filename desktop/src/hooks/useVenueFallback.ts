@@ -1,51 +1,55 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { api } from "@/lib/api";
 import { useMarketStore, type Candle, type OrderBookData, type Tick } from "@/stores/marketStore";
+import { klineKey } from "@/lib/chartData";
 import { useUnstreamed } from "./useVenueMarkets";
 
-const KLINE_POLL_MS = 10_000;
+const KLINE_POLL_MS = 10_000;      // a market fed over REST: the poll IS its feed
+const KLINE_REFRESH_MS = 60_000;   // a streamed market: the socket carries the live edge
+const KLINE_LIMIT = 1000;
 const BOOK_POLL_MS = 2_500;
 const TAPE_POLL_MS = 4_000;
 
 /**
- * Fill the market store from the VENUE for a market the engine does not stream.
+ * Fill the market store from the bridge for the ONE market being looked at.
  *
- * The engine streams four symbols, so the chart, the order book and the tape read their data from
- * frames that only exist for those four: picking any of the other 27 opened a panel with live
- * numbers in the header and nothing underneath (Edgar, 2026-09-04). Strike publishes klines, depth
- * and trades for all 31, so this pulls them for the ONE market being looked at and writes them into
- * the same store the socket writes into — which means the chart, the indicators, the ladder, the
- * depth chart and the tape all work with no change of their own.
+ * Candles come over REST for EVERY market, at the timeframe the chart asked for: the engine's own
+ * 90-day frame for a symbol it streams, the venue's klines for the other 27. Until 2026-09-04 a
+ * streamed market drew only the socket's last 500 one-minute bars, so its 1 h chart held eight
+ * candles and its 4 h chart two — Strike's terminal shows months at any resolution. The socket
+ * still carries the live edge (lib/chartData.ts lays it over the history), which is why a streamed
+ * market refreshes its history once a minute while a venue-fed one polls every ten seconds.
  *
- * Only ever one symbol at a time, and only when that symbol has no stream, so the cost is a handful
- * of requests every few seconds and nothing at all on a streamed market.
+ * The order book and the tape are only pulled for a market the engine does not stream; the
+ * streamed ones get theirs tick by tick.
  */
 export function useVenueFallback(symbol: string, timeframe: string) {
   const unstreamed = useUnstreamed(symbol);
+  const interval = timeframe && timeframe !== "" ? timeframe : "1m";
   // what the venue could actually fill: a market too thin for the chosen bar gets a
   // coarser one, and the chart has to say so rather than mislabel its own candles
-  const [servedInterval, setServedInterval] = useState<string | null>(null);
+  const window = useMarketStore((s) => s.klines[klineKey(symbol, interval)]);
+  const servedInterval = window && window.interval !== interval ? window.interval : null;
 
   // ── candles ────────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!unstreamed || !symbol) return;
+    if (!symbol) return;
     let alive = true;
-    const interval = timeframe && timeframe !== "" ? timeframe : "1m";
 
     const pull = async () => {
       try {
-        const r = await api.marketKlines(symbol, interval, 500);
+        const r = await api.marketKlines(symbol, interval, KLINE_LIMIT);
         if (!alive || !r?.candles?.length) return;
-        setServedInterval(r.interval && r.interval !== interval ? r.interval : null);
         const candles: Candle[] = r.candles.map((c) => ({
           time: c.timestamp, open: c.open, high: c.high, low: c.low, close: c.close,
           volume: c.volume,
         }));
-        useMarketStore.getState().onCandles(symbol, candles);
-        // the header's live price comes from REST; the chart's last close keeps the store's price
-        // in step with it so the crosshair and the ladder do not read a stale number
+        useMarketStore.getState().onKlines(klineKey(symbol, interval), { interval: r.interval || interval, source: r.source ?? "venue", candles });
+        // A venue-fed market has no ticks: the header's live price comes from REST, and the
+        // chart's last close keeps the store's price in step with it so the crosshair and the
+        // ladder do not read a stale number. A streamed market's price is the tick stream's.
         const last = candles[candles.length - 1];
-        if (last?.close > 0) {
+        if (unstreamed && last?.close > 0) {
           useMarketStore.setState((s) => ({
             prices: { ...s.prices, [symbol]: last.close },
             prevPrices: { ...s.prevPrices, [symbol]: s.prices[symbol] ?? last.close },
@@ -55,9 +59,9 @@ export function useVenueFallback(symbol: string, timeframe: string) {
     };
 
     void pull();
-    const t = setInterval(pull, KLINE_POLL_MS);
+    const t = setInterval(pull, unstreamed ? KLINE_POLL_MS : KLINE_REFRESH_MS);
     return () => { alive = false; clearInterval(t); };
-  }, [symbol, timeframe, unstreamed]);
+  }, [symbol, interval, unstreamed]);
 
   // ── order book ─────────────────────────────────────────────────────────────
   useEffect(() => {

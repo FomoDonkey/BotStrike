@@ -1489,3 +1489,30 @@ Cada paso se valido contra la implementacion anterior *pegada literalmente* como
 indicadores (18 casos x 32 columnas), subconjuntos `only=` (identicos al pase completo), agregacion
 por bloques (540 formas), y el backtest entero (resultado JSON identico entre procesos). Sin eso,
 "lo hice 4x mas rapido" no se puede afirmar, porque no se sabe si sigue calculando lo mismo.
+
+## "Se ve en blanco en móvil" no era móvil (2026-09-04)
+El chart vacío a 390 px era el bridge: solo emite el snapshot de velas cuando *cambia* algo (dedup
+global por símbolo), así que un cliente recién conectado espera al siguiente trade del venue — en BTC
+el 91 % de las velas son planas y eso son segundos o minutos. La misma prueba a 1440 px salió en blanco
+al repetirla. Antes de atribuir un fallo al viewport, repetir la prueba en el otro viewport: si también
+falla, no es CSS. Y todo snapshot que se emite "cuando cambia" debe reenviarse al conectar.
+
+## El venue devuelve las PRIMERAS barras tras startTime (2026-09-04)
+`/klines` con `startTime = ahora − limit·secs` y `limit=1000` devolvió las 500 más antiguas de la
+ventana: un BTC diario que terminaba a 64.870 $ bajo una cabecera a 79.798 $. Con 500 nunca se notó
+porque coincidía con el tope. Cualquier API que pagina "desde startTime" hay que recorrerla hacia
+delante hasta llegar al presente y quedarse con las últimas N — y probarlo con un fake que imponga el tope.
+
+## Verificar en el navegador cuando la extensión de Chrome no conecta (2026-09-04)
+Tres intentos de `tabs_context` dieron "not connected" aunque la extensión está instalada. Playwright
+(`py -3.12`, Chromium en `~/AppData/Local/ms-playwright`) sirve para lo mismo: servir el bundle recién
+construido con `python -m http.server` y fijar `localStorage["botstrike.bridgeUrl"]` al CT (el bridge
+admite CORS desde localhost). Contar píxeles pintados en el canvas (`getImageData`) distingue "el
+chart existe" de "el chart dibujó algo" — el logo de TV se pinta aunque no haya velas.
+
+## Un indicador "correcto" es el que calcula el motor, no el de TradingView (2026-09-04)
+pandas `ewm(adjust=False)` se siembra con la primera observación y, con NaN, conserva la media y
+decae el peso; `rolling().std()` es muestral (ddof=1); el RSI del motor da 100 en racha pura y 50 sin
+ratio; el z-score usa `mr_lookback` = 100, no 20. Reproducir eso en TS es lo que hace que el número
+de la leyenda sea el número que decide el bot. Ocultar los primeros n valores de una EMA sembrada es
+presentación, no cálculo.

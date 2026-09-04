@@ -2118,3 +2118,53 @@ Cierra el punto que quedo ABIERTO arriba ("el backtester es lento y NO vi termin
 
 **Medido y descartado:** el logging del bridge (una linea de debug por barra a journald) cuesta ~1 %.
 No se toca.
+
+
+## Gráfico e indicadores frente al terminal de Strike (2026-09-04, noche) — HECHO, pendiente de desplegar
+Edgar preguntó si el chart y los indicadores están "igual de bien y extensos" que los de Strike perps.
+La extensión de Chrome de Claude no conectó (3 intentos, "not connected"); la verificación se hizo con
+Chromium headless (Playwright) contra el bridge del CT, en 1440×900 y 390×844.
+
+### Referencia medida en app.strikefinance.org/trade/btc
+Librería de TradingView en iframe: 107 indicadores, barra de dibujo, 3 paneles por defecto (precio 219 px ·
+Volume 110 · MACD 109), leyenda coloreada que sigue al cursor, eje con separador de miles, marcos
+1m…1w, Chart Layout 1–4. Sus Chart Elements son de entrada de órdenes (no aplican a un terminal de bot).
+
+### Lo que había (medido, no supuesto)
+- [x] Solo 2 indicadores (RSI o MACD), de uno en uno, y ninguno sobre el precio — con 21 columnas en el motor
+- [x] El panel MACD no autoescalaba a las velas visibles
+- [x] La leyenda OHLC se dibujaba encima de las velas; "Position lines (entry · ex" truncado
+- [x] El eje de precio sin separador de miles ("80400.00") junto a una cabecera con "80,400.00"
+- [x] **Gráfico en blanco al abrir** (0 píxeles pintados 16 s): el bridge solo emite velas cuando cambia
+      algo y en BTC el 91 % de las velas son planas → un cliente nuevo esperaba al siguiente trade
+- [x] BTC a 1h = 8 velas, a 4h = 2: el socket solo lleva 500 velas de 1 m y el chart las remuestreaba
+
+### Lo hecho
+- [x] `lib/indicators.ts` reescrito con las definiciones del motor (ewm de pandas con adjust=False y
+      NaN, std muestral, Wilder = span 2n−1, RSI 100/50, z-score con mr_lookback 100)
+- [x] Catálogo `chartIndicators.ts`: 6 overlays (SMA 20/50, EMA 12/26, Bollinger 20·2σ, Donchian 20) y
+      9 paneles (MACD, ADX·DI±, RSI, Momentum 10·20, Z-score, ATR, σ 20, percentil de vol, ratio de
+      volumen) = 20 de las 21 columnas (`ema_cross` es EMA 12 vs 26 a la vista). Multi-selección,
+      hasta 3 paneles, persistido por navegador, cada ítem nombra su columna del motor
+- [x] Paneles genéricos con autoescala a la ventana visible (fija en RSI/vol_pct), niveles, leyenda
+      coloreada que sigue al cursor, botón × por panel
+- [x] Overlays sobre el precio con leyenda propia; las velas se mantienen bajo las filas de leyenda
+- [x] Historial por REST a cualquier marco (`/api/market/{sym}/klines`): el motor sirve su propio
+      frame de 90 días para los símbolos que emite (nunca mezclado con velas de Strike); el socket
+      solo pone el borde vivo (`lib/chartData.ts`). Nuevo marco 1d
+- [x] El bridge retiene el último snapshot de velas y lo reenvía al conectar (test)
+- [x] El venue devuelve las PRIMERAS barras tras startTime, con tope: pedir 1.000 diarias daba un BTC
+      a 64.870 $ bajo una cabecera a 79.798 $. Ahora se pagina hacia delante (test)
+- [x] lint limpio (3 símbolos sin usar que ya fallaban), tsc, build:web, 6 tests del bridge
+
+### Verificado en Chromium (bundle nuevo servido en local contra el bridge del CT)
+BTC 5m/1h/1d con DC 20 + EMA 12/26 y MACD + RSI; leyendas siguen al cursor; XAG (solo venue) con la nota
+"polled from the venue · 92 % flat"; 390 px con velas pintadas y 2 paneles; 0 errores de consola; sin
+desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
+
+### PENDIENTE
+- [ ] Desplegar en el CT: Tailscale en este PC está `offline / NoState` → `ssh 100.68.139.93` expira.
+      Hasta entonces el CT sirve el bundle viejo y el historial de BTC viene del venue (5 días a 1h)
+- [ ] Ver con Edgar en Chrome real (la extensión no conectó en esta sesión)
+- [ ] Lo que Strike tiene y esto no, a propósito: dibujo (líneas, fib), 100+ indicadores de TradingView,
+      layouts 1–4. Volume va dentro del panel de precio, no en panel propio

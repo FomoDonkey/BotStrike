@@ -10,6 +10,16 @@ export interface Candle {
   volume: number;
 }
 
+/** A window of bars fetched over REST for one (symbol, timeframe) — the chart's history. The
+ *  socket only carries the last 500 one-minute bars; see lib/chartData.ts for how the two meet. */
+export interface KlineWindow {
+  /** the interval the bars are actually at — coarser than asked on a thin venue market */
+  interval: string;
+  /** "engine" (its own 90-day frame) or "venue" */
+  source: string;
+  candles: Candle[];
+}
+
 export interface Tick {
   symbol: string;
   price: number;
@@ -83,6 +93,8 @@ interface MarketState {
   prices: Record<string, number>;
   prevPrices: Record<string, number>;
   candles: Record<string, Candle[]>;
+  /** REST history keyed `${symbol}:${timeframe}` (lib/chartData.ts `klineKey`) */
+  klines: Record<string, KlineWindow>;
   orderbooks: Record<string, OrderBookData>;
   regime: Record<string, string>;
   marketInfo: Record<string, MarketInfo>;
@@ -93,6 +105,7 @@ interface MarketState {
 
   onTick: (tick: Tick) => void;
   onCandles: (symbol: string, candles: Candle[]) => void;
+  onKlines: (key: string, window: KlineWindow) => void;
   onSnapshot: (data: SnapshotData) => void;
 }
 
@@ -169,6 +182,7 @@ export const useMarketStore = create<MarketState>((set, get) => ({
   prices: {},
   prevPrices: {},
   candles: {},
+  klines: {},
   orderbooks: {},
   regime: {},
   marketInfo: {},
@@ -191,6 +205,11 @@ export const useMarketStore = create<MarketState>((set, get) => ({
   onCandles: (symbol, candles) =>
     set((s) => ({
       candles: { ...s.candles, [symbol]: candles },
+    })),
+
+  onKlines: (key, window) =>
+    set((s) => ({
+      klines: { ...s.klines, [key]: window },
     })),
 
   onSnapshot: (data) => {

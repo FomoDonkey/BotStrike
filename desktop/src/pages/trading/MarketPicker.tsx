@@ -34,7 +34,6 @@ export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerPr
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const prices = useMarketStore(useShallow((s) => s.prices));
-  const info = useMarketStore(useShallow((s) => s.marketInfo));
   const changes = useSymbolChanges(now / 1000);
 
   const venue = useVenueMarkets(open);

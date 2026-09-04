@@ -5,7 +5,6 @@ import { useFlashOnChange } from "@/hooks/useFlash";
 import { SYMBOL_LABELS } from "@/lib/constants";
 import { cn, formatPrice, formatSize } from "@/lib/utils";
 import { Hint } from "@/components/shared/Hint";
-import { HINTS } from "@/lib/hints";
 
 interface Row {
   price: number;
