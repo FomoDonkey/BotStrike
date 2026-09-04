@@ -2245,7 +2245,14 @@ async def get_risk():
                 "compounding_enabled": s.trading.compounding_enabled}
     snap = engine.risk_snapshot()
     snap["engine"] = True
-    return snap
+    # The account limits ride on the WS risk message but not on this one, so the Risk page could not
+    # show its exposure CAP until the socket delivered them — seconds of a panel with a total and no
+    # budget beside it (2026-09-04). REST answers the same question now.
+    try:
+        snap["account"] = _account_overview(engine)
+    except Exception as e:  # noqa: BLE001 - the snapshot must survive a missing overview
+        logger.debug("risk_account_overview_error", error=str(e))
+    return _json_safe(snap)
 
 
 @app.post("/api/bot/start", dependencies=[Depends(require_token_when_remote)])

@@ -173,3 +173,29 @@ def test_a_retired_strategy_cannot_be_given_capital(st, tmp_path, monkeypatch):
     assert client.put("/api/config", json={"trading": {"allocation_divergence": 0.1}}).status_code == 400
     assert client.put("/api/config", json={"trading": {"allocation_trend_daily": 1.0}}).status_code == 200
     assert {"MEAN_REVERSION", "FIBONACCI_RETRACEMENT", "DIVERGENCE"} <= set(RETIRED_STRATEGIES)
+
+
+def test_risk_endpoint_carries_the_account_limits(st, monkeypatch):
+    """The Risk page needs max_total_exposure_pct and max_leverage to show its exposure CAP; they
+    rode only on the WS message, so the panel showed a total with no budget beside it until the
+    socket arrived (2026-09-04)."""
+    eng = _fake_engine()
+    eng.risk_snapshot = lambda: {"equity": 1000.0, "peak_equity": 1000.0, "daily_pnl": 0.0,
+                                 "daily_limit": 20.0, "weekly_pnl": 0.0, "weekly_limit": 50.0,
+                                 "drawdown_pct": 0.0, "equity_basis": 1000.0}
+    monkeypatch.setattr(bridge, "_account_overview",
+                        lambda e: {"max_total_exposure_pct": 0.6, "max_leverage": 5})
+    st.engine, st.running = eng, True
+    r = TestClient(bridge.app).get("/api/risk").json()
+    assert r["engine"] is True
+    acct = r.get("account") or {}
+    assert acct["max_total_exposure_pct"] == 0.6 and acct["max_leverage"] == 5
+    # the cap the page prints is equity x this share x max leverage
+    assert 1000.0 * acct["max_total_exposure_pct"] * acct["max_leverage"] == 3000.0
+
+    # and a broken overview must not take the whole snapshot down with it
+    def boom(_e):
+        raise RuntimeError("no repo")
+
+    monkeypatch.setattr(bridge, "_account_overview", boom)
+    assert TestClient(bridge.app).get("/api/risk").json()["engine"] is True
