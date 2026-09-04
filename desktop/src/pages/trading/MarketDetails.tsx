@@ -97,8 +97,8 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
             <ListRow label="Maintenance margin" hint="Margin fraction at which the paper liquidation estimate triggers">{formatPct(mm, 1)}</ListRow>
             <ListRow label="Taker fee (paper)">{taker !== null ? formatPct(taker, 2) : "---"}</ListRow>
             <ListRow label="Maker fee (paper)">{maker !== null ? formatPct(maker, 2) : "---"}</ListRow>
-            <ListRow label="Open interest" hint={HINTS.oi}>{m.oi > 0 ? `${formatCompact(m.oi)} ${base}` : "---"}</ListRow>
-            <ListRow label={`${m.winLabel} volume`} hint={HINTS.vol24}>{formatCompactUSD(m.volumeUsd)}</ListRow>
+            <ListRow label="Open interest" hint={HINTS.oi}>{m.rest && typeof m.rest.open_interest === "number" ? `${formatCompact(m.oi)} ${base}` : "---"}</ListRow>
+            <ListRow label={`${m.winLabel} volume`} hint={HINTS.vol24}>{m.statsMissing ? <span className="text-text-2">The venue publishes none</span> : formatCompactUSD(m.volumeUsd)}</ListRow>
           </ListSection>
         </div>
 

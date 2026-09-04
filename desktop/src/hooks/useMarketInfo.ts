@@ -35,6 +35,8 @@ export interface MarketView {
   /** "24h" or the real span of the candle window ("15h") */
   winLabel: string;
   windowIs24h: boolean;
+  /** the venue publishes no 24 h block for this market (COIN-USD is in premiumIndex, not in ticker) */
+  statsMissing: boolean;
   /** REST payload (bridge ≥ 2.15) or null */
   rest: MarketInfoResponse | null;
   restMissing: boolean;
@@ -42,9 +44,11 @@ export interface MarketView {
 }
 
 /**
- * One view of the market header data for a symbol: GET /api/market/{sym} (10 s) wins, the WS
- * snapshot and the 1m candles in memory fill the gaps (older bridges). A payload fetched for
- * the previous symbol is never shown for the new one.
+ * One view of the market header data for a symbol. GET /api/market/{sym} is the ONLY source for
+ * anything that describes the market, because it is the only one that speaks for the venue; the 1m
+ * candles in memory fill in a 24 h window the venue does not publish, and the streamed price is the
+ * last resort when the bridge is unreachable. A payload fetched for the previous symbol is never
+ * shown for the new one.
  */
 export function useMarketInfo(symbol: string): MarketView {
   const now = useNow();
@@ -90,7 +94,10 @@ export function useMarketInfo(symbol: string): MarketView {
     const bridgeChange = rest?.change_24h_pct;
     const bridgeWindowMin = typeof rest?.window_min === "number" ? rest.window_min : null;
     const spanSec = typeof bridgeChange === "number" ? (bridgeWindowMin !== null ? bridgeWindowMin * 60 : 24 * 3600) : winStats.span_sec;
-    const windowIs24h = spanSec >= 23.5 * 3600;
+    // The venue answered but carries no 24 h block for this market. That is a fact about the venue,
+    // not a window still filling up, and it must not be dressed as one (COIN-USD, 2026-09-04).
+    const statsMissing = rest !== null && rest.change_24h_pct === null && rest.change_24h_pct !== undefined;
+    const windowIs24h = statsMissing || spanSec >= 23.5 * 3600;
     return {
       symbol,
       price,
@@ -114,6 +121,7 @@ export function useMarketInfo(symbol: string): MarketView {
       regimeTf: rest?.regime_timeframe_min || info?.regime_timeframe_min || 15,
       winLabel: windowIs24h ? "24h" : spanLabel(spanSec),
       windowIs24h,
+      statsMissing,
       rest,
       restMissing: ep.missing,
       dataAgeSec: typeof rest?.data_age_sec === "number" ? rest.data_age_sec : null,

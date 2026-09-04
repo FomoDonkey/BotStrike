@@ -62,9 +62,11 @@ export function MarketHeader({ market: m, onSymbolChange }: MarketHeaderProps) {
   const priceRef = useRef<HTMLSpanElement>(null);
   useFlashOnChange(priceRef, m.price || null, "text-mint", "text-rose", 400);
   const up = m.price >= m.prevPrice;
-  const winHint = m.windowIs24h
-    ? HINTS.change24
-    : `The bridge has ${m.winLabel} of 1m bars since it started — the window grows to a full 24 h live.`;
+  const winHint = m.statsMissing
+    ? "The venue publishes no 24 h statistics for this market. Nothing is filled in from anywhere else — its price, funding, book and open interest above are still the venue's own."
+    : m.windowIs24h
+      ? HINTS.change24
+      : `The bridge has ${m.winLabel} of 1m bars since it started — the window grows to a full 24 h live.`;
 
   return (
     <div className="relative z-20 rounded-lg border border-hairline bg-panel flex items-stretch min-w-0 h-14">
@@ -103,7 +105,11 @@ export function MarketHeader({ market: m, onSymbolChange }: MarketHeaderProps) {
           {m.volumeBase !== null && m.volumeBase > 0 && <span>{formatCompact(m.volumeBase)} {SYMBOL_LABELS[m.symbol] ?? ""} <span className="text-text-2 font-medium">·</span> </span>}
           {formatCompactUSD(m.volumeUsd)}
         </Stat>
-        <Stat label="Open Interest" hint={HINTS.oi}>{m.oi > 0 ? `${formatCompact(m.oi)} ${SYMBOL_LABELS[m.symbol] ?? ""}` : "---"}</Stat>
+        {/* Zero is a fact on four of the venue's markets, not a value we failed to fetch. */}
+        <Stat label="Open Interest" hint={HINTS.oi}>
+          {m.rest && typeof m.rest.open_interest === "number"
+            ? `${formatCompact(m.oi)} ${SYMBOL_LABELS[m.symbol] ?? ""}` : "---"}
+        </Stat>
         <Stat label="Spread" hint={HINTS.spread}>{m.spreadBps === null ? "---" : `${m.spreadBps.toFixed(2)} bps`}</Stat>
         <Stat label="Regime" hint={HINTS.regime}>
           <span className="inline-flex items-center gap-1.5">
