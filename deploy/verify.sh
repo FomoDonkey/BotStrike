@@ -31,7 +31,8 @@ cd "$APP_DIR" && echo "  commit: $(git log --oneline -1)  branch: $(git rev-pars
 # commit changed.
 UI_SRC=$(cd "$APP_DIR" && git log -1 --format=%H -- desktop/src 2>/dev/null)
 UI_BUNDLE=$(cd "$APP_DIR" && git log -1 --format=%H -- server/webui 2>/dev/null)
-if [ -n "$UI_SRC" ] && [ "$UI_SRC" != "$UI_BUNDLE" ]; then
+# fresh when the bundle commit is at or after the source commit, not merely equal to it
+if [ -n "$UI_SRC" ] && ! (cd "$APP_DIR" && git merge-base --is-ancestor "$UI_SRC" "${UI_BUNDLE:-$UI_SRC}" 2>/dev/null); then
   warn "web bundle may be STALE: desktop/src last changed in ${UI_SRC:0:8}, server/webui in ${UI_BUNDLE:0:8} — run 'npm run build:web' in desktop/ and commit"
 else
   ok "web bundle rebuilt with the UI source ($(ls "$APP_DIR/server/webui/assets"/index-*.js 2>/dev/null | head -1 | xargs -r basename))"
