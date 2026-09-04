@@ -1662,3 +1662,20 @@ Edgar, con las dos terminales abiertas, tenía razón en las tres cosas:
 - [x] La variante con tendencia cumple el listón de ≥100 operaciones (115) y falla: PF 3,28 → 1,10, t 0,62
 - [x] GO/NO-GO 2/7. **Retirada** junto a MR y Fibonacci
 - [x] El bot queda con UNA estrategia validada y ninguna pretendiente
+
+## Auditoría de la pestaña Risk (2026-09-04, ronda 10)
+- [x] **Los tres perfiles citaban una expectativa PESIMISTA como si fuera la medición.** Se calcularon
+      cuando el funding se ADIVINABA por clase de activo; medido en Strike el libro largo diversificado
+      es casi neutro de carry (coste a 10 años de 10,6 a 1,5 puntos de equity). Re-medido:
+      conservador 1,78→1,93 Sharpe y 5,1→5,6 % CAGR; equilibrado 1,76→1,92 y 10,2→11,2 %;
+      agresivo 1,77→1,92 y 15,2→16,7 %. En la cuenta actual, +113,68 $/año donde decía +103,54 $
+- [x] **La exposición se medía contra un tope 5 veces menor que el real.** El gestor usa
+      `equity × max_total_exposure_pct × max_leverage` (3.044 $), y la cabecera decía "limit 60 %",
+      que se lee como el 60 % de la equity: el libro parecía usar el 69 % del presupuesto cuando usa
+      el 14 %. Las barras por símbolo tenían el mismo denominador equivocado
+- [x] Un día cuyo PnL son solo comisiones (−0,0032) salía como "−$0.00": un cero con signo que se lee
+      como día perdedor
+- [x] El tope de exposición dependía del WebSocket; `/api/risk` ya lo sirve
+- [x] Verificado en el navegador y con cruce automático: 13/14 comprobaciones (la que falla es mi
+      propio script usando `equity_basis` en vez de la equity mostrada; la aritmética en pantalla cuadra)
+- [x] Sin textos obsoletos: no queda ninguna estrategia retirada nombrada, ni Sharpe 1,76/1,77/1,78
