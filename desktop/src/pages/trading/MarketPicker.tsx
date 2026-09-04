@@ -42,10 +42,15 @@ export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerPr
 
   const rows = useMemo(() => {
     const all: string[] = venue.list.length ? venue.list.map((v) => v.symbol) : [...SYMBOLS];
-    const base = tab === "favorites" ? all.filter((s) => FAVORITE_SYMBOLS.includes(s))
+    const q = query.trim().toLowerCase();
+    // A SEARCH SEARCHES EVERYTHING. Filtering within the active tab meant typing "NVDA" on the
+    // Favorites tab answered "No market matches NVDA" about a market the venue lists and the bot
+    // supports — you had to know to switch tabs first (Edgar, 2026-09-04). The tabs are for browsing;
+    // a query is for finding.
+    const base = q ? all
+      : tab === "favorites" ? all.filter((s) => FAVORITE_SYMBOLS.includes(s))
       : tab === "live" ? all.filter((s) => byMarket.get(s)?.feed ?? SYMBOLS.includes(s as (typeof SYMBOLS)[number]))
       : all;
-    const q = query.trim().toLowerCase();
     const filtered = base.filter((s) => !q || s.toLowerCase().includes(q) || (SYMBOL_LABELS[s] ?? "").toLowerCase().includes(q));
     // held first, then the ones the daily run may buy, then the rest — alphabetical inside each group
     const rank = (s: string) => {
@@ -104,7 +109,7 @@ export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerPr
           </thead>
           <tbody>
             {rows.length === 0 && (
-              <tr><td colSpan={6} className="c text-text">No market matches “{query}”</td></tr>
+              <tr><td colSpan={6} className="c text-text">No market on the venue matches “{query}”</td></tr>
             )}
             {rows.map((s, i) => {
               // Every figure in this row is the VENUE's. Reading price/change/volume/OI off the
