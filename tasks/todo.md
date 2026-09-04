@@ -1679,3 +1679,15 @@ Edgar, con las dos terminales abiertas, tenía razón en las tres cosas:
 - [x] Verificado en el navegador y con cruce automático: 13/14 comprobaciones (la que falla es mi
       propio script usando `equity_basis` en vez de la equity mostrada; la aritmética en pantalla cuadra)
 - [x] Sin textos obsoletos: no queda ninguna estrategia retirada nombrada, ni Sharpe 1,76/1,77/1,78
+
+## Costes por mercado y límites del venue (2026-09-04, ronda 11)
+- [x] **El deslizamiento era UNA constante global de 1,5 bps calibrada para Binance** ("deep book" dice
+      su propio comentario) aplicada igual a BTC que al oro. Las mediciones por mercado ya estaban en
+      `data/strike_costs.json` sin usar: BTC 0,23 bps de spread contra XAU 8,0, XAG 7,7, ADA 7,8
+- [x] Ahora cada mercado paga **la mitad de su propio spread medido**, con la constante como suelo.
+      El panel de detalles muestra el de ese mercado, no el global
+- [ ] PENDIENTE: el bot NO lee los filtros del venue (`StrikeClient.get_markets()` existe y devuelve
+      tick_size, step_size, min_qty, min_notional — nadie lo consume). En papel es invisible; en real
+      una orden se rechazaría por precisión o por mínimo. Bloqueante para el canario
+- [ ] PENDIENTE: `max_leverage = 5` y `leverage = 2` por símbolo son de configuración, no de Strike
+      (que permite hasta 100x en BTC). El libro diario no usa apalancamiento, así que hoy no muerde
