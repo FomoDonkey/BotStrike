@@ -1978,3 +1978,40 @@ debajo.
 ### PENDIENTE DE EDGAR
 El bot sigue corriendo en **equilibrado**. Redefinir el perfil no lo activa: hay que pulsar
 "Use Aggressive" en la pagina de Riesgo.
+
+## Agresivo VALIDADO (11/11) y ACTIVADO (2026-09-04, ronda 18)
+Peticion: validarlo como los otros dos, activarlo desde la UI y verificar que se aplica de verdad.
+
+### Validacion: las MISMAS 11 puertas del libro, a 0,80 (`scripts/validate_aggressive.py`)
+    Sharpe 1,84 · CAGR 41,5 % · vol 20,0 % · maxDD 27,5 % · skew +0,58 · DSR 1,00 sobre 11 trials
+    gana a cripto-solo AL MISMO RIESGO en Sharpe (1,84 vs 1,31) y en drawdown
+    aguanta 25 bps/lado (1,48) y funding x3 (1,78)
+    sin artefacto de look-ahead (shift 3 -> 1,67, muy por encima de la mitad de 1,84)
+    fuera de muestra: 2022+ 1,76 · primera mitad 2,06 · segunda mitad 1,63
+    **11/11 -> VALIDADO a este nivel de riesgo**
+
+**UNA puerta se evalua contra el presupuesto de ESTE perfil, a proposito y por escrito.** "maxDD < 15 %"
+es un PRESUPUESTO de riesgo, no una prueba de que exista la ventaja: el vol targeting escala retorno y
+drawdown juntos a Sharpe constante, asi que un target mas alto DEBE caer mas. Medirlo contra un umbral
+escrito para 0,20 seria un error de categoria. Se comprueba contra su `max_drawdown_pct` (36 %), que
+sale de la cola medida. Todas las puertas que preguntan si la VENTAJA es real quedan intactas y pasan.
+
+- [x] `VALIDATED_RANGE` pasa a 0,10-0,80 **porque el nivel paso el examen ahi**, no para hacerle sitio.
+      Por encima de 0,80 sigue sin estudiarse y la UI lo sigue diciendo
+- [x] La insignia dice **VALIDATED 11/11** con la lista de puertas en el tooltip
+- [x] La tarjeta mantiene peor dia y 620 dias bajo maximo: **validado no significa comodo**
+
+### Activado desde la UI y verificado en toda la cadena
+- [x] Pulsado "Use Aggressive" -> dialogo con los numeros -> "Apply risk level"
+- [x] `/api/risk/profiles` -> `current: aggressive`
+- [x] El MOTOR: `target_vol 0.8 · leverage_cap 3.0`, proxima pasada 2026-09-05 00:05 UTC
+- [x] El gestor de riesgo aplica **al instante**: dia 11 % (-111 $), semana 14 % (-141 $), pico 36 %
+- [x] **El dimensionado cambia de verdad**: el libro pasa de 286 $ a **948 $** brutos (x3,3).
+      Por mercado x4,00 salvo el S&P, que el techo de 3x recorta a x2,25 — el techo por fin trabaja
+- [x] **El tope de exposicion NO lo recorta**: 948 $ es el 31 % del tope de 3.041 $
+- [x] Persistido en `config_overrides.json`: sobrevive a reinicios
+- [x] 340 tests
+
+### Nota
+El target vol nuevo entra en las POSICIONES en la pasada diaria de las 00:05 UTC; los limites de
+perdida ya estan activos. Es lo que dice el propio dialogo antes de aplicar.

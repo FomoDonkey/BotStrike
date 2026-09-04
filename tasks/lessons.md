@@ -1386,3 +1386,27 @@ un aviso, revisar los sellos, resumenes y etiquetas que ya hablaban de lo mismo.
 `trend_target_vol` tenia max=0,60 y el perfil nuevo pedia 0,80: el endpoint devolvia 400 y el perfil
 habria sido inaplicable desde la UI, en silencio salvo por un test. Al mover un valor de configuracion
 fuera de su rango habitual, comprobar TAMBIEN el esquema que lo valida.
+
+## "Validado" tiene que significar algo concreto (2026-09-04)
+Edgar pidio validar el perfil agresivo. Lo facil habria sido ensanchar `VALIDATED_RANGE` y ya. Lo
+correcto fue pasarle las ONCE puertas del libro con la misma matematica y el mismo panel, y ensenar
+el resultado. Ensanchar el rango porque el nivel APROBO es lo contrario de ensancharlo para que quepa.
+
+## Distinguir una puerta de validez de un presupuesto de riesgo (2026-09-04)
+"maxDD < 15 %" no prueba que exista ventaja: es cuanto drawdown se acepta. El vol targeting escala
+retorno y drawdown juntos, asi que exigirle a 0,80 el umbral escrito para 0,20 no valida nada, solo
+prohibe. Se evaluo contra el presupuesto declarado del propio perfil, dejandolo escrito. Las puertas
+que SI prueban la ventaja (Sharpe, DSR, look-ahead, fuera de muestra, estreses) no se tocaron.
+
+## Verificar la cadena entera, no el endpoint (2026-09-04)
+"Activalo y verifica que funciona" no es mirar si la API devuelve el nombre nuevo. Fue: la API, la
+configuracion que ve el motor, los limites que el gestor de riesgo aplica ya, **el dimensionado que
+saldria en la proxima pasada** (286 $ -> 948 $, calculado con la funcion del propio motor), que el
+tope de exposicion no lo recorte, y que sobreviva a un reinicio. El paso del dimensionado es el unico
+que demuestra que el cambio hace algo.
+
+## Sospechar de un conflicto ANTES de darlo por bueno (2026-09-04)
+Al ver que el peso bruto por activo daba 5,6x equity, pense que el tope de exposicion de 3,0x lo
+recortaria y que el perfil no cumpliria lo prometido. No era asi: faltaba el reparto 1/N, y la
+exposicion real es 0,93x. Lo verifique con la funcion del motor en vez de asumirlo en cualquiera de
+las dos direcciones — ni "seguro que esta mal" ni "seguro que esta bien".
