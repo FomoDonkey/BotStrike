@@ -617,6 +617,26 @@ export interface MarketInfoResponse {
   data_age_sec?: number;
   /** Bridge ≥ 2.16 (spec §5.6) */
   symbol_config?: SymbolConfigInfo;
+  /** The venue's own rules for an order on this market, straight from its exchangeInfo. */
+  venue_filters?: VenueFilters | null;
+}
+
+/** `/api/market/{sym}.venue_filters` — what Strike says an order here must look like. */
+export interface VenueFilters {
+  tick_size?: number | null;
+  step_size?: number | null;
+  min_qty?: number | null;
+  max_qty?: number | null;
+  /** cap on a single MARKET order — a real constraint on sizing, not a curiosity */
+  market_max_qty?: number | null;
+  min_notional?: number | null;
+  min_price?: number | null;
+  max_price?: number | null;
+  liquidation_fee?: number | null;
+  price_precision?: number | null;
+  qty_precision?: number | null;
+  margin_asset?: string | null;
+  status?: string | null;
 }
 
 /** `/api/market/{sym}.symbol_config` (spec §5.6) */

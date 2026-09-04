@@ -31,6 +31,7 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
   const symCfg = useMemo(() => cfg.data?.symbols.find((s) => s.symbol === symbol) ?? null, [cfg.data, symbol]);
   const trading = cfg.data?.trading ?? null;
   const sc = m.rest?.symbol_config ?? null;
+  const vf = m.rest?.venue_filters ?? null;
   const leverage = sc?.leverage ?? symCfg?.leverage ?? null;
   const maxPos = sc?.max_position_usd ?? symCfg?.max_position_usd ?? null;
   const minNotional = sc?.min_notional_usd ?? null;
@@ -80,6 +81,32 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
             <ListRow label="Risk per trade" hint="Fraction of equity risked between entry and stop on each signal">{trading ? formatPct(trading.risk_per_trade_pct, 2) : "---"}</ListRow>
             <ListRow label="Max total exposure" hint="Sum of open notionals / equity allowed">{trading ? formatPct(trading.max_total_exposure_pct, 0) : "---"}</ListRow>
             <ListRow label="Open on this symbol" hint={HINTS.notional}>{formatUSD(openNotional)}</ListRow>
+          </ListSection>
+
+          {/* The venue's own rules, straight from its exchangeInfo. Nothing read these until
+              2026-09-04: the panel showed a hard-coded $20 minimum where Strike asks $10, and the
+              cap on a single market order was not on screen at all. */}
+          <ListSection title="Venue order rules">
+            <ListRow label="Min notional" hint="Smallest order the VENUE accepts">
+              {vf?.min_notional ? formatUSD(vf.min_notional) : "---"}
+            </ListRow>
+            <ListRow label="Tick size" hint="Price increment the venue accepts">
+              {vf?.tick_size ?? "---"}
+            </ListRow>
+            <ListRow label="Step size" hint="Quantity increment the venue accepts">
+              {vf?.step_size ?? "---"}
+            </ListRow>
+            <ListRow label="Min / max size" hint="Quantity bounds on a limit order">
+              {vf?.min_qty != null && vf?.max_qty != null ? `${vf.min_qty} / ${formatCompact(vf.max_qty)} ${base}` : "---"}
+            </ListRow>
+            <ListRow label="Max market order" hint="The largest quantity the venue will fill as a single market order. A position bigger than this has to be worked in pieces">
+              {vf?.market_max_qty != null ? `${formatCompact(vf.market_max_qty)} ${base}` : "---"}
+            </ListRow>
+            <ListRow label="Liquidation fee" hint="Charged by the VENUE on a liquidation, as it publishes it">
+              {vf?.liquidation_fee != null ? formatPct(vf.liquidation_fee, 2) : "---"}
+            </ListRow>
+            <ListRow label="Margin asset">{vf?.margin_asset ?? "---"}</ListRow>
+            <ListRow label="Market status">{vf?.status ?? "---"}</ListRow>
           </ListSection>
         </div>
 

@@ -2260,11 +2260,23 @@ async def _fetch_venue_market_data(parts: tuple = ("premium", "ticker", "filters
         for sm in (info.json().get("symbols") or []):
             sym = str(sm.get("symbol", "")).upper()
             filt = {f.get("filterType"): f for f in (sm.get("filters") or []) if isinstance(f, dict)}
+            # Everything the venue states about how an order on this market must look. The panel
+            # showed a hard-coded $20 minimum against Strike's real $10 until 2026-09-04; these are
+            # the rest of the rules it publishes and nothing was reading — the cap on a market order
+            # in particular is a real constraint on sizing, not a curiosity.
             out["filters"][sym] = {
                 "tick_size": _num(filt.get("PRICE_FILTER", {}).get("tickSize")),
                 "step_size": _num(filt.get("LOT_SIZE", {}).get("stepSize")),
                 "min_qty": _num(filt.get("LOT_SIZE", {}).get("minQty")),
+                "max_qty": _num(filt.get("LOT_SIZE", {}).get("maxQty")),
+                "market_max_qty": _num(filt.get("MARKET_LOT_SIZE", {}).get("maxQty")),
                 "min_notional": _num((filt.get("MIN_NOTIONAL") or filt.get("NOTIONAL") or {}).get("notional")),
+                "min_price": _num(filt.get("PRICE_FILTER", {}).get("minPrice")),
+                "max_price": _num(filt.get("PRICE_FILTER", {}).get("maxPrice")),
+                "liquidation_fee": _num(sm.get("liquidationFee")),
+                "price_precision": sm.get("pricePrecision"),
+                "qty_precision": sm.get("quantityPrecision"),
+                "margin_asset": sm.get("marginAsset"),
                 "status": sm.get("status"),
             }
     return out
