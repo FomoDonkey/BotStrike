@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import type { IChartApi } from "lightweight-charts";
 import { Camera, Maximize2, RotateCcw } from "lucide-react";
 import type { PositionData } from "@/lib/api";
+import { useMarketStore } from "@/stores/marketStore";
 import type { SignalData, TradeData } from "@/stores/tradingStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useUnstreamed } from "@/hooks/useVenueMarkets";
@@ -92,6 +93,16 @@ export function ChartArea({ market, timeframe, onTimeframe, markers, positions, 
     }
     return null;
   }, [positions, symbol, elements.positions]);
+  // How many of the bars on screen had NO trade. Strike writes a bar for every period from the
+  // mark whether or not anything changed hands, so on a thin market most "candles" are a flat dash
+  // — real data, but it reads as a broken chart unless the chart says what it is (Edgar, 2026-09-04).
+  const flatShare = useMemo(() => {
+    const c = useMarketStore.getState().candles[symbol] ?? [];
+    if (c.length < 20) return 0;
+    const tail = c.slice(-200);
+    const flat = tail.filter((k) => k.high === k.low).length;
+    return flat / tail.length;
+  }, [symbol, market.price]);
   const tradeMarkers = elements.trades ? markers : [];
   const symbolSignals = useMemo(() => signals.filter((s) => s.symbol === symbol).length, [signals, symbol]);
 
@@ -187,18 +198,16 @@ export function ChartArea({ market, timeframe, onTimeframe, markers, positions, 
           prints from the venue over REST instead, which refreshes every few seconds rather than
           tick by tick. Everything is here — say where it comes from rather than claim it is live
           tick data (2026-09-04). */}
-      {tab === "chart" && !hasFeed && (
-        <div className="px-3 py-2 border-b border-hairline-soft text-[12.5px] font-medium text-text-2 shrink-0">
-          <span className="text-text font-semibold">{symbol}</span> is polled from the venue rather than
-          streamed: the chart, book and tape refresh every few seconds instead of tick by tick. The
-          numbers are Strike's own.
-          {servedInterval && (
-            <>
-              {" "}This market does not trade often enough to fill a {timeframe} bar, so the chart is
-              drawn at <span className="text-text font-semibold">{servedInterval}</span> — the venue
-              writes a candle only for a period in which something traded.
-            </>
-          )}
+      {tab === "chart" && (!hasFeed || flatShare > 0.5) && (
+        <div className="px-3 py-1 border-b border-hairline-soft text-[12px] font-medium text-text-2 shrink-0 truncate"
+             title={[
+               !hasFeed ? `${symbol} is polled from the venue rather than streamed: the chart, book and tape refresh every few seconds instead of tick by tick. The numbers are Strike's own.` : "",
+               servedInterval ? `This market does not trade often enough to fill a ${timeframe} bar, so the chart is drawn at ${servedInterval}.` : "",
+               flatShare > 0.5 ? `${Math.round(flatShare * 100)} % of the bars on screen had no trade at all. Strike writes a bar for every period from the mark regardless, so those draw as a flat dash — that is the venue's data, not a rendering fault.` : "",
+             ].filter(Boolean).join(" ")}>
+          {!hasFeed && <>Polled from the venue{servedInterval ? <> · drawn at <span className="text-text font-semibold">{servedInterval}</span></> : null}</>}
+          {!hasFeed && flatShare > 0.5 && " · "}
+          {flatShare > 0.5 && <><span className="text-text font-semibold">{Math.round(flatShare * 100)} %</span> of these bars had no trade — flat by nature, not by fault</>}
         </div>
       )}
       {tab === "chart" && (
