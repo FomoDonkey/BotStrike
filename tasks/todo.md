@@ -2042,3 +2042,45 @@ desincronizaron y una instalacion nueva habria arrancado en "custom", sin expect
 - [x] 8 tests que fijaban los defaults viejos: los que solo comprueban "cual es el default" siguen al
       perfil; los que EJERCITAN un limite ahora lo fijan ellos mismos, que es el arreglo duradero
 - [x] 340 tests · el bot sigue en agresivo, sin afectar (sus overrides mandan sobre los defaults)
+
+## Gráfico y barrido completo de la UI (2026-09-04, ronda 20)
+Petición: "el gráfico que veo, ¿es correcto? veo velas raras. verifica TODA la UI al milímetro."
+
+### Las velas raras: dos causas reales, las dos arregladas
+1. **Doble reagrupado.** El gráfico daba por hecho que el store guarda velas de 1 m y las reagrupaba
+   al marco elegido. Cierto para los 4 símbolos emitidos; **falso** para los otros 27, que se piden
+   al venue YA en el marco elegido — y en un mercado delgado llegan más gruesas todavía. Reagrupar
+   velas de 15 m en cubos de 1 m deja una vela cada quince huecos. Ahora solo reagrupa si lo
+   almacenado es más fino que el objetivo.
+2. **La escala la mandaban las líneas, no las velas.** lightweight-charts mete las líneas de precio
+   en el autoescalado, así que la línea de entrada fijaba el techo del eje en 67,25 sobre un mercado
+   cuyas velas se movían 0,5 % — todo aplastado en una tira ilegible. La serie escala ahora al
+   máximo/mínimo de las barras EN PANTALLA. (Primer intento fallido: lo puse en un `useEffect` que
+   corría antes de existir la serie y no se aplicaba nunca; va en la creación de la serie.)
+
+### Y una tercera cosa que NO es un fallo, pero lo parecía
+**El 80–98 % de las velas de un mercado delgado son planas.** Strike escribe una vela por periodo
+desde la marca aunque no opere nadie. Es su dato, no un fallo de dibujo — y ahora el gráfico lo dice:
+"93 % de estas velas no tuvieron ninguna operación — planas por naturaleza, no por fallo". El aviso
+además pasó de tres líneas a una, que le devuelve ~30 % de altura al gráfico.
+
+### Auditoría de las velas, los 31 mercados
+`0 anomalías`: sin duplicados, sin desorden, sin OHLC imposible (máx<mín, cierre fuera de rango), sin
+huecos, todas en su rejilla. Lo que había era presentación, no datos.
+
+### Otros defectos encontrados en el barrido
+- [x] **Eje del funding**: la escala acumulada tenía 2 decimales para un rango de 0,001 % a −0,01 %,
+      así que cinco marcas leían "0.00 %", "−0.00 %" y "−0.01 %". La precisión sale ahora del rango,
+      y un valor que redondea a cero se imprime como cero, no como "menos cero"
+- [x] **Comisión maker en Portfolio**: −0,005 % se redondeaba a "−0,01 %", **el doble del rebate real**
+- [x] **Backtest**: no ofrecía el marco temporal, y el endpoint por defecto replaya las 216.000 barras
+
+### Verificado
+Chart · Funding · Depth · Details en mercado delgado y líquido; Portfolio (feed Strike, rebate maker
+correcto, cambio de perfil registrado en actividad); Risk (tres perfiles 11/11); Data; Backtest.
+
+### ABIERTO — dicho tal cual
+**El backtester es lento y NO vi terminar ninguna ejecución**: 43.200 barras quemaron 5 min de CPU sin
+devolver, y 10.080 pasó de 12 min. Llegué a poner "~140 barras/s" en la UI como si lo hubiera medido:
+era una extrapolación, no una medición, y la quité. El rendimiento real está **sin medir** y hay que
+perfilar `backtesting/backtester.py`. La UI ahora dice lo que se sabe y nada más.

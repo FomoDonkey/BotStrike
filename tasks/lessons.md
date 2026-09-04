@@ -1426,3 +1426,28 @@ deben fijar ese limite ellos mismos. El segundo grupo no deberia haberse enterad
 Tenia `validate_aggressive.py`. Al tener que validar tambien equilibrado, la tentacion era copiarlo.
 Generalizarlo a `validate_profile.py <perfil>` garantiza que los tres niveles pasan EXACTAMENTE las
 mismas once puertas con la misma matematica; con dos copias, la divergencia es cuestion de tiempo.
+
+## No poner en la UI un número que no he medido (2026-09-04)
+Etiqueté el selector del backtest con "~140 barras/s" y tiempos por ventana. Salía de dividir barras
+entre el tiempo de una ejecución **que nunca terminé de ver**. Es exactamente el error que llevo toda
+la sesión persiguiendo en el código, cometido por mí en un `<option>`. Lo quité y la UI dice ahora
+"lento, ninguna ejecución observada hasta el final". Una estimación presentada como medición es peor
+que no decir nada.
+
+## Un gráfico "raro" casi nunca son los datos (2026-09-04)
+Auditar las 31 series dio 0 anomalías: sin duplicados, sin desorden, sin OHLC imposible. Las tres
+causas eran de presentación — doble reagrupado, autoescalado secuestrado por las líneas de precio, y
+velas planas que son verdad. Ante "se ve raro", validar primero los datos: si salen limpios, el fallo
+está entre el dato y el píxel, y eso acota la búsqueda enormemente.
+
+## Un useEffect puede correr antes de que exista lo que configura (2026-09-04)
+Puse `autoscaleInfoProvider` en un efecto con dependencia `[chartReady]`. Corría antes de que la serie
+existiera, `applyOptions` no se llamaba nunca y el síntoma era idéntico a "esta opción no funciona".
+Al configurar un objeto imperativo desde React, hacerlo donde se crea, no en un efecto que compite
+con su creación.
+
+## La precisión de un eje es parte del dato (2026-09-04)
+El eje acumulado del funding tenía dos decimales fijos para un rango de 0,001 % a −0,01 %: cinco
+marcas, tres idénticas y una "−0,00 %". Y el rebate maker de −0,005 % se mostraba como −0,01 %, el
+doble. En un producto donde las cifras son diminutas por naturaleza, los decimales tienen que salir
+del rango de los datos, nunca de una constante.
