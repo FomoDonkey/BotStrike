@@ -30,18 +30,24 @@ the cap only binds when a market is quiet enough that the target asks for more t
     balanced      11.2 % CAGR -> 11.3 %,  DD 7.6 %       0.9 % (was 0.9 % at cap 2)
     aggressive    16.7 % CAGR -> 17.2 %,  DD 11.3 %      5.6 % at cap 2, 0.9 % at cap 3
 
-Aggressive therefore runs at cap 3 (Edgar, 2026-09-04): it buys half a point of CAGR for no extra
-drawdown, and passes 6/6 of the gates. But it is a small lever by construction, and anyone reaching
-for it to "trade harder" wants the OTHER dial. Target volatility, at cap 3, is what actually scales:
+Aggressive runs at cap 3 (Edgar, 2026-09-04). The cap is a small lever by construction; the one that
+actually scales is target volatility, measured at cap 3 over the same panel:
 
-    target vol 0.30 -> Sharpe 1.92, CAGR 17.2 %, maxDD 11.3 %   (aggressive today)
-    target vol 0.45 -> Sharpe 1.92, CAGR 25.8 %, maxDD 16.5 %   beyond the validated range
-    target vol 0.60 -> Sharpe 1.88, CAGR 33.1 %, maxDD 21.4 %   beyond the validated range
-    target vol 0.80 -> Sharpe 1.84, CAGR 41.5 %, maxDD 27.5 %   beyond the validated range
+    target vol 0.30 -> Sharpe 1.92, CAGR 17.2 %, maxDD 11.3 %, worst day -3.73 %   VALIDATED RANGE
+    target vol 0.45 -> Sharpe 1.92, CAGR 25.8 %, maxDD 16.5 %, worst day -5.60 %
+    target vol 0.60 -> Sharpe 1.88, CAGR 33.1 %, maxDD 21.4 %, worst day -6.80 %
+    target vol 0.80 -> Sharpe 1.84, CAGR 41.5 %, maxDD 27.5 %, worst day -8.28 %   <- AGGRESSIVE
 
 Sharpe is flat across all of it: there is no free return up there, only a bigger position and a
-proportionally bigger hole. Raising target_vol past 0.30 also needs the loss ladder raised with it or
-the circuit breaker halts the bot on an ordinary drawdown.
+proportionally bigger hole.
+
+**AGGRESSIVE SITS AT 0.80, OUTSIDE THE 0.10-0.30 RANGE THE RESEARCH VALIDATED.** That is Edgar's
+choice, made against the measured menu in dollars on his own book, and it is recorded here rather
+than hidden: `describe()` returns `beyond_validated_range` for it and the Risk page says so on the
+card. What that buys and costs on a 1,014 $ book: +421 $/yr expected, a worst drawdown of 279 $, a
+worst single day of 84 $, and — the number that matters most and is easiest to overlook — the book
+spent its LONGEST stretch 620 days below its previous high, and 827 days more than 10 % under it.
+Return and drawdown scale together; time underwater scales with them.
 """
 from __future__ import annotations
 
@@ -57,10 +63,16 @@ PROFILES: Dict[str, Dict[str, float]] = {
     "balanced":     {"trend_target_vol": 0.20, "max_drawdown_pct": 0.10,
                      "max_daily_loss_pct": 0.020, "max_weekly_loss_pct": 0.050,
                      "trend_leverage_cap": 2.0},
-    # Aggressive takes the 3x ceiling Edgar asked for on 2026-09-04. Measured, not assumed:
-    # scripts/leverage_cap_study.py over the validated 14-market panel, 3,654 days.
-    "aggressive":   {"trend_target_vol": 0.30, "max_drawdown_pct": 0.15,
-                     "max_daily_loss_pct": 0.030, "max_weekly_loss_pct": 0.070,
+    # AGGRESSIVE IS DELIBERATELY BEYOND THE VALIDATED RANGE (Edgar, 2026-09-04). He was shown the
+    # measured menu in dollars on his own book and chose the top row. 0.80 target volatility with the
+    # 3x ceiling: scripts/aggressive_080_study.py, same 14-market panel, 3,654 days — Sharpe 1.84,
+    # CAGR 41.5 %, maxDD 27.5 %, 6/6 gates, and it survives 25 bps/side (CAGR 31.7 %) and funding x3.
+    #
+    # The loss ladder below is NOT the usual ratio copied off a calmer profile: it is set from the
+    # measured tail at THIS size, because a breaker tuned for a 3 % day would halt the bot on an
+    # ordinary one here. Worst day seen -8.28 %, worst week -11.46 %, worst drawdown -27.51 %.
+    "aggressive":   {"trend_target_vol": 0.80, "max_drawdown_pct": 0.36,
+                     "max_daily_loss_pct": 0.110, "max_weekly_loss_pct": 0.140,
                      "trend_leverage_cap": 3.0},
 }
 
@@ -68,9 +80,9 @@ PROFILES: Dict[str, Dict[str, float]] = {
 EXPECTED: Dict[str, Dict[str, float]] = {
     "conservative": {"sharpe": 1.93, "cagr": 0.056, "vol": 0.028, "max_dd": 0.039},
     "balanced":     {"sharpe": 1.92, "cagr": 0.113, "vol": 0.057, "max_dd": 0.076},
-    # re-measured at the 3x cap (leverage_cap_study, 2026-09-04): +0.5 points of CAGR for no extra
-    # drawdown, because the cap only ever bound on the quietest 5.6 % of asset-days
-    "aggressive":   {"sharpe": 1.92, "cagr": 0.172, "vol": 0.084, "max_dd": 0.113},
+    # measured at target vol 0.80 with the 3x cap (aggressive_080_study, 2026-09-04)
+    "aggressive":   {"sharpe": 1.84, "cagr": 0.415, "vol": 0.200, "max_dd": 0.275,
+                     "worst_day": 0.0828, "worst_week": 0.1146, "longest_underwater_days": 620},
 }
 
 VALIDATED_RANGE = (0.10, 0.30)
@@ -105,8 +117,15 @@ def describe(name: str, equity: float = 1000.0) -> Dict[str, Any]:
     if not exp or not cfg:
         return {"profile": key or "custom", "validated": False,
                 "note": "Custom settings: no validated expectation for this combination."}
+    lo, hi = VALIDATED_RANGE
+    beyond = not (lo - 1e-9 <= float(cfg["trend_target_vol"]) <= hi + 1e-9)
     return {
         "profile": key, "validated": True,
+        # A named profile can still sit outside the range the research covers: aggressive does, by
+        # Edgar's explicit choice. Saying "validated: true" and nothing else would hide that.
+        "beyond_validated_range": beyond,
+        "worst_day": exp.get("worst_day"), "worst_week": exp.get("worst_week"),
+        "longest_underwater_days": exp.get("longest_underwater_days"),
         "target_vol": cfg["trend_target_vol"],
         # the ceiling on the vol scalar. It is NOT "the leverage the bot uses": the size is
         # target_vol / realised_vol, and this only clips it on the quietest days.
@@ -118,9 +137,14 @@ def describe(name: str, equity: float = 1000.0) -> Dict[str, Any]:
         "limits": {"max_drawdown_pct": cfg["max_drawdown_pct"],
                    "max_daily_loss_pct": cfg["max_daily_loss_pct"],
                    "max_weekly_loss_pct": cfg["max_weekly_loss_pct"]},
-        "note": ("Same strategy, same Sharpe: return and drawdown scale together. "
-                 "The loss limits move with the profile so an ordinary losing streak does not "
-                 "halt the bot."),
+        "note": (("BEYOND THE VALIDATED RANGE. The research covers target volatility 0.10-0.30; "
+                  "this level was chosen deliberately against the measured numbers. Same strategy "
+                  "and nearly the same Sharpe — the extra return comes entirely from a bigger "
+                  "position, and the drawdown and the time spent underwater grow with it.")
+                 if beyond else
+                 ("Same strategy, same Sharpe: return and drawdown scale together. "
+                  "The loss limits move with the profile so an ordinary losing streak does not "
+                  "halt the bot.")),
         "leverage_note": ("Ceiling on the position scalar, not a fixed multiplier: each market is "
                           "sized at target vol / its own realised vol, and this caps the result on "
                           "the quietest days. Measured over 10 years it binds on 5.6 % of "

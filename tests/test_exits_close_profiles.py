@@ -72,8 +72,13 @@ def test_risk_profiles_scale_target_vol_and_the_ladder_together():
     s = Settings()
     assert rp.profile_of(s.trading) == "balanced"                # the shipped default
     changed = rp.apply_profile(s.trading, "aggressive")
-    assert s.trading.trend_target_vol == 0.30 and s.trading.max_drawdown_pct == 0.15
-    assert s.trading.max_daily_loss_pct == 0.03 and s.trading.max_weekly_loss_pct == 0.07
+    # Aggressive sits at 0.80 target vol since 2026-09-04 — Edgar's explicit choice, made against the
+    # measured menu in dollars, and deliberately OUTSIDE the 0.10-0.30 range the research validated.
+    # The loss ladder comes from the measured tail at this size (worst day -8.28 %, worst week
+    # -11.46 %, worst drawdown -27.51 %), not from a ratio copied off a calmer profile: a breaker
+    # tuned for a 3 % day would halt the bot on an ordinary one here.
+    assert s.trading.trend_target_vol == 0.80 and s.trading.max_drawdown_pct == 0.36
+    assert s.trading.max_daily_loss_pct == 0.11 and s.trading.max_weekly_loss_pct == 0.14
     # aggressive also raises the vol-scalar ceiling to 3x (Edgar, 2026-09-04). Measured on the
     # validated 14-market panel: +0.5 pts of CAGR for no extra drawdown, because the cap only bound
     # on the quietest 5.6 % of asset-days to begin with (scripts/leverage_cap_study.py).
@@ -93,11 +98,15 @@ def test_profile_description_is_honest_about_the_trade_off():
     d = rp.describe("aggressive", equity=1000.0)
     c = rp.describe("conservative", equity=1000.0)
     assert d["expected_cagr"] > c["expected_cagr"] and d["expected_max_dd"] > c["expected_max_dd"]
-    assert abs(d["sharpe"] - c["sharpe"]) < 0.05                # the edge itself does not change
+    # the edge barely changes: 1.84 at 0.80 target vol against 1.93 conservative. The extra return
+    # is a bigger position, not a better strategy — which is the whole point of the profile page.
+    assert abs(d["sharpe"] - c["sharpe"]) < 0.12
+    assert d["beyond_validated_range"] is True and c["beyond_validated_range"] is False
+    assert d["longest_underwater_days"] == 620      # the cost that is easiest to overlook
     # Re-measured 2026-09-04 with funding taken from Strike instead of guessed per asset class: the
     # old figures (152 / 113 on 1,000) understated the book, which the Risk page was quoting as fact.
-    # 172, not 167: aggressive now runs the 3x cap, re-measured on the same panel (2026-09-04)
-    assert d["expected_year_usd"] == pytest.approx(172.0) and d["expected_worst_drawdown_usd"] == pytest.approx(113.0)
+    # 415 / 275 on 1,000: aggressive at 0.80 target vol (aggressive_080_study, 2026-09-04)
+    assert d["expected_year_usd"] == pytest.approx(415.0) and d["expected_worst_drawdown_usd"] == pytest.approx(275.0)
     assert c["expected_year_usd"] == pytest.approx(56.0)
     assert rp.describe("custom")["validated"] is False
     assert [p["profile"] for p in rp.catalog()] == ["conservative", "balanced", "aggressive"]
@@ -150,7 +159,8 @@ def test_risk_profile_endpoints(st):
     assert body["current"] == "balanced" and len(body["profiles"]) == 3
     assert body["validated_target_vol_range"] == [0.10, 0.30]
     agg = next(p for p in body["profiles"] if p["profile"] == "aggressive")
-    assert agg["expected_cagr"] > 0.15 - 1e-9 and agg["expected_max_dd"] > 0.11
+    assert agg["expected_cagr"] > 0.40 and agg["expected_max_dd"] > 0.27
+    assert agg["beyond_validated_range"] is True       # and the card must say so
     assert client.post("/api/risk/profile", json={"profile": "nope"}).status_code == 400
     r = client.post("/api/risk/profile", json={"profile": "aggressive"})
     assert r.status_code == 200 and r.json()["profile"] == "aggressive"

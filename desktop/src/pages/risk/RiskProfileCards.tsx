@@ -228,6 +228,18 @@ function ProfileCard({ p, selected, canApply, disabledReason, busy, onApply }: {
         )}
         <dt>Expected return</dt>
         <dd>{formatPct(p.expected_cagr, 1)}</dd>
+        {typeof p.worst_day === "number" && (
+          <>
+            <dt><Hint title="The worst single day this level produced over ten years of the validated backtest. The daily loss limit is set above it on purpose, so an ordinary bad day does not halt the bot.">Worst day seen</Hint></dt>
+            <dd className="text-rose">−{formatPct(p.worst_day, 1)}</dd>
+          </>
+        )}
+        {typeof p.longest_underwater_days === "number" && (
+          <>
+            <dt><Hint title="The longest the book went without making a new high. This is the cost that is easiest to overlook: more return and more drawdown also mean longer stretches of watching the account sit below its peak.">Longest below peak</Hint></dt>
+            <dd>{p.longest_underwater_days} days</dd>
+          </>
+        )}
         <dt>Max drawdown limit</dt>
         <dd>{formatPct(p.limits.max_drawdown_pct, 0)}</dd>
         <dt>Daily loss limit</dt>
@@ -236,7 +248,17 @@ function ProfileCard({ p, selected, canApply, disabledReason, busy, onApply }: {
         <dd>{formatPct(p.limits.max_weekly_loss_pct, 0)}</dd>
       </dl>
 
-      <p className="text-[12px] font-medium text-text-2 leading-snug">{PROFILE_BLURB[p.profile] ?? p.note ?? ""}</p>
+      {p.beyond_validated_range && (
+        <div className="flex items-start gap-2 rounded-[6px] border border-amber/40 bg-amber/10 px-2 py-1.5">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber shrink-0 mt-0.5" />
+          <p className="text-[12px] font-medium text-text leading-snug">
+            Outside the validated range. The research covers 10–30 % target volatility; this level was
+            chosen deliberately. Same strategy and nearly the same Sharpe — the extra return is a
+            bigger position, and the drawdown and the time spent under water grow with it.
+          </p>
+        </div>
+      )}
+      <p className="text-[12px] font-medium text-text-2 leading-snug">{p.beyond_validated_range ? (p.note ?? "") : (PROFILE_BLURB[p.profile] ?? p.note ?? "")}</p>
 
       <Button
         variant={selected ? "secondary" : "primary"}

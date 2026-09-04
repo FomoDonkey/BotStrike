@@ -539,6 +539,11 @@ export interface RiskProfileInfo {
   /** ceiling on the position scalar for this profile (2x, or 3x on aggressive) */
   leverage_cap?: number;
   leverage_note?: string;
+  /** a named profile can still sit outside the range the research covers — aggressive does */
+  beyond_validated_range?: boolean;
+  worst_day?: number | null;
+  worst_week?: number | null;
+  longest_underwater_days?: number | null;
   expected_cagr: number;
   expected_vol: number;
   expected_max_dd: number;

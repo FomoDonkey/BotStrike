@@ -129,7 +129,11 @@ GROUPS: List[Dict[str, Any]] = [
     ]},
     {"id": "trend_daily", "label": "Trend daily", "fields": [
         _t("trend_lookbacks", "Donchian lookbacks", "list", help="Comma-separated days, e.g. 5,10,20,30,60,90."),
-        _t("trend_target_vol", "Target vol per asset", "percent", min=0.05, max=0.6, step=0.01),
+        # 0.80 is the aggressive profile since 2026-09-04 (Edgar's choice, measured in
+        # scripts/aggressive_080_study.py). The ceiling stays finite on purpose: past this the
+        # book is levered enough that the worst day measured on ten years is -8 %, and nothing
+        # above it has been studied at all.
+        _t("trend_target_vol", "Target vol per asset", "percent", min=0.05, max=0.80, step=0.01),
         _t("trend_vol_window", "Realized vol window", "int", min=20, max=365, step=1, unit="days"),
         _t("trend_n_assets", "Assets in universe", "int", min=1, max=10, step=1),
         _t("trend_leverage_cap", "Vol scalar cap", "number", min=0.1, max=3.0, step=0.1, unit="x",
