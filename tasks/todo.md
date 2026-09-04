@@ -2168,3 +2168,14 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
 - [ ] Ver con Edgar en Chrome real (la extensión no conectó en esta sesión)
 - [ ] Lo que Strike tiene y esto no, a propósito: dibujo (líneas, fib), 100+ indicadores de TradingView,
       layouts 1–4. Volume va dentro del panel de precio, no en panel propio
+
+### Desplegado (2026-09-05 00:20Z, `6f693a7`, verify PASS)
+- [x] Tailscale en win-01 estaba "logged out" con un demonio atascado: `Restart-Service Tailscale` elevado
+      (UAC) lo arregló; el SSH al host entró sin enlace de verificación
+- [x] Segundo fallo visto SOLO en el CT: el frame vivo del motor tiene tope de 2.000 velas de 1 m → BTC a
+      1d dibujaba UNA vela. Ahora `_engine_klines` lee `data/binance/klines/<sym>/1m.parquet` (90 días,
+      cacheado por mtime) y pone el frame vivo encima. Medido después: BTC 5m 1.000 velas, 1h 41,6 d,
+      4h/1d 96 d; SOL y ETH igual; snapshot de velas 0,1–0,2 s tras abrir el socket (antes hasta 16 s+)
+- [ ] Un mercado solo-venue a 1d va un día por detrás (Strike publica la diaria al cierre; XAG 1d tenía
+      46 h): se podría fundir la marca viva en la última vela
+- [ ] Verlo en Chrome real con Edgar
