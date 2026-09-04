@@ -111,7 +111,7 @@ export function MarketHeader({ market: m, onSymbolChange }: MarketHeaderProps) {
         {/* Zero is a fact on four of the venue's markets, not a value we failed to fetch. */}
         <Stat label="Open Interest" hint={HINTS.oi}>
           {m.rest && typeof m.rest.open_interest === "number"
-            ? `${formatCompact(m.oi)} ${SYMBOL_LABELS[m.symbol] ?? ""}` : "---"}
+            ? `${formatCompact(m.oi)} ${SYMBOL_LABELS[m.symbol] ?? m.symbol.split("-")[0]}` : "---"}
         </Stat>
         <Stat label="Spread" hint={HINTS.spread}>{m.spreadBps === null ? "---" : `${m.spreadBps.toFixed(2)} bps`}</Stat>
         <Stat label="Regime" hint={HINTS.regime}>

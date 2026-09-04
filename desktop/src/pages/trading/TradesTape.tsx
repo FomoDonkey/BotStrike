@@ -8,7 +8,10 @@ import { EmptyState } from "@/components/ui/Panel";
 export function TradesTape({ symbol }: { symbol: string }) {
   const unstreamed = useUnstreamed(symbol);
   const tape = useMarketStore((s) => s.tape[symbol]);
-  const base = SYMBOL_LABELS[symbol] ?? "";
+  // SYMBOL_LABELS only covers the four crypto the terminal shipped with, so every other market
+  // rendered "SIZE ()" and "0.5 " with the unit missing (2026-09-04). The base asset is in the
+  // symbol itself.
+  const base = SYMBOL_LABELS[symbol] ?? symbol.split("-")[0];
 
   if (!tape?.length) return <EmptyState>{unstreamed ? "Nothing on the venue right now" : "Waiting for trades…"}</EmptyState>;
 

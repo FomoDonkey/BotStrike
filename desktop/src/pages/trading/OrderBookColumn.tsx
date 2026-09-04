@@ -89,7 +89,10 @@ function OrderBook({ symbol }: { symbol: string }) {
   const ob = useMarketStore((s) => s.orderbooks[symbol]);
   const price = useMarketStore((s) => s.prices[symbol] || 0);
   const prev = useMarketStore((s) => s.prevPrices[symbol] || 0);
-  const base = SYMBOL_LABELS[symbol] ?? "";
+  // SYMBOL_LABELS only covers the four crypto the terminal shipped with, so every other market
+  // rendered "SIZE ()" and "0.5 " with the unit missing (2026-09-04). The base asset is in the
+  // symbol itself.
+  const base = SYMBOL_LABELS[symbol] ?? symbol.split("-")[0];
   const [layout, setLayout] = useState<BookLayout>("both");
   const [step, setStep] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
