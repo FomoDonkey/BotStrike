@@ -301,8 +301,19 @@ def _build_settings(exchange: str = "binance") -> Settings:
 async def start_engine(mode: str = "paper", settings: Optional[Settings] = None):
     """Start the BotStrike trading engine.
 
-    `settings` lets the caller pass venue-specific config (fees/slippage); when omitted
-    a default Settings() is used. Binance stays the data/execution backend (use_binance=True).
+    `settings` lets the caller pass venue-specific config (fees/slippage); when omitted a default
+    Settings() is used.
+
+    THE VENUE IS NOT HARD-CODED ANY MORE. This function passed `use_binance=True` unconditionally,
+    so the bot ran on the Binance feed no matter what the config said, and BOTSTRIKE_AUTOSTART_EXCHANGE
+    only changed a label in the UI — the screen could claim one venue while the engine read another
+    (2026-09-04). One source of truth now: the env var when set, else `trading.exchange_venue`.
+
+    This is the LIVE half only. Historical data — the daily bars the trend signal is computed from,
+    and everything the backtester reads — stays on Binance and Yahoo whatever this says, because
+    Strike's own history is 168 days for BTC and 19 for the S&P against the ten years the strategy
+    was validated on. `update_market_data()` above and `strategies/daily_sources.py` never consult
+    the venue, and must not start.
     """
     # Update market data in background — don't block engine start
     _spawn(update_market_data())
@@ -317,12 +328,18 @@ async def start_engine(mode: str = "paper", settings: Optional[Settings] = None)
     if is_paper or is_dry_run:
         settings.use_testnet = False
 
+    venue = (os.getenv("BOTSTRIKE_AUTOSTART_EXCHANGE", "").strip().lower()
+             or str(getattr(settings.trading, "exchange_venue", "strike")).strip().lower()
+             or "strike")
+    settings.trading.exchange_venue = venue          # so every downstream reader agrees
     state.engine = BotStrike(
         settings=settings,
         dry_run=is_dry_run,
         paper=is_paper,
-        use_binance=True,
+        use_binance=(venue == "binance"),
     )
+    state.exchange = venue                           # the label the UI shows is now the same fact
+    logger.info("engine_venue_selected", venue=venue, note="history stays on binance/yahoo")
     state.mode = mode
     state.running = True
     state.engine_expected = True

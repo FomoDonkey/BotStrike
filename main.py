@@ -103,7 +103,12 @@ class BotStrike:
                 from exchange.binance_ws import BinanceWebSocket
                 self.websocket = BinanceWebSocket(symbols=settings.symbol_names)
             else:
-                self.websocket = StrikeWebSocket(settings)
+                # exchange/strike_ws.py, not the old StrikeWebSocket: that one sent a frame shape
+                # the venue does not implement, so it ACKed nothing and delivered no tick — which is
+                # why the bot had been on the Binance feed all along (2026-09-04).
+                from exchange.strike_ws import StrikeMarketWebSocket
+                self.websocket = StrikeMarketWebSocket(symbols=settings.symbol_names,
+                                                       ws_url=settings.ws_market_url)
 
         # Regime on N-minute bars with dwell hysteresis (reads Settings.trading live)
         self.regime_detector = RegimeDetector(settings=settings)
@@ -394,6 +399,51 @@ class BotStrike:
 
         self.websocket.on("depth", on_depth_update)
         self.websocket.on("depthUpdate", on_depth_update)
+
+        # Closed 1 m bars straight from the venue. On a venue as thin as Strike the trade stream
+        # cannot build a chart on its own — one trade in a hundred seconds across six markets,
+        # measured 2026-09-04 — but the venue closes a bar every minute regardless, so that bar is
+        # the datum. Harmless on Binance, where the same bars simply confirm what the ticks built.
+        async def on_kline(data: Dict):
+            try:
+                k = data.get("k") or {}
+                symbol = str(k.get("s") or data.get("s") or "")
+                if not symbol or symbol not in [s.symbol for s in self.settings.symbols]:
+                    return
+                close = float(k.get("c") or 0)
+                self.market_data.on_closed_bar(
+                    symbol, float(k.get("t") or 0) / 1000.0, float(k.get("o") or 0),
+                    float(k.get("h") or 0), float(k.get("l") or 0), close, float(k.get("v") or 0))
+                # On Strike a stop can go a long time without a trade to test it against, so the
+                # paper simulator is walked forward on the bar close too.
+                if close > 0 and self.paper_sim:
+                    for trade in self.paper_sim.on_price_update(symbol, close):
+                        await self._process_paper_fill(trade)
+            except Exception as e:  # noqa: BLE001
+                logger.error("on_kline_error", error=str(e)[:200])
+
+        self.websocket.on("kline", on_kline)
+
+        # Mark, index and funding: no venue streams these on Strike, so they arrive from the
+        # premiumIndex poll inside the feed client and keep the snapshot honest between trades.
+        async def on_mark_price(data: Dict):
+            try:
+                symbol = str(data.get("s") or "")
+                snap = self.market_data.get_snapshot(symbol) if symbol else None
+                if snap is None:
+                    return
+                mark = float(data.get("p") or 0)
+                index = float(data.get("i") or 0)
+                rate = float(data.get("r") or 0)
+                if mark > 0:
+                    snap.mark_price = mark
+                if index > 0:
+                    snap.index_price = index
+                snap.funding_rate = rate
+            except Exception as e:  # noqa: BLE001
+                logger.error("on_mark_price_error", error=str(e)[:200])
+
+        self.websocket.on("markPrice", on_mark_price)
 
         # Order updates (fills) → procesar
         async def on_order_update(data: Dict):

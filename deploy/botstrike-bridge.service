@@ -23,7 +23,9 @@ Environment=BOTSTRIKE_HOST=0.0.0.0
 Environment=BOTSTRIKE_PORT=9420
 # paper | dry_run | (empty = wait for the desktop to click Start). NEVER "live" here.
 Environment=BOTSTRIKE_AUTOSTART=paper
-Environment=BOTSTRIKE_AUTOSTART_EXCHANGE=binance
+# LIVE feed + execution venue. Historical data (daily bars for the trend signal, backtests)
+# stays on Binance/Yahoo regardless — Strike only has 168 days of klines.
+Environment=BOTSTRIKE_AUTOSTART_EXCHANGE=strike
 # Deploy-level kill switch (audit R2 security_supply-03): with this at 0 the bridge refuses
 # mode=live with 403 even when presented a VALID token, so a leaked token cannot trade real money.
 # Independent of the regulatory blocker (Binance is reduce-only for ES residents since 1-jul-2026).

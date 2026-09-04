@@ -58,6 +58,9 @@ class MarketDataCollector:
         self._last_bar_time: Dict[str, float] = {}
         # Último dato recibido por símbolo (para detección de stale data)
         self._last_data_time: Dict[str, float] = {}
+        # Symbols whose 1 m bars the VENUE closes for us. Two bar builders on one symbol would race
+        # to append the same minute, so once the venue publishes bars, ticks stop closing them.
+        self._venue_bars: set = set()
         # Intervalo de barras en segundos
         # 60 = 1min — MR strategy resamples 1m bars to 5m internally.
         # Must be 60 for indicator math to be correct (ATR, RSI, BB).
@@ -157,10 +160,17 @@ class MarketDataCollector:
 
     async def seed_from_strike(self, symbol: str, sym_config: SymbolConfig, client, hours: int = 6) -> None:
         """Seed 1m candles from Strike's public klines (venue = strike, paper or live). Strike symbols
-        are native (XAU-USD, SP500-USD…), no mapping. Falls back silently on error."""
+        are native (XAU-USD, SP500-USD…), no mapping. Falls back silently on error.
+
+        `start_time` is not optional in practice: asked WITHOUT one, Strike answers from a cached
+        window whose last bar was five hours old when this was measured (2026-09-04), so the chart
+        would seed stale and the first live tick would jump. Asked WITH one, the same endpoint
+        returns right up to the current minute.
+        """
         try:
             limit = min(max(hours * 60, 60), 1500)
-            data = await client.get_klines(symbol, interval="1m", limit=limit)
+            start_ms = int((time.time() - hours * 3600) * 1000)
+            data = await client.get_klines(symbol, interval="1m", limit=limit, start_time=start_ms)
             if not data:
                 logger.warning("strike_seed_empty", symbol=symbol)
                 return
@@ -360,7 +370,7 @@ class MarketDataCollector:
         # Verificar si debemos cerrar barras ANTES de añadir el tick
         # Loop para cerrar múltiples barras si hubo un gap de datos
         last_bar = self._last_bar_time.get(symbol, 0)
-        while last_bar > 0 and ts - last_bar >= self.bar_interval:
+        while (symbol not in self._venue_bars) and last_bar > 0 and ts - last_bar >= self.bar_interval:
             bar_close_ts = last_bar + self.bar_interval
             self._close_bar(symbol, bar_close_ts)
             last_bar = self._last_bar_time.get(symbol, 0)
@@ -433,6 +443,47 @@ class MarketDataCollector:
         self._last_bar_time[symbol] = bar_close_ts
         # Mantener solo ticks de la siguiente barra
         self._tick_buffer[symbol] = next_ticks
+
+    def on_closed_bar(self, symbol: str, ts: float, o: float, h: float, low: float,
+                      c: float, v: float) -> None:
+        """Append a 1 m bar the VENUE itself closed.
+
+        On Binance the tick stream is dense enough to build bars from trades, and `_close_bar` does
+        exactly that. Strike is not that market: measured on 2026-09-04, one trade arrived in a
+        hundred seconds across BTC, ETH, SOL, ADA, gold and NIGHT. Bars built from those ticks would
+        be almost entirely empty, and the chart with them. Strike closes a 1 m bar every minute
+        regardless — with zero volume when nothing traded — so on that venue the bar IS the datum
+        and this is how it gets in. Idempotent: a bar already recorded updates in place rather than
+        duplicating, because the venue re-sends the forming bar before it closes.
+        """
+        if not symbol or ts <= 0 or c <= 0:
+            return
+        self._venue_bars.add(symbol)     # from here on, ticks no longer close bars for this symbol
+        df = self._dataframes.get(symbol)
+        bar = {"timestamp": float(ts), "open": float(o), "high": float(h),
+               "low": float(low), "close": float(c), "volume": float(v)}
+        if df is not None and len(df) and float(df["timestamp"].iloc[-1]) >= float(ts):
+            if float(df["timestamp"].iloc[-1]) == float(ts):
+                for k, val in bar.items():
+                    df.iloc[-1, df.columns.get_loc(k)] = val
+            else:
+                return                      # an older bar than we already hold: ignore
+        else:
+            row = pd.DataFrame([bar])
+            df = row if df is None or not len(df) else pd.concat([df, row], ignore_index=True)
+            if len(df) > MAX_BARS:
+                df = df.tail(MAX_BARS).reset_index(drop=True)
+        sym_config = self.settings.get_symbol_config(symbol)
+        self._dataframes[symbol] = Indicators.compute_all(df, {
+            "ema_fast": sym_config.tf_ema_fast,
+            "ema_slow": sym_config.tf_ema_slow,
+            "zscore_lookback": sym_config.mr_lookback,
+        })
+        self._last_bar_time[symbol] = float(ts)
+        self._last_data_time[symbol] = time.time()
+        snap = self._snapshots.get(symbol)
+        if snap is not None:
+            snap.price = float(c)
 
     # ── Acceso a datos ─────────────────────────────────────────────
 

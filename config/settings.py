@@ -80,7 +80,12 @@ class SymbolConfig:
 class TradingConfig:
     """Configuración global de trading."""
     # Exchange venue — Binance for liquidity, Strike when ready
-    exchange_venue: str = "binance"      # "binance" or "strike"
+    # LIVE data and execution come from the venue the bot actually trades on. HISTORICAL data does
+    # not follow this setting and must not: the daily bars the trend signal is computed from, and
+    # everything the backtester reads, stay on Binance + Yahoo, because Strike's own klines go back
+    # 168 days for BTC and 19 for the S&P (measured 2026-09-04) against the ten years the strategy
+    # was validated on. See strategies/daily_sources.py and data/binance_downloader.py.
+    exchange_venue: str = "strike"       # "strike" | "binance" | "hyperliquid" — LIVE feed only
     # Capital
     initial_capital: float = 1000.0
     # Compounding (2026-09-02): when True the engine sizes every position on the

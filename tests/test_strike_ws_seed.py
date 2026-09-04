@@ -1,5 +1,6 @@
 """Strike user-WS logon (documented `session.logon`) and market-data seeding from Strike klines."""
 import asyncio
+import time
 import json
 
 from nacl.signing import SigningKey, VerifyKey
@@ -82,15 +83,22 @@ def test_seed_from_strike_uses_native_symbols_and_builds_frame():
     calls = []
 
     class FakeClient:
-        async def get_klines(self, symbol, interval="1m", limit=500):
-            calls.append((symbol, interval, limit))
+        async def get_klines(self, symbol, interval="1m", limit=500, start_time=None, end_time=None):
+            calls.append((symbol, interval, limit, start_time))
             base = 1_788_400_000_000
             return [[base + i * 60_000, "100", "101", "99", "100.5", "3", base + i * 60_000 + 59_999, "300", 5, "1", "100", "0"]
                     for i in range(limit)]
 
     cfg = s.get_symbol_config("BTC-USD")
+    before_ms = time.time() * 1000
     asyncio.run(md.seed_from_strike("XAU-USD", cfg, FakeClient(), hours=2))
-    assert calls == [("XAU-USD", "1m", 120)]
+    assert len(calls) == 1
+    sym, interval, limit, start_time = calls[0]
+    assert (sym, interval, limit) == ("XAU-USD", "1m", 120)
+    # A start_time is REQUIRED, not optional: asked without one the venue answers from a cached
+    # window whose last bar was five hours old (measured 2026-09-04), so the chart would seed stale.
+    assert start_time is not None
+    assert before_ms - 2 * 3600 * 1000 - 5000 <= start_time <= before_ms - 2 * 3600 * 1000 + 5000
     df = md.get_dataframe("XAU-USD")
     assert df is not None and len(df) == 120 and float(df["close"].iloc[-1]) == 100.5
     snap = md.get_snapshot("XAU-USD")
