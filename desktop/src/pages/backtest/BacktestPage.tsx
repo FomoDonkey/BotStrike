@@ -34,6 +34,10 @@ export function BacktestPage() {
   const { isLocal, token } = useBridgeConfig();
   const canRun = isLocal || token.length > 0;
 
+  // How much history to replay. The endpoint's default is "all", which is 216,000 one-minute bars
+  // and over seven minutes with no progress bar and no cancel — a button nobody would press twice
+  // (measured 2026-09-04). A month is enough to reproduce a verdict and returns in about a minute.
+  const [bars, setBars] = useState(43_200);
   const runBacktest = async () => {
     setRunning(true);
     setError(null);
@@ -42,7 +46,7 @@ export function BacktestPage() {
     const t0 = Date.now();
     const timer = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
     try {
-      const data = await api.backtestRun({ symbol, strategy, exchange: useExchangeStore.getState().exchange });
+      const data = await api.backtestRun({ symbol, strategy, bars, exchange: useExchangeStore.getState().exchange });
       setResult(data);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : `Bridge unreachable at ${getBridgeUrl()}`);
@@ -59,13 +63,27 @@ export function BacktestPage() {
   return (
     <div className="flex flex-col gap-3 p-3 sm:p-4 min-w-0">
       <h1 className="text-[18px] font-semibold text-text flex items-center gap-2"><FlaskConical className="w-5 h-5 text-mint" /> Backtest</h1>
+      {/* Everything this page can run is retired, and the one strategy the bot DOES run is validated
+          elsewhere. That was only said in the empty state, which disappears the moment a result
+          arrives — so it is said here, where it stays (audit 2026-09-04). */}
+      <p className="text-[12.5px] font-medium text-text-2 leading-snug max-w-[95ch]">
+        This replays a <span className="text-text font-semibold">retired</span> engine over the local
+        1-minute history to verify the verdict that retired it. It enables nothing. The strategy the
+        bot actually runs — <span className="text-text font-semibold">Trend daily</span> — is a daily
+        book validated in the research: it passes 11 of 11 GO/NO-GO gates over 3,654 days at every one
+        of the three risk levels (<span className="num">scripts/validate_profile.py</span>), which is
+        not something a 1-minute replay can reproduce.
+      </p>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
         <Panel>
           <PanelHeader title="Configuration" />
           <div className="px-4 py-3 space-y-3">
             <label className="block">
-              <span className="text-[12.5px] font-medium text-text-2 block mb-1">Symbol</span>
+              <span className="text-[12.5px] font-medium text-text-2 block mb-1"
+                    title="Only the symbols with a local 1-minute history: the bot supports 31 markets on the venue, but this replay reads data/binance/klines and only these four are downloaded.">
+                Symbol <span className="text-text-3">· local 1m history only</span>
+              </span>
               <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className={cn(INPUT_CLS, "bs-select")}>
                 {SYMBOLS.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
@@ -76,9 +94,27 @@ export function BacktestPage() {
                 {AVAILABLE_STRATEGIES.map((s) => <option key={s.value} value={s.value} disabled={!s.active}>{s.label}</option>)}
               </select>
             </label>
+            <label className="block">
+              <span className="text-[12.5px] font-medium text-text-2 block mb-1"
+                    title="One-minute bars to replay, newest first. The whole local history is about 216,000 bars and takes several minutes; a month reproduces the verdict in about one.">
+                History
+              </span>
+              <select value={bars} onChange={(e) => setBars(Number(e.target.value))} className={cn(INPUT_CLS, "bs-select")}>
+                <option value={10_080}>1 week · ~10k bars · seconds</option>
+                <option value={43_200}>1 month · ~43k bars · about a minute</option>
+                <option value={129_600}>3 months · ~130k bars · several minutes</option>
+                <option value={0}>Everything local · ~216k bars · slowest</option>
+              </select>
+            </label>
             <Button variant="primary" className="w-full h-9" icon={<Play className="w-4 h-4" />} onClick={runBacktest} loading={running} disabled={!canRun} title={canRun ? undefined : "Remote bridge — set the auth token in Settings → Connection to run backtests"}>
               {running ? `Running… ${elapsed}s` : "Run backtest"}
             </Button>
+            {running && (
+              <p className="text-[12px] font-medium text-text-2 leading-snug">
+                Replaying {bars ? `${bars.toLocaleString()} one-minute bars` : "the whole local history"} —
+                it runs off the trading loop, so the bot keeps trading while it works.
+              </p>
+            )}
             {!canRun && <p className="text-[12px] font-medium text-amber">Remote bridge without a token — backtests are disabled here.</p>}
             {error && <div className="p-3 rounded-[6px] bg-rose-soft text-rose text-[12.5px] font-medium break-words">{error}</div>}
             {result && (
