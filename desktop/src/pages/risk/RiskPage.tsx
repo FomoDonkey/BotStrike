@@ -50,18 +50,22 @@ export function RiskPage() {
   const halted = risk.circuit_breaker_active || risk.drawdown_halted;
   const equity = metrics.equity > 0 ? metrics.equity : risk.equity;
 
+  // A day whose PnL is fees only (-0.0032) printed as "-$0.00": a signed zero reads as a losing day
+  // that is not one. Show enough digits to see what it actually is (2026-09-04).
+  const money = (v: number) => formatSignedMoney(v, Math.abs(v) > 0 && Math.abs(v) < 0.005 ? 4 : 2);
+
   const ladder: LadderRow[] = [
     {
       label: "Daily loss", hint: HINTS.dailyPnl,
       used: risk.daily_limit > 0 ? Math.min(1, Math.max(0, -risk.daily_pnl) / risk.daily_limit) : null,
-      current: <Signed value={risk.daily_pnl} format={formatSignedMoney} />,
+      current: <Signed value={risk.daily_pnl} format={money} />,
       limit: risk.daily_limit > 0 ? `-${formatMoney(risk.daily_limit)} (${formatPct(risk.max_daily_loss_pct, 1)})` : "n/a",
       note: "resets 00:00 UTC",
     },
     {
       label: "Weekly loss", hint: HINTS.weeklyPnl,
       used: risk.weekly_limit > 0 ? Math.min(1, Math.max(0, -risk.weekly_pnl) / risk.weekly_limit) : null,
-      current: <Signed value={risk.weekly_pnl} format={formatSignedMoney} />,
+      current: <Signed value={risk.weekly_pnl} format={money} />,
       limit: risk.weekly_limit > 0 ? `-${formatMoney(risk.weekly_limit)} (${formatPct(risk.max_weekly_loss_pct, 1)})` : "n/a",
       note: "ISO week · resets Monday 00:00 UTC",
     },

@@ -3,9 +3,15 @@
 Leverage does not create edge. Measured on the validated multi-asset book (10 years, funding
 charged, engine selection rule), the Sharpe is FLAT while return and drawdown scale together:
 
-    target vol 0.10  ->  Sharpe 1.78, CAGR  5.1 %, vol 2.8 %, maxDD  4.2 %
-    target vol 0.20  ->  Sharpe 1.76, CAGR 10.2 %, vol 5.6 %, maxDD  7.8 %
-    target vol 0.30  ->  Sharpe 1.77, CAGR 15.2 %, vol 8.2 %, maxDD 11.3 %
+    target vol 0.10  ->  Sharpe 1.93, CAGR  5.6 %, vol 2.8 %, maxDD  3.9 %
+    target vol 0.20  ->  Sharpe 1.92, CAGR 11.2 %, vol 5.6 %, maxDD  7.6 %
+    target vol 0.30  ->  Sharpe 1.92, CAGR 16.7 %, vol 8.2 %, maxDD 11.2 %
+
+Re-measured 2026-09-04. The previous figures (1.78 / 1.76 / 1.77, CAGR 5.1 / 10.2 / 15.2 %) came from
+the run that GUESSED funding by asset class. Funding is now measured on Strike itself, where a
+diversified long book turns out to be nearly carry-neutral (the 10-year cost fell from 10.6 to 1.5
+points of equity), so the old numbers understated every profile and the Risk page was quoting a
+pessimistic expectation as if it were the measurement.
 
 So the correct control is **target volatility**, not a leverage multiplier: it scales the whole
 book coherently and keeps the vol-targeting logic that made the strategy pass its gates. Raising it
@@ -33,9 +39,9 @@ PROFILES: Dict[str, Dict[str, float]] = {
 
 # What the research measured for each profile, so the UI never has to guess.
 EXPECTED: Dict[str, Dict[str, float]] = {
-    "conservative": {"sharpe": 1.78, "cagr": 0.051, "vol": 0.028, "max_dd": 0.042},
-    "balanced":     {"sharpe": 1.76, "cagr": 0.102, "vol": 0.056, "max_dd": 0.078},
-    "aggressive":   {"sharpe": 1.77, "cagr": 0.152, "vol": 0.082, "max_dd": 0.113},
+    "conservative": {"sharpe": 1.93, "cagr": 0.056, "vol": 0.028, "max_dd": 0.039},
+    "balanced":     {"sharpe": 1.92, "cagr": 0.112, "vol": 0.056, "max_dd": 0.076},
+    "aggressive":   {"sharpe": 1.92, "cagr": 0.167, "vol": 0.082, "max_dd": 0.112},
 }
 
 VALIDATED_RANGE = (0.10, 0.30)

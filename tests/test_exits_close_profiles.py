@@ -88,7 +88,10 @@ def test_profile_description_is_honest_about_the_trade_off():
     c = rp.describe("conservative", equity=1000.0)
     assert d["expected_cagr"] > c["expected_cagr"] and d["expected_max_dd"] > c["expected_max_dd"]
     assert abs(d["sharpe"] - c["sharpe"]) < 0.05                # the edge itself does not change
-    assert d["expected_year_usd"] == pytest.approx(152.0) and d["expected_worst_drawdown_usd"] == pytest.approx(113.0)
+    # Re-measured 2026-09-04 with funding taken from Strike instead of guessed per asset class: the
+    # old figures (152 / 113 on 1,000) understated the book, which the Risk page was quoting as fact.
+    assert d["expected_year_usd"] == pytest.approx(167.0) and d["expected_worst_drawdown_usd"] == pytest.approx(112.0)
+    assert c["expected_year_usd"] == pytest.approx(56.0)
     assert rp.describe("custom")["validated"] is False
     assert [p["profile"] for p in rp.catalog()] == ["conservative", "balanced", "aggressive"]
 
