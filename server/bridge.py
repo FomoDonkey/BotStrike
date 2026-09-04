@@ -1149,13 +1149,19 @@ async def system_broadcast_loop():
                 _log_counter = 0
                 m = state.engine.metrics.get_metrics()
                 rm = state.engine.risk_manager
-                regime = list(state.engine._last_regime.values())
-                regime_str = regime[0].value if regime else "UNKNOWN"
+                # These counters live in the process and reset on every restart, and the regime is
+                # ONE symbol's, picked arbitrarily from a dict. Printed as "Engine: 0 trades | PnL
+                # $+0.00 | Regime RANGING" they read as the bot's totals and the book's regime, on a
+                # bot holding six positions and up $14 (audit 2026-09-04). Say whose they are.
+                pairs = list(state.engine._last_regime.items())
+                sym, reg = (pairs[0][0], pairs[0][1].value) if pairs else ("", "UNKNOWN")
+                since = f"{m.get('total_trades', 0)} trades | PnL ${m.get('total_pnl', 0):+.2f}"
                 await state.channels.broadcast("system", {
                     "type": "log",
                     "timestamp": time.time(),
                     "level": "info",
-                    "message": f"Engine: {m.get('total_trades', 0)} trades | PnL ${m.get('total_pnl', 0):+.2f} | DD {rm.current_drawdown_pct:.2%} | Regime {regime_str}",
+                    "message": (f"Engine · since restart: {since} | drawdown from peak "
+                                f"{rm.current_drawdown_pct:.2%} | {sym or 'regime'} {reg}"),
                 })
         except Exception as e:
             logger.debug("system_broadcast_error", error=str(e))

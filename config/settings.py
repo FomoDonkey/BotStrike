@@ -199,15 +199,17 @@ class TradingConfig:
     # is a hedge with a premium, not an edge — see the research note before flipping it.
     trend_allow_shorts: bool = False
     trend_short_size: float = 0.5
-    trend_pool: str = ("BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,LTCUSDT,TRXUSDT,"
-                       "ETCUSDT,EOSUSDT,XLMUSDT,NEOUSDT,IOTAUSDT,ZECUSDT,DASHUSDT,SOLUSDT,"
-                       "AVAXUSDT,DOTUSDT,LINKUSDT,ATOMUSDT")
-    # Multi-asset pool validated 11/11 on 2026-09-03 (tasks/research_trend_multi_2026-09-03.md):
+    # The multi-asset pool validated 11/11 on 2026-09-03 (tasks/research_trend_multi_2026-09-03.md):
     # Sharpe 1.81 net vs 1.37 crypto-only, maxDD 8.8 % vs 11.9 %, funding charged. Strike-style
     # markets take their daily history from Yahoo (strategies/daily_sources.py) and execute on the
-    # venue. Set trend_pool to this string and trend_n_assets to 6 to switch the book over.
+    # venue. This IS what the bot runs, so it is the default too: the previous default was the old
+    # crypto-only list, which nothing had validated in this shape and which still named EOSUSDT — a
+    # series whose data stops on 2025-05-26 (seen in the data catalog, 2026-09-04). Resetting to
+    # defaults would have offered the universe picker a market that has not traded in fifteen months.
     TREND_POOL_MULTI: ClassVar[str] = ("BTCUSDT,ETHUSDT,ADAUSDT,SOLUSDT,XRPUSDT,BNBUSDT,ZECUSDT,"
                                        "XAU-USD,XAG-USD,SP500-USD,NAS100-USD,WTI-USD")
+    trend_pool: str = ("BTCUSDT,ETHUSDT,ADAUSDT,SOLUSDT,XRPUSDT,BNBUSDT,ZECUSDT,"
+                       "XAU-USD,XAG-USD,SP500-USD,NAS100-USD,WTI-USD")
     # ── Edge monitor (research §4.4 / audit 2026-09-02) ──
     # Per-strategy statistics over the last `edge_window` closed trades. A strategy is
     # killed (no new entries, Telegram alert) when n >= edge_kill_min_trades and either
