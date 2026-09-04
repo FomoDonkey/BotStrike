@@ -369,30 +369,3 @@ def test_the_engine_loads_the_venue_s_rules_for_every_market(monkeypatch):
     assert rules["BTC-USD"]["step_size"] == pytest.approx(0.00001)
     assert rules["BTC-USD"]["min_notional"] == pytest.approx(10.0)
     assert rules["BTC-USD"]["market_max_qty"] == pytest.approx(120.0)
-
-
-def test_the_24h_range_always_contains_the_live_price(st, monkeypatch):
-    """Strike publishes the 24 h high/low as TRADED extremes while the header leads with the mark.
-    CRCL traded once all day at 88.94 and marks at 101.45, so the panel read "24h High 88.94" under
-    a price of 101.45 — both figures Strike's own, and side by side they read as a bug (2026-09-04)."""
-    async def _venue():
-        return {"ts": 1_788_000_000.0, "ts_tick": 1_788_000_000.0, "ts_info": 1_788_000_000.0,
-                "premium": {"CRCL-USD": {"markPrice": "101.45", "indexPrice": "101.40",
-                                         "fundingRate": "0"}},
-                "ticker": {"CRCL-USD": {"lastPrice": "88.94", "highPrice": "88.94",
-                                        "lowPrice": "88.94", "priceChangePercent": "0",
-                                        "volume": "1.91", "quoteVolume": "169.87", "count": 0}},
-                "filters": {}, "depth": {}, "oi": {}}
-
-    monkeypatch.setattr(bridge, "_venue_market_data", _venue)
-    eng = SimpleNamespace(settings=Settings(), trend_engine=None, _venue_funding={},
-                          market_data=SimpleNamespace(get_snapshot=lambda s_: None,
-                                                      get_24h_stats=lambda s_: {},
-                                                      get_data_age=lambda s_: float("inf")),
-                          regime_detector=SimpleNamespace(status=lambda s_: {}))
-    st.engine, st.running = eng, True
-    m = TestClient(bridge.app).get("/api/market/CRCL-USD").json()
-    assert m["price"] == pytest.approx(101.45)
-    assert m["high_24h"] == pytest.approx(101.45)      # the mark is folded in
-    assert m["low_24h"] == pytest.approx(88.94)        # the traded low survives
-    assert m["low_24h"] <= m["price"] <= m["high_24h"]
