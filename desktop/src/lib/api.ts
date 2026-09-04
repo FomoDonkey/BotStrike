@@ -544,6 +544,10 @@ export interface RiskProfileInfo {
   worst_day?: number | null;
   worst_week?: number | null;
   longest_underwater_days?: number | null;
+  /** how many of the book's own GO/NO-GO gates this level passed, and the deflated Sharpe */
+  gates_passed?: number | null;
+  gates_total?: number | null;
+  dsr?: number | null;
   expected_cagr: number;
   expected_vol: number;
   expected_max_dd: number;

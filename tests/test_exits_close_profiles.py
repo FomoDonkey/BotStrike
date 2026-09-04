@@ -101,8 +101,11 @@ def test_profile_description_is_honest_about_the_trade_off():
     # the edge barely changes: 1.84 at 0.80 target vol against 1.93 conservative. The extra return
     # is a bigger position, not a better strategy — which is the whole point of the profile page.
     assert abs(d["sharpe"] - c["sharpe"]) < 0.12
-    assert d["beyond_validated_range"] is True and c["beyond_validated_range"] is False
-    assert d["longest_underwater_days"] == 620      # the cost that is easiest to overlook
+    # Aggressive was PUT THROUGH the book's own eleven gates at its own settings and passed 11/11
+    # (scripts/validate_aggressive.py, 2026-09-04) — the range was not widened to make room for it.
+    assert d["beyond_validated_range"] is False and c["beyond_validated_range"] is False
+    assert d["gates_passed"] == 11 and d["gates_total"] == 11 and d["dsr"] >= 0.95
+    assert d["longest_underwater_days"] == 620      # validated does not mean comfortable
     # Re-measured 2026-09-04 with funding taken from Strike instead of guessed per asset class: the
     # old figures (152 / 113 on 1,000) understated the book, which the Risk page was quoting as fact.
     # 415 / 275 on 1,000: aggressive at 0.80 target vol (aggressive_080_study, 2026-09-04)
@@ -157,10 +160,11 @@ def test_risk_profile_endpoints(st):
     client = TestClient(bridge.app)
     body = client.get("/api/risk/profiles").json()
     assert body["current"] == "balanced" and len(body["profiles"]) == 3
-    assert body["validated_target_vol_range"] == [0.10, 0.30]
+    # 0.80 after aggressive passed the full suite there; anything above it is still unstudied
+    assert body["validated_target_vol_range"] == [0.10, 0.80]
     agg = next(p for p in body["profiles"] if p["profile"] == "aggressive")
     assert agg["expected_cagr"] > 0.40 and agg["expected_max_dd"] > 0.27
-    assert agg["beyond_validated_range"] is True       # and the card must say so
+    assert agg["beyond_validated_range"] is False and agg["gates_passed"] == 11
     assert client.post("/api/risk/profile", json={"profile": "nope"}).status_code == 400
     r = client.post("/api/risk/profile", json={"profile": "aggressive"})
     assert r.status_code == 200 and r.json()["profile"] == "aggressive"

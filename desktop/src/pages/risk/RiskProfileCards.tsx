@@ -22,7 +22,7 @@ export const RISK_LEVEL_COPY =
 const PROFILE_BLURB: Record<string, string> = {
   conservative: "The smallest position sizes. Slow, shallow drawdowns.",
   balanced: "The sizing the paper book runs today.",
-  aggressive: "Deliberately past the research range. Shown with its own warning instead of this line.",
+  aggressive: "Put through the same eleven gates as the other two and passed all of them. Validated does not mean comfortable: the worst day and the time below peak above are what this level costs.",
 };
 
 /**
@@ -200,8 +200,13 @@ function ProfileCard({ p, selected, canApply, disabledReason, busy, onApply }: {
         {/* A named profile can be measured and still sit outside the range the research covers.
             Stamping VALIDATED on it while the note underneath says the opposite is worse than
             either message alone (2026-09-04). */}
-        <Chip tone={p.beyond_validated_range ? "amber" : p.validated ? "neutral" : "amber"} size="xs" className="ml-auto">
-          {p.beyond_validated_range ? "BEYOND THE RESEARCH" : p.validated ? "VALIDATED" : "NOT VALIDATED"}
+        <Chip tone={p.beyond_validated_range ? "amber" : p.validated ? "neutral" : "amber"} size="xs" className="ml-auto"
+              title={typeof p.gates_passed === "number"
+                ? `Passed ${p.gates_passed}/${p.gates_total} of the book's own GO/NO-GO gates at this level's own settings — Sharpe, deflated Sharpe, drawdown against this profile's budget, beating crypto-only at the same risk, skew, survival at 25 bps/side and funding x3, no look-ahead artefact, and the 2022+ subperiod.`
+                : undefined}>
+          {p.beyond_validated_range ? "BEYOND THE RESEARCH"
+            : typeof p.gates_passed === "number" ? `VALIDATED ${p.gates_passed}/${p.gates_total}`
+            : p.validated ? "VALIDATED" : "NOT VALIDATED"}
         </Chip>
       </div>
 

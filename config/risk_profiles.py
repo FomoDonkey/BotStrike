@@ -41,13 +41,29 @@ actually scales is target volatility, measured at cap 3 over the same panel:
 Sharpe is flat across all of it: there is no free return up there, only a bigger position and a
 proportionally bigger hole.
 
-**AGGRESSIVE SITS AT 0.80, OUTSIDE THE 0.10-0.30 RANGE THE RESEARCH VALIDATED.** That is Edgar's
-choice, made against the measured menu in dollars on his own book, and it is recorded here rather
-than hidden: `describe()` returns `beyond_validated_range` for it and the Risk page says so on the
-card. What that buys and costs on a 1,014 $ book: +421 $/yr expected, a worst drawdown of 279 $, a
-worst single day of 84 $, and — the number that matters most and is easiest to overlook — the book
-spent its LONGEST stretch 620 days below its previous high, and 827 days more than 10 % under it.
-Return and drawdown scale together; time underwater scales with them.
+**AGGRESSIVE SITS AT 0.80 AND IS VALIDATED THERE** (scripts/validate_aggressive.py, 2026-09-04).
+Edgar chose the level against the measured menu, then asked for it to be validated like the other
+two rather than merely measured — so it went through the book's OWN eleven GO/NO-GO gates at its own
+settings, same maths, same panel, and passed 11/11:
+
+    Sharpe 1.84 · CAGR 41.5 % · vol 20.0 % · maxDD 27.5 % · skew +0.58 · DSR 1.00 over 11 trials
+    beats crypto-only at the SAME risk level on both Sharpe (1.84 vs 1.31) and drawdown
+    survives 25 bps/side (Sharpe 1.48) and funding x3 (1.78)
+    no look-ahead artefact (shift 3 -> 1.67, well above half of 1.84)
+    holds out of sample: 2022+ 1.76 · first half 2.06 · second half 1.63
+
+ONE GATE IS EVALUATED AGAINST THIS PROFILE'S OWN BUDGET, DELIBERATELY. "maxDD < 15 %" is a risk
+BUDGET, not a test of whether the edge exists: vol targeting scales return and drawdown together at
+constant Sharpe, so a higher target volatility is *supposed* to draw down more. Holding 0.80 to a
+threshold written for 0.20 would be a category error, so it is checked against `max_drawdown_pct`
+(36 %), which is itself derived from the measured tail. Every gate that asks whether the EDGE is real
+is unchanged and passed on its own terms.
+
+What the level costs, on a 1,014 $ book: +421 $/yr expected, a worst drawdown of 279 $, a worst
+single day of 84 $, and — the number that matters most and is easiest to overlook — the book spent
+its LONGEST stretch 620 days below its previous high, and 827 days more than 10 % under it. Validated
+does not mean comfortable. Return and drawdown scale together; time underwater scales with them, and
+the Risk card states all three.
 """
 from __future__ import annotations
 
@@ -78,14 +94,20 @@ PROFILES: Dict[str, Dict[str, float]] = {
 
 # What the research measured for each profile, so the UI never has to guess.
 EXPECTED: Dict[str, Dict[str, float]] = {
-    "conservative": {"sharpe": 1.93, "cagr": 0.056, "vol": 0.028, "max_dd": 0.039},
-    "balanced":     {"sharpe": 1.92, "cagr": 0.113, "vol": 0.057, "max_dd": 0.076},
+    "conservative": {"sharpe": 1.93, "cagr": 0.056, "vol": 0.028, "max_dd": 0.039,
+                     "gates_passed": 11, "gates_total": 11, "dsr": 1.00},
+    "balanced":     {"sharpe": 1.92, "cagr": 0.113, "vol": 0.057, "max_dd": 0.076,
+                     "gates_passed": 11, "gates_total": 11, "dsr": 1.00},
     # measured at target vol 0.80 with the 3x cap (aggressive_080_study, 2026-09-04)
     "aggressive":   {"sharpe": 1.84, "cagr": 0.415, "vol": 0.200, "max_dd": 0.275,
-                     "worst_day": 0.0828, "worst_week": 0.1146, "longest_underwater_days": 620},
+                     "worst_day": 0.0828, "worst_week": 0.1146, "longest_underwater_days": 620,
+                     "gates_passed": 11, "gates_total": 11, "dsr": 1.00},
 }
 
-VALIDATED_RANGE = (0.10, 0.30)
+# 0.80 is in the range because it was PUT through the eleven gates and passed them, not because the
+# bound was moved to make room (scripts/validate_aggressive.py, 2026-09-04). Anything above 0.80 is
+# still unstudied, and the UI must keep saying so.
+VALIDATED_RANGE = (0.10, 0.80)
 
 
 def profile_of(trading: Any) -> str:
@@ -137,14 +159,16 @@ def describe(name: str, equity: float = 1000.0) -> Dict[str, Any]:
         "limits": {"max_drawdown_pct": cfg["max_drawdown_pct"],
                    "max_daily_loss_pct": cfg["max_daily_loss_pct"],
                    "max_weekly_loss_pct": cfg["max_weekly_loss_pct"]},
-        "note": (("BEYOND THE VALIDATED RANGE. The research covers target volatility 0.10-0.30; "
-                  "this level was chosen deliberately against the measured numbers. Same strategy "
-                  "and nearly the same Sharpe — the extra return comes entirely from a bigger "
-                  "position, and the drawdown and the time spent underwater grow with it.")
+        "note": (("BEYOND THE VALIDATED RANGE. Nothing above 0.80 target volatility has been "
+                  "studied, so the numbers on this card do not apply to it.")
                  if beyond else
                  ("Same strategy, same Sharpe: return and drawdown scale together. "
                   "The loss limits move with the profile so an ordinary losing streak does not "
                   "halt the bot.")),
+        # 11/11 on the book's own gates at this profile's settings. Kept as a field rather than a
+        # sentence so the UI can show it without anyone having to trust a blurb.
+        "gates_passed": exp.get("gates_passed"), "gates_total": exp.get("gates_total"),
+        "dsr": exp.get("dsr"),
         "leverage_note": ("Ceiling on the position scalar, not a fixed multiplier: each market is "
                           "sized at target vol / its own realised vol, and this caps the result on "
                           "the quietest days. Measured over 10 years it binds on 5.6 % of "
