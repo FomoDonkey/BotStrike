@@ -1892,3 +1892,55 @@ Proyeccion del unico que crece de verdad: **+0,16 GB al ano** -> a 10 anos, 4,3 
       nunca; el patron ahora lo incluye
 - [x] El descargador de klines **no poda** (concatena y deduplica). A 162 MB/ano da igual, y esos
       datos son justo los que alimentan el backtest, asi que se quedan
+
+## Los dos abiertos cerrados, la UI de los 31 verificada, agresivo a 3x (2026-09-04, ronda 16)
+
+### 1. Las reglas del venue ya se APLICAN, no solo se muestran
+- [x] Tamano redondeado SIEMPRE HACIA ABAJO al step de Strike; precio al tick
+- [x] Ordenes por debajo del minimo de 10 $ se saltan en vez de fingir que se llenaron
+- [x] Orden a mercado limitada al tope del venue (120 BTC)
+- [x] **El cierre es distinto a proposito**: el minimo no aplica (un venue siempre te deja cerrar) y
+      si el resto quedara por debajo del minimo se cierra la posicion entera, para no dejar polvo
+      imposible de cerrar
+- [x] El motor carga `exchangeInfo` cada hora y se lo pasa al libro
+- [x] 7 tests que fijan cada regla
+
+### 2. El apalancamiento: resuelto, no era un fallo
+Strike no publica los limites por API (todo 404), pero sus docs de margin tiers y tu propia pantalla
+coinciden: **Tier 1 (hasta 50.000 $ de nocional) permite 100x con 0,50 % de margen de mantenimiento**
+— que es exactamente el mantenimiento que ya usabamos. Nuestro tope de 5x es una decision NUESTRA,
+mas conservadora que el venue, no un error.
+
+### 3. El fallo que reportaste: activos sin grafico ni datos
+Tenias razon. El emisor de velas recorria solo los 4 simbolos configurados.
+- [x] Tres endpoints del venue (`/klines`, `/book`, `/trades`) para CUALQUIER mercado
+- [x] Un hook escribe en el mismo store que el socket -> grafico, indicadores, libro, profundidad y
+      cinta funcionan sin tocar sus componentes. Solo se sondea el activo que estas mirando
+- [x] **El buscador solo filtraba dentro de la pestana activa**: escribir "NVDA" en Favoritos
+      respondia "No market matches NVDA" sobre un mercado que el bot soporta
+- [x] Strike escribe vela solo si hubo operacion, asi que un grafico de 1m de la plata tenia UNA
+      vela. Ahora la resolucion sube sola (15m: 283 velas en 70 h) y el grafico dice cual dibuja
+- [x] El maximo/minimo de 24h de Strike son extremos NEGOCIADOS y la cabecera lleva la MARCA: CRCL
+      operó una vez a 88,94 y marca 101,45, asi que ponia "24h High 88,94" bajo un precio de 101,45.
+      8 de 31 mercados con el precio fuera de su propio rango. La marca viva se integra en el rango
+- [x] `SYMBOL_LABELS` solo cubria las 4 cripto: el libro ponia "SIZE ()" en los otros 27
+
+### 4. Agresivo a 3x — medido antes de aplicarlo
+`scripts/leverage_cap_study.py`, panel validado de 14 mercados, 3.654 dias:
+
+| perfil | cap 2 | cap 3 | dias que el tope ata |
+|---|---|---|---|
+| conservador | 5,6 % CAGR, DD 3,9 % | igual | 0,0 % |
+| equilibrado | 11,2 % | 11,3 % | 0,9 % |
+| **agresivo** | **16,7 %, DD 11,3 %** | **17,2 %, DD 11,3 %** | 5,6 % -> 0,9 % |
+
+- [x] Aplicado: **+0,5 puntos de CAGR sin mas drawdown, 6/6 gates**
+- [x] Documentado que **el tope es un techo, no un multiplicador**: solo ata cuando el mercado esta
+      tranquilo. El dial que de verdad escala es el target vol (0,45 -> 25,8 % CAGR con 16,5 % DD;
+      0,60 -> 33,1 % con 21,4 %; 0,80 -> 41,5 % con 27,5 %), y el Sharpe se mantiene plano en 1,9
+
+### Verificacion final
+- 31/31 mercados recorridos EN EL NAVEGADOR uno a uno: 14 canvas (grafico + indicador), libro con
+  unidades, sin marcadores de espera colgados, sin NaN, sin "---" salvo donde Strike no publica nada
+- 0 problemas numericos en los 31: precio dentro de su rango, todos los campos y filtros presentes
+- 340 tests en verde

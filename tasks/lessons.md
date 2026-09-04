@@ -1336,3 +1336,31 @@ es la unica superficie publica de un venue: docs, sitemap e indice de paginas ta
 La respuesta util a "se llenara el disco" no es "no": es 162 MB/ano de klines, 22 % del disco a diez
 anos, y el mayor consumidor no eran los datos sino **el journal de systemd sin tope, con 472 MB**. Lo
 que se mide se puede acotar; lo que se supone, no.
+
+## "No sale nada" casi siempre es un bucle que recorre la lista corta (2026-09-04)
+El grafico, el libro y la cinta se alimentaban de un bucle sobre los 4 simbolos configurados. Todo lo
+demas de la pantalla ya venia del venue para los 31, asi que el fallo parecia aleatorio: unos activos
+"funcionaban" y otros no. Al depurar "algunos elementos no aparecen", buscar el BUCLE que los produce
+antes que el dato.
+
+## Un buscador que respeta la pestana no es un buscador (2026-09-04)
+Escribir "NVDA" en Favoritos respondia "no hay resultados" sobre un mercado que el bot opera. Las
+pestanas son para navegar; una consulta es para encontrar. Una busqueda filtrada por el contexto
+activo miente sobre lo que existe.
+
+## Dos numeros correctos, juntos, pueden mentir (2026-09-04)
+El maximo de 24h de Strike es un extremo NEGOCIADO; nuestra cabecera lleva la MARCA. Cada uno es
+exacto. Puestos uno al lado del otro daban "24h High 88,94" bajo un precio de 101,45. Al juntar dos
+series en un mismo panel, comprobar que siguen siendo coherentes ENTRE ELLAS, no solo por separado.
+
+## Medir antes de conceder lo que se pide (2026-09-04)
+Edgar pidio 3x. Medirlo primero demostro dos cosas: que era seguro (+0,5 pts de CAGR sin mas
+drawdown, 6/6) y que **no era la palanca que el creia** — el tope solo ata el 5,6 % de los dias. Dar
+lo pedido y ademas ensenar el dial que de verdad hace lo que se busca es mejor respuesta que
+cualquiera de las dos por separado.
+
+## Un panel equivocado da una respuesta equivocada (2026-09-04)
+Mi primer estudio del apalancamiento corrio sobre 22 mercados en vez de los 14 validados, porque un
+`str.replace` fallo en silencio, y dio Sharpe 1,69 donde el real es 1,92 — casi me lleva a "corregir"
+unas cifras del panel de Riesgo que estaban bien. Cuando una medicion contradiga una cifra ya
+validada, sospechar del metodo antes que del numero, y verificar que el script hace lo que se cree.
