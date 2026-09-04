@@ -2188,5 +2188,8 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
 - [x] R5 `/api/trades` cuenta fills, no funding
 - [x] R6 un solo poll de `/api/markets` (antes 12 en 16 s)
 - [x] R7 "feed age" cuenta trade o marca
-- [ ] Desplegar y volver a medir la frescura de las posiciones en el CT
+- [x] Desplegado (`885a4af`, verify PASS) y re-medido en el CT: el mark de la posición BTC cambia **9 veces en 40 s**
+      (antes 0–1) frente a 6 de la cabecera; frames `positions` solo al cambiar (WTI 5/40 s, antes 22);
+      pico y drawdown iguales en risk/account/performance; `/api/trades` 14 fills + 94 carry en su ventana;
+      tracking 3 filas (una por día); 0 errores en el journal
 - [ ] Decidir: Daily/Weekly PnL realizados vs MTM; "2x" en la cabecera del bot vs posiciones 1x
