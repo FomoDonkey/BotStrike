@@ -2121,13 +2121,13 @@ def _market_slippage_bps(engine, symbol: str) -> float:
     return round(max(base, half) if half is not None else base, 3)
 
 
-def _strategies_on(engine, symbol: str, sc) -> list:
+def _strategies_on(engine, symbol: str, sc=None) -> list:
     """Strategies configured for this market, plus the one that actually holds it.
 
     The panel listed Fibonacci and Divergence — both disabled — for a market whose open position
     belongs to TREND_DAILY, which was missing entirely (audit 2026-09-03).
     """
-    out = [s for s in str(getattr(sc, "strategies", "")).split(",") if s]
+    out = [s for s in str(getattr(sc, "strategies", "") if sc is not None else "").split(",") if s]
     try:
         for row in (getattr(engine, "trend_engine", None).status().get("positions") or []):
             if row.get("ui_symbol") == symbol or row.get("symbol") == symbol:
@@ -2173,7 +2173,22 @@ def _symbol_config_view(engine, symbol: str) -> dict:
                 "maintenance_margin": 0.005, "max_leverage": int(getattr(t, "max_leverage", 5)),
                 "risk_per_trade_pct": float(getattr(t, "risk_per_trade_pct", 0.0))}
     except Exception:  # noqa: BLE001
-        return {}
+        # Gold, silver, the S&P and oil have no per-symbol config — only the four intraday feed
+        # symbols do — so this returned {} and their panel showed "---" for every field, on the very
+        # markets the book is holding. Fall back to the account-level values, which are what actually
+        # applies to them (2026-09-04).
+        try:
+            t = engine.settings.trading
+            return {"leverage": 1, "max_position_usd": 0.0, "min_notional_usd": float(t.trend_min_order_usd),
+                    "strategies": _strategies_on(engine, symbol, None),
+                    "slippage_bps": _market_slippage_bps(engine, symbol),
+                    "taker_fee": float(getattr(t, "taker_fee", 0.0004)),
+                    "maker_fee": float(getattr(t, "maker_fee", 0.0002)),
+                    "maintenance_margin": 0.005, "max_leverage": int(getattr(t, "max_leverage", 5)),
+                    "risk_per_trade_pct": float(getattr(t, "risk_per_trade_pct", 0.0)),
+                    "account_level": True}
+        except Exception:  # noqa: BLE001
+            return {}
 
 
 @app.post("/api/positions/close", dependencies=[Depends(require_token_when_remote)])
