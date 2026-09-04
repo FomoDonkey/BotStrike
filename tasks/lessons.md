@@ -1364,3 +1364,25 @@ Mi primer estudio del apalancamiento corrio sobre 22 mercados en vez de los 14 v
 `str.replace` fallo en silencio, y dio Sharpe 1,69 donde el real es 1,92 — casi me lleva a "corregir"
 unas cifras del panel de Riesgo que estaban bien. Cuando una medicion contradiga una cifra ya
 validada, sospechar del metodo antes que del numero, y verificar que el script hace lo que se cree.
+
+## Dar lo pedido incluye medir lo que cuesta (2026-09-04)
+Edgar eligio el nivel mas alto de un menu. Lo correcto no era ni negarse ni aplicarlo a ciegas: fue
+medirlo entero antes — gates, estreses, y sobre todo la COLA de perdidas diarias y semanales, que es
+lo que decide si el bot puede siquiera funcionar ahi sin que su propio cortacircuitos lo pare. La
+escalera de perdidas de un perfil no se copia por proporcion: se lee de la distribucion medida a ese
+tamano.
+
+## El numero que nadie pide es el que hay que ensenar (2026-09-04)
+Retorno y drawdown se piden y se miran. Lo que no se pide es el TIEMPO: a 0,80 el libro paso 620 dias
+seguidos por debajo de su maximo anterior. Eso no sale en un Sharpe ni en un CAGR y es lo que
+realmente se sufre. Ahora sale en la tarjeta.
+
+## Una insignia puede contradecir su propia tarjeta (2026-09-04)
+El perfil agresivo mostraba el sello "VALIDATED" justo encima de un aviso que decia "fuera del rango
+validado". Cada pieza se escribio en un momento distinto y ninguna era falsa por si sola. Al anadir
+un aviso, revisar los sellos, resumenes y etiquetas que ya hablaban de lo mismo.
+
+## Un limite de esquema puede bloquear una decision de producto (2026-09-04)
+`trend_target_vol` tenia max=0,60 y el perfil nuevo pedia 0,80: el endpoint devolvia 400 y el perfil
+habria sido inaplicable desde la UI, en silencio salvo por un test. Al mover un valor de configuracion
+fuera de su rango habitual, comprobar TAMBIEN el esquema que lo valida.

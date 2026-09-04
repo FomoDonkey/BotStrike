@@ -1944,3 +1944,37 @@ Tenias razon. El emisor de velas recorria solo los 4 simbolos configurados.
   unidades, sin marcadores de espera colgados, sin NaN, sin "---" salvo donde Strike no publica nada
 - 0 problemas numericos en los 31: precio dentro de su rango, todos los campos y filtros presentes
 - 340 tests en verde
+
+## Agresivo redefinido al nivel maximo que pidio Edgar (2026-09-04, ronda 17)
+Peticion: "el agresivo me gustaria que fuera lo que seria este no validado: +421 $ / -279 $".
+Eso es target vol 0,80. Le dije una vez que esta FUERA del rango investigado (0,10-0,30) y lo hice.
+
+### Medido antes de aplicarlo (`scripts/aggressive_080_study.py`, 14 mercados, 3.654 dias, cap 3x)
+| target vol | Sharpe | CAGR | maxDD | peor dia | peor semana | mas tiempo bajo maximo |
+|---|---|---|---|---|---|---|
+| 0,30 | 1,92 | 17,2 % | 11,3 % | -3,73 % | -5,17 % | 592 d |
+| 0,45 | 1,92 | 25,8 % | 16,5 % | -5,60 % | -7,76 % | 594 d |
+| 0,60 | 1,88 | 33,1 % | 21,4 % | -6,80 % | -9,47 % | 610 d |
+| **0,80** | **1,84** | **41,5 %** | **27,5 %** | **-8,28 %** | **-11,46 %** | **620 d** |
+
+Estreses a 0,80: 15 bps/lado -> CAGR 37,4 % · 25 bps/lado -> 31,7 % · funding x3 -> 39,9 %. **6/6 gates.**
+
+Sobre 1.014 $: **+421 $/ano, peor caida 279 $, peor dia 84 $, peor semana 116 $**, y el dato que mas
+se pasa por alto: **620 dias seguidos por debajo del maximo anterior** y 827 dias a mas del 10 % por
+debajo.
+
+### Aplicado
+- [x] `aggressive`: target_vol 0,80 · cap 3x
+- [x] **La escalera de perdidas sale de la cola MEDIDA a este tamano**, no de una proporcion copiada
+      de un perfil mas tranquilo: dia 11 %, semana 14 %, pico 36 %. Un cortacircuitos ajustado para
+      un dia del 3 % pararia el bot en un dia normal aqui
+- [x] El techo del esquema subio de 0,60 a 0,80 — **era lo que devolvia 400 al aplicar el perfil**;
+      sigue siendo finito a proposito
+- [x] `describe()` devuelve `beyond_validated_range`, la tarjeta lleva aviso ambar, y la insignia
+      dice **BEYOND THE RESEARCH** en vez de VALIDATED (decia las dos cosas a la vez)
+- [x] La tarjeta muestra ahora **peor dia visto** y **mas tiempo bajo maximo**, que ningun perfil decia
+- [x] 340 tests
+
+### PENDIENTE DE EDGAR
+El bot sigue corriendo en **equilibrado**. Redefinir el perfil no lo activa: hay que pulsar
+"Use Aggressive" en la pagina de Riesgo.
