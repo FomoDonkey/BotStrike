@@ -2183,6 +2183,17 @@ async def get_market(symbol: str):
                    "volume_24h_base": _num(tick.get("volume")),
                    "volume_24h_usd": _num(tick.get("quoteVolume")),
                    "trades_24h": tick.get("count"), "window_min": 1440, "source": "venue"}
+    # The venue's 24 h high/low are TRADED extremes, while the header leads with the MARK. On a thin
+    # market the two drift apart and the price sits outside its own range: CRCL traded once all day
+    # at 88.94 and marks at 101.45, so the panel read "24h High 88.94" under a price of 101.45
+    # (audit 2026-09-04). Both figures are Strike's and both are right; presented side by side they
+    # read as a bug. Fold the live mark into the range, which is what a range is for.
+    live = v_mark or v_last
+    if v_stats and live:
+        if v_stats.get("high_24h") is not None:
+            v_stats["high_24h"] = max(float(v_stats["high_24h"]), float(live))
+        if v_stats.get("low_24h") is not None:
+            v_stats["low_24h"] = min(float(v_stats["low_24h"]), float(live))
     venue_spread = (v_depth or {}).get("spread_bps")
     if venue_spread is None:
         venue_spread = _venue_spread_bps(symbol)          # the measured median, still Strike's

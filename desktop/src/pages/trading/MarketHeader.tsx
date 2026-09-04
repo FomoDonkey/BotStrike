@@ -99,8 +99,8 @@ export function MarketHeader({ market: m, onSymbolChange }: MarketHeaderProps) {
           <span className="text-text-2 font-medium"> / {formatCountdown(m.countdownSec)}</span>
         </Stat>
         <Stat label={`${m.winLabel} Change`} hint={winHint}><SignedPct value={m.change} /></Stat>
-        <Stat label={`${m.winLabel} High`} hint={winHint}>{m.high ? formatPrice(m.high) : "---"}</Stat>
-        <Stat label={`${m.winLabel} Low`} hint={winHint}>{m.low ? formatPrice(m.low) : "---"}</Stat>
+        <Stat label={`${m.winLabel} High`} hint={m.statsMissing ? winHint : HINTS.range24}>{m.high ? formatPrice(m.high) : "---"}</Stat>
+        <Stat label={`${m.winLabel} Low`} hint={m.statsMissing ? winHint : HINTS.range24}>{m.low ? formatPrice(m.low) : "---"}</Stat>
         <Stat label={`${m.winLabel} Vol`} hint={m.statsMissing ? winHint : HINTS.vol24}>
           {/* "$0" when the venue reports no trades, "---" only when it reports nothing at all. */}
           {m.statsMissing ? "---" : <>

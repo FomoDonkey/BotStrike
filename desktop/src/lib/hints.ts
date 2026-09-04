@@ -21,6 +21,7 @@ export const HINTS = {
   trigger: "The condition that fired the entry (e.g. donchian_ensemble, zscore_entry, structure_break).",
   spread: "Best ask − best bid, in basis points of mid.",
   oi: "Open interest on the VENUE — total outstanding contracts on Strike, not on the price feed. Four of Strike's markets carry none, and zero there is a fact, not a missing value.",
+  range24: "Highest and lowest of the last 24 hours. Strike publishes these as TRADED extremes, so on a market that trades a few times a day the mark can sit outside them — the live mark is folded in here so the range always contains the current price.",
   vol24: "24 h quote volume on the VENUE (USD), as Strike publishes it. Not the price feed's: Strike turned over $1.9 M of BTC on the day Binance did $16 bn, and only the first figure says anything about the book an order reaches.",
   change24: "The venue's own 24 h change field. Strike's web front-end anchors its 24 h window a little differently and reads a few tenths apart from Strike's own API — this shows the API's figure, which is the one everything else here is computed from.",
   regime: "Market regime detected on the 15m frame (ranging / trending / breakout) and how long it has held.",
