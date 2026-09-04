@@ -1652,3 +1652,13 @@ Edgar, con las dos terminales abiertas, tenía razón en las tres cosas:
 - [x] 310 tests. Interruptor sigue APAGADO
 - [x] Verificado en producción: el run de las 00:05 UTC se ejecutó con el ejecutor nuevo (4 entradas,
       estado ok) y el promediado de entrada cuadra al dígito descontando el redondeo de la API
+
+## Divergence ampliada a 30 mercados y retirada (2026-09-04, ronda 9)
+- [x] Descargados 24 mercados más de 1h (36 en total), todos con historial completo desde 2022-01
+- [x] `--timeframe` en el script: el 4h pasa a ser la BASE y le aplica el GO/NO-GO completo
+- [x] Prueba sobre los **30 mercados que nunca se usaron para diseñarla**, sin tocar un parámetro
+- [x] El 4h se desploma al ampliar: de PF 1,11 / +34,4 bps neto (323 ops) a **PF 1,01 / +4,6 bps
+      (1.479 ops), t 0,95**. El efecto cae mientras el t-stat no se mueve = espejismo de muestra
+- [x] La variante con tendencia cumple el listón de ≥100 operaciones (115) y falla: PF 3,28 → 1,10, t 0,62
+- [x] GO/NO-GO 2/7. **Retirada** junto a MR y Fibonacci
+- [x] El bot queda con UNA estrategia validada y ninguna pretendiente
