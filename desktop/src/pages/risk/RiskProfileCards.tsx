@@ -22,7 +22,7 @@ export const RISK_LEVEL_COPY =
 const PROFILE_BLURB: Record<string, string> = {
   conservative: "The smallest position sizes. Slow, shallow drawdowns.",
   balanced: "The sizing the paper book runs today.",
-  aggressive: "The largest size the research validated. Nothing beyond it is tested.",
+  aggressive: "Deliberately past the research range. Shown with its own warning instead of this line.",
 };
 
 /**
@@ -197,8 +197,11 @@ function ProfileCard({ p, selected, canApply, disabledReason, busy, onApply }: {
             <Check className="w-3 h-3" /> CURRENT
           </Chip>
         )}
-        <Chip tone={p.validated ? "neutral" : "amber"} size="xs" className="ml-auto">
-          {p.validated ? "VALIDATED" : "NOT VALIDATED"}
+        {/* A named profile can be measured and still sit outside the range the research covers.
+            Stamping VALIDATED on it while the note underneath says the opposite is worse than
+            either message alone (2026-09-04). */}
+        <Chip tone={p.beyond_validated_range ? "amber" : p.validated ? "neutral" : "amber"} size="xs" className="ml-auto">
+          {p.beyond_validated_range ? "BEYOND THE RESEARCH" : p.validated ? "VALIDATED" : "NOT VALIDATED"}
         </Chip>
       </div>
 
@@ -258,7 +261,9 @@ function ProfileCard({ p, selected, canApply, disabledReason, busy, onApply }: {
           </p>
         </div>
       )}
-      <p className="text-[12px] font-medium text-text-2 leading-snug">{p.beyond_validated_range ? (p.note ?? "") : (PROFILE_BLURB[p.profile] ?? p.note ?? "")}</p>
+      {!p.beyond_validated_range && (
+        <p className="text-[12px] font-medium text-text-2 leading-snug">{PROFILE_BLURB[p.profile] ?? p.note ?? ""}</p>
+      )}
 
       <Button
         variant={selected ? "secondary" : "primary"}
