@@ -1960,12 +1960,11 @@ def _live_funding_rates(engine, interval_hours: int) -> dict:
         pool = set()
     out, measured = {}, _measured_funding_90d()
     for sym in sorted(held | pool | set(getattr(engine.settings, "symbol_names", []) or [])):
-        if sym in venue:
+        fresh = (_VENUE_MD["premium"] or {}).get(sym, {}).get("fundingRate")
+        if fresh is not None:
+            rate, source = _num(fresh) or 0.0, "venue"      # the freshest quote, as everywhere else
+        elif sym in venue:
             rate, source = float(venue[sym] or 0.0), "venue"
-        elif (_VENUE_MD["premium"] or {}).get(sym, {}).get("fundingRate") is not None:
-            # same field, same endpoint, already in hand — covers the minute after a restart before
-            # the engine has loaded its own copy (2026-09-04)
-            rate, source = _num(_VENUE_MD["premium"][sym]["fundingRate"]) or 0.0, "venue"
         else:
             snap = engine.market_data.get_snapshot(sym)
             raw = float(snap.funding_rate) if snap is not None and snap.funding_rate else 0.0
@@ -2031,9 +2030,11 @@ async def get_markets():
     out = []
     for sym in sorted(set(venue) | set(feed) | pool | held | set(md["premium"])):
         prem, tick = md["premium"].get(sym) or {}, md["ticker"].get(sym) or {}
-        # The engine loads its own copy once a minute; the same field from the same endpoint is
-        # already in hand here, so the picker is not blank for the first minute after a restart.
-        rate = float(venue[sym] or 0.0) if sym in venue else _num(prem.get("fundingRate"))
+        # The bridge's snapshot is five seconds old, the engine's up to a minute: same field, same
+        # endpoint, and the panel shows the fresher one — so this list shows it too.
+        rate = _num(prem.get("fundingRate"))
+        if rate is None and sym in venue:
+            rate = float(venue[sym] or 0.0)
         oi = oi_cache.get(sym)
         out.append({"symbol": sym, "feed": sym in feed, "pool": sym in pool, "held": sym in held,
                     "funding_rate": rate,
@@ -2411,15 +2412,18 @@ def _market_funding_rate(engine, symbol: str, snap):
     The market panel used to read the feed snapshot raw, so it showed Binance's 8 h rate (+0.0100 %)
     for a book charged Strike's hourly rate (+0.00116 %) — a factor of nine (audit 2026-09-03).
     """
-    venue = getattr(engine, "_venue_funding", None) or {}
-    if symbol in venue:
-        return float(venue[symbol] or 0.0)
-    # The engine loads its copy once a minute, so for the first minute after a restart every market
-    # on every screen showed no funding at all (measured 60 s after the 02:36Z deploy, 2026-09-04).
-    # The bridge already holds the same field from the same endpoint — use it rather than show "---".
+    # ONE NUMBER, ONE SOURCE. The engine keeps its own copy of the venue rates, refreshed once a
+    # minute; the bridge refreshes the same field from the same endpoint every five seconds. Reading
+    # one here and the other in the picker put two ages of the same quote on one screen — the panel
+    # said -0.008971 % and the list -0.008986 % for oil at the same instant (audit 2026-09-04). The
+    # freshest wins everywhere, and the engine's copy is what settles the charge, which is a
+    # different event and already recorded in the funding ledger.
     prem = (_VENUE_MD["premium"] or {}).get(symbol.upper()) or {}
     if prem.get("fundingRate") is not None:
         return _num(prem.get("fundingRate"))
+    venue = getattr(engine, "_venue_funding", None) or {}
+    if symbol in venue:
+        return float(venue[symbol] or 0.0)
     if snap is not None and snap.funding_rate:
         return float(snap.funding_rate) * _funding_interval(engine) / 8.0
     return None
