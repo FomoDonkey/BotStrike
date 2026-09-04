@@ -30,6 +30,12 @@ interface CandlestickChartProps {
   className?: string;
   trades?: TradeData[];
   timeframe?: Timeframe;
+  /** Seconds per bar of the data ALREADY in the store. The engine streams 1 m bars, so 60 is the
+   *  default; a market the engine does not stream is fetched from the venue at the timeframe the
+   *  chart asked for, and a thin one comes back coarser still. Resampling that a second time is
+   *  what drew the "weird candles": 15 m bars poured into 1 m buckets leave one candle every
+   *  fifteen slots (Edgar, 2026-09-04). */
+  sourceSeconds?: number;
   /** Live levels of open positions (entry / SL / TP / liq) */
   priceLines?: PriceLineSpec[];
   /** DIVERGENCE signals with pivots (contract §5) */
@@ -43,7 +49,7 @@ interface CandlestickChartProps {
   legendRef?: RefObject<HTMLElement | null>;
 }
 
-export function CandlestickChart({ symbol, className, trades, timeframe = "1m", priceLines, overlays, onChart, upColor = COLOR_UP, downColor = COLOR_DOWN, legendRef }: CandlestickChartProps) {
+export function CandlestickChart({ symbol, className, trades, timeframe = "1m", sourceSeconds = 60, priceLines, overlays, onChart, upColor = COLOR_UP, downColor = COLOR_DOWN, legendRef }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -208,8 +214,10 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
     const rawCandles = useMarketStore.getState().candles[symbol];
     if (!rawCandles?.length || !seriesRef.current || !volumeSeriesRef.current) return;
 
-    // Resample if timeframe > 1m
-    const candles = tfSeconds > 60 ? resampleCandles(rawCandles, tfSeconds) : rawCandles;
+    // Resample ONLY when the stored bars are finer than the target. Bars already at (or coarser
+    // than) the timeframe are drawn as they are — bucketing them again is what produced a chart of
+    // isolated candles with empty slots between them.
+    const candles = tfSeconds > sourceSeconds ? resampleCandles(rawCandles, tfSeconds) : rawCandles;
     if (!candles.length) return;
     if (firstTimeRef.current !== candles[0].time) {
       firstTimeRef.current = candles[0].time;
@@ -294,7 +302,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
     });
     updateChart(); // Load existing data immediately
     return () => { unsub(); };
-  }, [symbol, chartReady, timeframe, updateChart]);
+  }, [symbol, chartReady, timeframe, sourceSeconds, updateChart]);
 
   // Step 3: Update trade markers
   useEffect(() => {

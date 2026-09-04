@@ -9,6 +9,8 @@ export type IndicatorKind = "rsi" | "macd";
 interface IndicatorPaneProps {
   symbol: string;
   timeframe: Timeframe;
+  /** seconds per bar already in the store — see CandlestickChart; 60 for the streamed symbols */
+  sourceSeconds?: number;
   kind: IndicatorKind;
   /** The main candlestick chart — time scale and crosshair are kept in sync both ways */
   mainChart: IChartApi | null;
@@ -32,7 +34,7 @@ interface PaneSeries {
  * the main chart: same right-scale width, mirrored visible logical range and crosshair.
  * The legend is written straight to the DOM (no state) so a candle burst never re-renders React.
  */
-export function IndicatorPane({ symbol, timeframe, kind, mainChart, className }: IndicatorPaneProps) {
+export function IndicatorPane({ symbol, timeframe, kind, mainChart, className, sourceSeconds = 60 }: IndicatorPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const legendRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -119,7 +121,7 @@ export function IndicatorPane({ symbol, timeframe, kind, mainChart, className }:
     const feed = () => {
       const raw = useMarketStore.getState().candles[symbol];
       if (!raw?.length) return;
-      const candles = tfSeconds > 60 ? resampleCandles(raw, tfSeconds) : raw;
+      const candles = tfSeconds > sourceSeconds ? resampleCandles(raw, tfSeconds) : raw;
       const last = candles[candles.length - 1];
       const hash = `${candles.length}_${last.time}_${last.close}`;
       if (hash === lastHash) return;

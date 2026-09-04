@@ -13,7 +13,7 @@ import { Popover, MenuItem, DropdownTrigger, MenuLabel } from "@/components/ui/P
 import { FundingChart } from "@/components/ui/FundingChart";
 import { CandlestickChart } from "@/components/charts/CandlestickChart";
 import { IndicatorPane, type IndicatorKind } from "@/components/charts/IndicatorPane";
-import { MORE_TIMEFRAMES, TIMEFRAMES, type Timeframe } from "@/components/charts/chartConfig";
+import { MORE_TIMEFRAMES, TF_SECONDS, TIMEFRAMES, type Timeframe } from "@/components/charts/chartConfig";
 import { divergenceOverlays, positionPriceLines, type PriceLineSpec } from "@/components/charts/chartOverlays";
 import { exitLadderOf } from "@/lib/market";
 import { formatPrice, formatSignedPct } from "@/lib/utils";
@@ -58,6 +58,10 @@ export function ChartArea({ market, timeframe, onTimeframe, markers, positions, 
   // NOT the hard-coded four: whether a market is streamed is something the bridge reports, and
   // every market has a chart now — the difference is only how it arrives (2026-09-04).
   const hasFeed = !useUnstreamed(symbol);
+  // What resolution the store actually holds for this symbol. The engine streams 1 m bars; a market
+  // it does not stream is fetched from the venue at the timeframe asked for, and a thin one comes
+  // back coarser. The chart needs this or it buckets already-bucketed bars (2026-09-04).
+  const sourceSeconds = hasFeed ? 60 : TF_SECONDS[(servedInterval as Timeframe) ?? timeframe] ?? TF_SECONDS[timeframe];
   const [tab, setTab] = useState<ChartTab>("chart");
   const [indicator, setIndicator] = useState<Indicator>("macd");
   const [priceMode, setPriceMode] = useState<PriceMode>("last");
@@ -207,6 +211,7 @@ export function ChartArea({ market, timeframe, onTimeframe, markers, positions, 
                   symbol={symbol}
                   trades={tradeMarkers}
                   timeframe={timeframe}
+                  sourceSeconds={sourceSeconds}
                   priceLines={priceLines}
                   overlays={overlays}
                   onChart={setMainChart}
@@ -237,7 +242,7 @@ export function ChartArea({ market, timeframe, onTimeframe, markers, positions, 
             </div>
             {indicator !== "none" && (
               <div className="relative h-[26%] min-h-[96px] max-h-[180px] border-t border-hairline shrink-0">
-                <IndicatorPane symbol={symbol} timeframe={timeframe} kind={indicator} mainChart={mainChart} />
+                <IndicatorPane symbol={symbol} timeframe={timeframe} sourceSeconds={sourceSeconds} kind={indicator} mainChart={mainChart} />
               </div>
             )}
           </ErrorBoundary>
