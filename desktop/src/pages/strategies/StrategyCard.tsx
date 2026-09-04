@@ -145,7 +145,7 @@ export function StrategyCard({ s, pf, edge, allocField, busy, expanded, onToggle
                 <ListRow label="Net PnL"><Signed value={edge.net_pnl} format={formatSignedMoney} /></ListRow>
                 {/* "Mean gross ± se bps" is the widest pair here and truncated to "Mea..." in a
                     three-column card at 1536 px. The standard error rides with the value instead. */}
-                <ListRow label="Gross/trade" hint="Mean gross return per trade before fees, ± one standard error, in basis points">
+                <ListRow label="Gross" hint="Mean gross return per trade before fees, ± one standard error, in basis points">
                   {num(edge.mean_gross_bps, 1)} <span className="text-text-2">±{num(edge.se_bps, 1)}</span> bps
                 </ListRow>
                 <ListRow label="Expectancy">{formatMoney(edge.expectancy_usd)}</ListRow>

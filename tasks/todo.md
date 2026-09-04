@@ -1623,3 +1623,13 @@ Edgar, con las dos terminales abiertas, tenía razón en las tres cosas:
 - [x] Implementado en el modelo + `trend_allow_shorts` / `trend_short_size` + UI de Ajustes, por defecto OFF
 - [ ] PENDIENTE si algún día se activa: la ruta de EJECUCIÓN sigue escrita para un libro largo
       (escalera de salida, signo del funding, fills del simulador)
+
+## Retirada de Mean Reversion y Fibonacci del producto (2026-09-04, ronda 7)
+- [x] `core.types.RETIRED_STRATEGIES` con la evidencia de cada una, no solo el nombre
+- [x] La configuración RECHAZA asignarles capital, citando el estudio en el error
+- [x] `/api/strategies` deja de ofrecerlas y las devuelve en `retired`; la página lo dice en una línea
+      en vez de dos tarjetas grises que sugerían "algún día"
+- [x] Siguen ejecutables en Backtest, etiquetadas "retired, verify only": poder reproducir la
+      evidencia vale más que pedir que se confíe en un documento
+- [x] 304 tests, desplegado, verificado en el navegador: 2 estrategias en la página, línea de registro
+      presente
