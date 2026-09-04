@@ -200,8 +200,10 @@ GROUPS: List[Dict[str, Any]] = [
                 "the intraday price feed stays on Binance either way.",
            options=[{"value": "binance", "label": "Binance Futures"}, {"value": "strike", "label": "Strike Finance"},
                     {"value": "hyperliquid", "label": "Hyperliquid"}]),
-        _t("maker_fee", "Maker fee", "percent", min=0, max=0.01, step=0.0001),
-        _t("taker_fee", "Taker fee", "percent", min=0, max=0.01, step=0.0001),
+        # A maker fee can be NEGATIVE on Strike: tier 0 pays a 0.005 % rebate. min=0 made the
+        # venue's actual schedule unenterable (2026-09-04).
+        _t("maker_fee", "Maker fee", "percent", min=-0.001, max=0.01, step=0.00001),
+        _t("taker_fee", "Taker fee", "percent", min=0, max=0.01, step=0.00001),
         _t("slippage_bps", "Slippage model", "number", min=0, max=50, step=0.5, unit="bps"),
         # Compared against the SIGNAL's market snapshot, which quotes an 8 h rate, so the unit stays
         # 8-hourly even though the accrual clock follows the venue (1 h on Strike).

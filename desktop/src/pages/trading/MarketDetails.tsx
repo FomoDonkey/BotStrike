@@ -125,8 +125,18 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
             </ListRow>
             <ListRow label="Next payment" hint="Countdown to the venue's next funding settlement">{formatCountdown(m.countdownSec)}</ListRow>
             <ListRow label="Maintenance margin" hint="Margin fraction at which the paper liquidation estimate triggers">{formatPct(mm, 1)}</ListRow>
-            <ListRow label="Taker fee (paper)">{taker !== null ? formatPct(taker, 2) : "---"}</ListRow>
-            <ListRow label="Maker fee (paper)">{maker !== null ? formatPct(maker, 2) : "---"}</ListRow>
+            {/* The VENUE's published schedule, not a guess: tier 0 of
+                docs.strikefinance.org/perpetuals/trading-fees. A negative maker fee is a rebate. */}
+            <ListRow label="Taker fee" hint="Strike's published taker fee for tier 0 ($0-$100K of 30-day volume), charged on fill notional. Tiers are recalculated daily at 00:05 UTC and fall to 0.028 % above $200M of volume">
+              {taker !== null ? formatPct(taker, 3) : "---"}
+            </ListRow>
+            <ListRow label="Maker fee" hint="Strike tier 0 pays a REBATE to makers: a negative number here means the venue credits you on eligible maker fills, it is not a cost. The daily trend run crosses the spread, so in practice it pays the taker fee above">
+              {maker !== null
+                ? <span className={maker < 0 ? "text-mint" : undefined}>
+                    {formatPct(maker, 3)}{maker < 0 ? " rebate" : ""}
+                  </span>
+                : "---"}
+            </ListRow>
             <ListRow label="Open interest" hint={HINTS.oi}>{m.rest && typeof m.rest.open_interest === "number" ? `${formatCompact(m.oi)} ${base}` : "---"}</ListRow>
             <ListRow label={`${m.winLabel} volume`} hint={HINTS.vol24}>{m.statsMissing ? <span className="text-text-2">The venue publishes none</span> : formatCompactUSD(m.volumeUsd)}</ListRow>
           </ListSection>

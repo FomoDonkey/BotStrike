@@ -169,7 +169,8 @@ def test_portfolio_activity_ops_csv_endpoints(st, tmp_path, monkeypatch):
     assert client.get("/api/trades/export.csv?symbol=BTC-USD").text.strip().count("\n") == 2
     # symbol_config on /api/market
     m = client.get("/api/market/ETH-USD").json()
-    assert m["symbol_config"]["leverage"] >= 1 and m["symbol_config"]["taker_fee"] == 0.0004
+    # 5 bps: the VENUE's own published tier-0 taker fee, not Binance's 4 (docs read 2026-09-04)
+    assert m["symbol_config"]["leverage"] >= 1 and m["symbol_config"]["taker_fee"] == 0.0005
     # ETH-USD's config row still names MEAN_REVERSION and DIVERGENCE, both retired with evidence.
     # A retired strategy is never advertised, so this list is empty rather than misleading -- the
     # panel says "not in the trend universe" instead of naming something that cannot trade.

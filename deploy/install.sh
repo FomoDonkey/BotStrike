@@ -42,6 +42,17 @@ cp $APP_DIR/deploy/botstrike-bridge.service /etc/systemd/system/botstrike-bridge
 cp $APP_DIR/deploy/botstrike-monitor.service /etc/systemd/system/botstrike-monitor.service
 cp $APP_DIR/deploy/botstrike-monitor.timer /etc/systemd/system/botstrike-monitor.timer
 usermod -aG systemd-journal botstrike
+# Cap the journal. Measured 2026-09-04: 472 MB of journal against 88 MB of market data and 57 MB of
+# app logs — by far the biggest consumer, and uncapped it drifts to systemd's default ceiling of 10 %
+# of the filesystem (2 GB here). 300 MB is weeks of history for a bot that logs a line every 15 s.
+mkdir -p /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/botstrike.conf <<'JCONF'
+[Journal]
+SystemMaxUse=300M
+SystemKeepFree=1G
+MaxRetentionSec=30day
+JCONF
+systemctl restart systemd-journald || true
 systemctl daemon-reload
 systemctl enable --now botstrike-bridge
 systemctl enable --now botstrike-monitor.timer

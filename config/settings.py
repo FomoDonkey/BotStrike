@@ -244,8 +244,27 @@ class TradingConfig:
     telegram_notify_daily_digest: bool = True
     telegram_digest_hour_utc: int = 7
     # Fees — Binance Futures defaults (VIP 0)
-    maker_fee: float = 0.0002           # 2 bps — Binance Futures maker
-    taker_fee: float = 0.0004           # 4 bps — Binance Futures taker (was 5 bps Strike)
+    # THE VENUE'S OWN PUBLISHED SCHEDULE (docs.strikefinance.org/perpetuals/trading-fees, read
+    # 2026-09-04). These were set to Binance's numbers — the old comment said so out loud, "was 5 bps
+    # Strike" — while every order was destined for Strike, so the paper book undercharged itself on
+    # every fill and, worse, charged 2 bps to be a maker where Strike PAYS 0.5.
+    #
+    #   Tier   30-day volume        Taker     Maker
+    #   0      $0 - $100K           0.050 %   -0.005 %      <- where this account is
+    #   1      $100K - $500K        0.045 %   -0.005 %
+    #   2      $500K - $2M          0.040 %   -0.005 %
+    #   3      $2M - $10M           0.035 %   -0.005 %
+    #   4      $10M - $50M          0.032 %   -0.005 %
+    #   5      $50M - $200M         0.030 %   -0.005 %
+    #   6      >= $200M             0.028 %   -0.005 %
+    #
+    # A negative maker fee is a REBATE, not a typo. Tiers are recalculated daily at 00:05 UTC on
+    # rolling 30-day volume, and staked $STRIKE unlocks a further discount on POSITIVE fees only
+    # (5 % at 5,000 STRIKE up to 40 % at 250,000). Tier 0 is the honest assumption for this account:
+    # a book of ~$400 will not leave it. If the volume ever grows, revisit — never downwards on a
+    # guess, since undercharging a backtest is how a strategy passes that should not.
+    maker_fee: float = -0.00005         # -0.5 bps — Strike tier 0 MAKER REBATE
+    taker_fee: float = 0.0005           # 5 bps — Strike tier 0 taker
     # Slippage — calibrado para Binance Futures micro orders
     slippage_bps: float = 1.5           # 1.5 bps — Binance Futures has deep book (was 2.0 bps)
     # Funding rate thresholds

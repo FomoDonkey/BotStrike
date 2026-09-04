@@ -1,6 +1,8 @@
 # /etc/logrotate.d/botstrike — rotate engine JSONL logs (metrics.jsonl grows ~50 MB/day).
 # copytruncate: the engine keeps the file handle open; truncating in place is safe for append-only JSONL.
-/opt/botstrike/app/logs/*.jsonl /opt/botstrike/app/logs/*.log {
+# *.old is included because a hand-made metrics.jsonl.old sat at 52 MB outside every pattern
+# and would never have been touched again (found 2026-09-04).
+/opt/botstrike/app/logs/*.jsonl /opt/botstrike/app/logs/*.log /opt/botstrike/app/logs/*.old {
     daily
     rotate 14
     maxsize 200M
