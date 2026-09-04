@@ -93,6 +93,7 @@ def test_engine_klines_resamples_the_engine_frame(monkeypatch):
     )
     monkeypatch.setattr(bridge.state, "engine", engine)
     monkeypatch.setattr(bridge.state, "running", True)
+    monkeypatch.setattr(bridge, "_engine_store", lambda sym: None)      # no store on disk here
 
     bars = bridge._engine_klines("BTC-USD", "5m", 10)
     assert [b["timestamp"] for b in bars] == [t0, t0 + 300, t0 + 600, t0 + 900]
@@ -106,6 +107,41 @@ def test_engine_klines_resamples_the_engine_frame(monkeypatch):
     assert bridge._engine_klines("BTC-USD", "7m", 10) is None                # not an interval it knows
     monkeypatch.setattr(bridge.state, "running", False)
     assert bridge._engine_klines("BTC-USD", "5m", 10) is None
+
+
+def test_engine_klines_reach_back_into_the_disk_store(monkeypatch):
+    """The live frame holds a day; the depth of a 4 h or 1 d chart comes from the 90-day store,
+    and the live frame owns every bar from its first one on (it is the fresher of the two)."""
+    import types
+    import pandas as pd
+    t0 = 1_699_999_800
+    live_start = t0 + 60 * 60                        # the live frame begins an hour after the store
+    live = pd.DataFrame({
+        "timestamp": [(live_start + 60 * i) * 1000 for i in range(30)],
+        "open": [100.0] * 30, "high": [101.0] * 30, "low": [99.0] * 30, "close": [100.5] * 30,
+        "volume": [1.0] * 30,
+    })
+    # the store overlaps the live frame's first bars with DIFFERENT numbers — those must lose
+    store = pd.DataFrame({
+        "timestamp": [float(t0 + 60 * i) for i in range(90)],
+        "open": [10.0] * 90, "high": [11.0] * 90, "low": [9.0] * 90, "close": [10.5] * 90,
+        "volume": [2.0] * 90,
+    })
+    engine = types.SimpleNamespace(
+        market_data=_MarketData(live),
+        settings=types.SimpleNamespace(symbols=[types.SimpleNamespace(symbol="BTC-USD")]),
+    )
+    monkeypatch.setattr(bridge.state, "engine", engine)
+    monkeypatch.setattr(bridge.state, "running", True)
+    monkeypatch.setattr(bridge, "_engine_store", lambda sym: store if sym == "BTC-USD" else None)
+
+    bars = bridge._engine_klines("BTC-USD", "5m", 100)
+    assert [b["timestamp"] for b in bars] == [t0 + 300 * i for i in range(18)]     # 60 + 30 min
+    assert bars[0]["close"] == 10.5 and bars[0]["volume"] == 10.0                  # store only
+    assert bars[12]["open"] == 100.0 and bars[12]["volume"] == 5.0                 # live from its first bar
+    assert bars[-1]["close"] == 100.5
+    # `limit` keeps the newest, and 1 m bars come straight through
+    assert [b["timestamp"] for b in bridge._engine_klines("BTC-USD", "1m", 2)] == [live_start + 28 * 60, live_start + 29 * 60]
 
 
 def test_venue_kline_rows_walk_forward_past_the_venues_cap():

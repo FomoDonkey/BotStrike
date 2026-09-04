@@ -2256,15 +2256,42 @@ _LADDER = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", 
 _COARSER = {iv: _LADDER[i + 1:] for i, iv in enumerate(_LADDER)}
 
 
+_APP_ROOT = Path(__file__).resolve().parents[1]
+_STORE_CACHE: Dict[str, tuple] = {}     # symbol -> (file mtime, 1 m frame in seconds)
+
+
+def _engine_store(sym: str):
+    """The engine's one-minute history on disk (`data/binance/klines/<sym>/1m.parquet`, the ninety
+    days `update_market_data` keeps current), as a frame in seconds — cached until the file changes.
+    None when the symbol has no store."""
+    path = _APP_ROOT / "data" / "binance" / "klines" / sym / "1m.parquet"
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    hit = _STORE_CACHE.get(sym)
+    if hit is not None and hit[0] == mtime:
+        return hit[1]
+    import pandas as pd
+    df = pd.read_parquet(path, columns=["timestamp", "open", "high", "low", "close", "volume"])
+    ts = pd.to_numeric(df["timestamp"], errors="coerce").astype(float)
+    df["timestamp"] = ts.where(ts <= 1e12, ts / 1000.0)
+    df = df.dropna(subset=["timestamp"]).sort_values("timestamp").drop_duplicates("timestamp", keep="last")
+    df = df.reset_index(drop=True)
+    _STORE_CACHE[sym] = (mtime, df)
+    return df
+
+
 def _engine_klines(sym: str, interval: str, limit: int) -> Optional[list]:
     """The engine's own bars for a market it streams, resampled to `interval` — or None.
 
     The socket sends the last 500 one-minute bars every second: enough for a 5 m chart, two
-    candles on a 4 h one. The engine holds ninety days of 1 m history for the symbols it trades,
-    and that is what the chart asks for when it opens; the socket then only carries the live edge.
-    The venue's klines are deliberately NOT used for these markets: the engine's frame is Binance
-    history with Strike's live prints on top, and a Strike window joined onto it would meet at a
-    seam between two different tapes (2026-09-04).
+    candles on a 4 h one. The engine's live frame is capped at 2,000 bars (core/market_data.py
+    MAX_BARS), so the depth comes from the same ninety-day store the strategies are seeded from,
+    with the live frame laid over its end — the chart then shows what the bot itself has seen.
+    The venue's klines are deliberately NOT used for these markets: this frame is Binance history
+    with Strike's live prints on top, and a Strike window joined onto it would meet at a seam
+    between two different tapes (2026-09-04).
     """
     engine = state.engine
     if engine is None or not state.running:
@@ -2279,21 +2306,29 @@ def _engine_klines(sym: str, interval: str, limit: int) -> Optional[list]:
         if df is None or df.empty or "timestamp" not in df.columns:
             return None
         import pandas as pd
-        # a bucket needs secs/60 one-minute rows; one extra covers the bucket the tail starts in
-        tail = df.tail(limit * max(1, secs // 60) + secs // 60)
-        col = tail["timestamp"]
+        col = df["timestamp"]
         if pd.api.types.is_datetime64_any_dtype(col):
             ts = col.astype("int64") / 1e9
         else:
             ts = pd.to_numeric(col, errors="coerce").astype(float)
             ts = ts.where(ts <= 1e12, ts / 1000.0)          # ms → s, like the socket loop
-        frame = pd.DataFrame({
-            "open": tail["open"].astype(float).to_numpy(),
-            "high": tail["high"].astype(float).to_numpy(),
-            "low": tail["low"].astype(float).to_numpy(),
-            "close": tail["close"].astype(float).to_numpy(),
-            "volume": tail["volume"].astype(float).to_numpy() if "volume" in tail.columns else 0.0,
-        }, index=pd.to_datetime(ts.to_numpy(), unit="s", utc=True))
+        live = pd.DataFrame({
+            "timestamp": ts.to_numpy(),
+            "open": df["open"].astype(float).to_numpy(),
+            "high": df["high"].astype(float).to_numpy(),
+            "low": df["low"].astype(float).to_numpy(),
+            "close": df["close"].astype(float).to_numpy(),
+            "volume": df["volume"].astype(float).to_numpy() if "volume" in df.columns else 0.0,
+        }).dropna(subset=["timestamp"])
+        store = _engine_store(sym)
+        if store is not None and not live.empty:
+            # the live frame owns everything from its first bar on; the store supplies the past
+            older = store[store["timestamp"] < float(live["timestamp"].iloc[0])]
+            live = pd.concat([older, live], ignore_index=True)
+        # a bucket needs secs/60 one-minute rows; one extra covers the bucket the tail starts in
+        tail = live.tail(limit * max(1, secs // 60) + secs // 60)
+        frame = tail.drop(columns=["timestamp"])
+        frame.index = pd.to_datetime(tail["timestamp"].to_numpy(), unit="s", utc=True)
         frame = frame[~frame.index.isna()]
         bars = frame.resample(f"{secs}s", label="left", closed="left").agg(
             {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
