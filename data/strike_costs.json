@@ -1,145 +1,505 @@
 {
- "generated": "2026-09-03T16:49:58Z",
+ "generated": "2026-09-04T01:55:33Z",
  "days": 90,
  "taker_bps": 4.5,
- "median_cost_per_side_bps": 6.69,
- "worst_cost_per_side_bps": 8.5,
- "median_funding_annual": 0.0807,
+ "median_cost_per_side_bps": 7.5,
+ "worst_cost_per_side_bps": 56.06,
+ "median_funding_annual": 0.0677,
  "markets": {
-  "BTC-USD": {
+  "AAOI-USD": {
    "funding": {
-    "periods": 2153,
-    "days": 90.0,
-    "annualized_pct": 0.085606,
+    "periods": 494,
+    "days": 20.6,
+    "annualized_pct": 0.090933,
     "median": 1.25e-05,
-    "p90": 1.25e-05,
-    "share_positive": 0.9577
+    "p90": 2.176649e-05,
+    "share_positive": 0.7328
    },
    "spread": {
-    "days": 31,
-    "median_bps": 0.228,
-    "p90_bps": 0.659,
-    "worst_bps": 0.991,
-    "half_spread_bps": 0.114,
-    "cost_per_side_bps": 4.61
-   }
-  },
-  "ETH-USD": {
-   "funding": {
-    "periods": 2153,
-    "days": 90.0,
-    "annualized_pct": 0.077821,
-    "median": 1.25e-05,
-    "p90": 1.25e-05,
-    "share_positive": 0.9656
-   },
-   "spread": {
-    "days": 31,
-    "median_bps": 3.966,
-    "p90_bps": 4.133,
-    "worst_bps": 4.178,
-    "half_spread_bps": 1.983,
-    "cost_per_side_bps": 6.48
-   }
-  },
-  "SOL-USD": {
-   "funding": {
-    "periods": 2153,
-    "days": 90.0,
-    "annualized_pct": 0.070714,
-    "median": 1.25e-05,
-    "p90": 1.25e-05,
-    "share_positive": 0.9206
-   },
-   "spread": {
-    "days": 31,
-    "median_bps": 3.968,
-    "p90_bps": 4.006,
-    "worst_bps": 4.193,
-    "half_spread_bps": 1.984,
-    "cost_per_side_bps": 6.48
+    "days": 22,
+    "median_bps": 7.999,
+    "p90_bps": 8.128,
+    "worst_bps": 8.38,
+    "half_spread_bps": 4.0,
+    "cost_per_side_bps": 8.5
    }
   },
   "ADA-USD": {
    "funding": {
     "periods": 2153,
     "days": 90.0,
-    "annualized_pct": 0.109295,
+    "annualized_pct": 0.118484,
+    "median": 1.25e-05,
+    "p90": 1.25e-05,
+    "share_positive": 0.9257
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 7.832,
+    "p90_bps": 8.232,
+    "worst_bps": 9.363,
+    "half_spread_bps": 3.916,
+    "cost_per_side_bps": 8.42
+   }
+  },
+  "BNB-USD": {
+   "funding": {
+    "periods": 174,
+    "days": 7.2,
+    "annualized_pct": 0.108972,
+    "median": 1.25e-05,
+    "p90": 1.2571216e-05,
+    "share_positive": 1.0
+   },
+   "spread": {
+    "days": 9,
+    "median_bps": 3.536,
+    "p90_bps": 3.999,
+    "worst_bps": 3.999,
+    "half_spread_bps": 1.768,
+    "cost_per_side_bps": 6.27
+   }
+  },
+  "BTC-USD": {
+   "funding": {
+    "periods": 2153,
+    "days": 90.0,
+    "annualized_pct": 0.090242,
+    "median": 1.25e-05,
+    "p90": 1.25e-05,
+    "share_positive": 0.961
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 0.221,
+    "p90_bps": 0.659,
+    "worst_bps": 1.022,
+    "half_spread_bps": 0.11,
+    "cost_per_side_bps": 4.61
+   }
+  },
+  "COIN-USD": {
+   "funding": {
+    "periods": 178,
+    "days": 8.3,
+    "annualized_pct": 0.007567,
+    "median": 0.0,
+    "p90": 0.0,
+    "share_positive": 0.0787
+   },
+   "spread": {
+    "days": 10,
+    "median_bps": 6.002,
+    "p90_bps": 6.048,
+    "worst_bps": 6.048,
+    "half_spread_bps": 3.001,
+    "cost_per_side_bps": 7.5
+   }
+  },
+  "CRCL-USD": {
+   "funding": {
+    "periods": 102,
+    "days": 4.2,
+    "annualized_pct": -0.038474,
+    "median": 0.0,
+    "p90": 9.938243e-06,
+    "share_positive": 0.1765
+   },
+   "spread": {
+    "days": 6,
+    "median_bps": 5.984,
+    "p90_bps": 6.138,
+    "worst_bps": 6.138,
+    "half_spread_bps": 2.992,
+    "cost_per_side_bps": 7.49
+   }
+  },
+  "CXMT-USD": {
+   "funding": {
+    "periods": 823,
+    "days": 34.3,
+    "annualized_pct": -1.824666,
+    "median": 1.25e-05,
+    "p90": 6.3714949e-05,
+    "share_positive": 0.5917
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 8.0,
+    "p90_bps": 8.017,
+    "worst_bps": 8.066,
+    "half_spread_bps": 4.0,
+    "cost_per_side_bps": 8.5
+   }
+  },
+  "DRAM-USD": {
+   "funding": {
+    "periods": 391,
+    "days": 16.3,
+    "annualized_pct": -0.014275,
+    "median": 0.0,
+    "p90": 0.0,
+    "share_positive": 0.0537
+   },
+   "spread": {
+    "days": 18,
+    "median_bps": 5.997,
+    "p90_bps": 6.004,
+    "worst_bps": 6.005,
+    "half_spread_bps": 2.998,
+    "cost_per_side_bps": 7.5
+   }
+  },
+  "ETH-USD": {
+   "funding": {
+    "periods": 2153,
+    "days": 90.0,
+    "annualized_pct": 0.079906,
+    "median": 1.25e-05,
+    "p90": 1.25e-05,
+    "share_positive": 0.9638
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 3.96,
+    "p90_bps": 4.144,
+    "worst_bps": 4.178,
+    "half_spread_bps": 1.98,
+    "cost_per_side_bps": 6.48
+   }
+  },
+  "GOOGL-USD": {
+   "funding": {
+    "periods": 415,
+    "days": 17.3,
+    "annualized_pct": -0.00213,
+    "median": 0.0,
+    "p90": 0.0,
+    "share_positive": 0.0048
+   },
+   "spread": {
+    "days": 19,
+    "median_bps": 5.979,
+    "p90_bps": 6.01,
+    "worst_bps": 6.011,
+    "half_spread_bps": 2.99,
+    "cost_per_side_bps": 7.49
+   }
+  },
+  "HYPE-USD": {
+   "funding": {
+    "periods": 2153,
+    "days": 90.0,
+    "annualized_pct": 0.075141,
+    "median": 1.25e-05,
+    "p90": 1.25e-05,
+    "share_positive": 0.8593
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 4.655,
+    "p90_bps": 5.997,
+    "worst_bps": 6.014,
+    "half_spread_bps": 2.328,
+    "cost_per_side_bps": 6.83
+   }
+  },
+  "MINIMAX-USD": {
+   "funding": {
+    "periods": 559,
+    "days": 23.3,
+    "annualized_pct": 0.176196,
+    "median": 0.0,
+    "p90": 0.000164496212,
+    "share_positive": 0.4812
+   },
+   "spread": {
+    "days": 25,
+    "median_bps": 6.014,
+    "p90_bps": 8.041,
+    "worst_bps": 8.07,
+    "half_spread_bps": 3.007,
+    "cost_per_side_bps": 7.51
+   }
+  },
+  "MU-USD": {
+   "funding": {
+    "periods": 1698,
+    "days": 71.0,
+    "annualized_pct": 0.229779,
+    "median": 0.0,
+    "p90": 8.0664964e-05,
+    "share_positive": 0.1508
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 5.869,
+    "p90_bps": 6.176,
+    "worst_bps": 6.865,
+    "half_spread_bps": 2.935,
+    "cost_per_side_bps": 7.44
+   }
+  },
+  "NAS100-USD": {
+   "funding": {
+    "periods": 1148,
+    "days": 47.8,
+    "annualized_pct": -0.036394,
+    "median": 0.0,
+    "p90": 0.0,
+    "share_positive": 0.0061
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 2.992,
+    "p90_bps": 3.01,
+    "worst_bps": 4.733,
+    "half_spread_bps": 1.496,
+    "cost_per_side_bps": 6.0
+   }
+  },
+  "NEAR-USD": {
+   "funding": {
+    "periods": 2088,
+    "days": 87.2,
+    "annualized_pct": 0.067713,
+    "median": 1.25e-05,
+    "p90": 1.25e-05,
+    "share_positive": 0.874
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 6.491,
+    "p90_bps": 8.052,
+    "worst_bps": 16.319,
+    "half_spread_bps": 3.246,
+    "cost_per_side_bps": 7.75
+   }
+  },
+  "NIGHT-USD": {
+   "funding": {
+    "periods": 2153,
+    "days": 90.0,
+    "annualized_pct": 0.594369,
+    "median": 1.25e-05,
+    "p90": 0.000222251865,
+    "share_positive": 0.9684
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 103.113,
+    "p90_bps": 142.888,
+    "worst_bps": 144.908,
+    "half_spread_bps": 51.557,
+    "cost_per_side_bps": 56.06
+   }
+  },
+  "NVDA-USD": {
+   "funding": {
+    "periods": 2153,
+    "days": 90.0,
+    "annualized_pct": -0.050843,
+    "median": 0.0,
+    "p90": 0.0,
+    "share_positive": 0.0488
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 5.992,
+    "p90_bps": 6.046,
+    "worst_bps": 6.218,
+    "half_spread_bps": 2.996,
+    "cost_per_side_bps": 7.5
+   }
+  },
+  "PUMP-USD": {
+   "funding": {
+    "periods": 126,
+    "days": 5.2,
+    "annualized_pct": 0.008208,
+    "median": 1.25e-05,
+    "p90": 1.25e-05,
+    "share_positive": 0.6349
+   },
+   "spread": {
+    "days": 7,
+    "median_bps": 6.0,
+    "p90_bps": 6.002,
+    "worst_bps": 6.002,
+    "half_spread_bps": 3.0,
+    "cost_per_side_bps": 7.5
+   }
+  },
+  "SKHYNIX-USD": {
+   "funding": {
+    "periods": 1590,
+    "days": 66.3,
+    "annualized_pct": 0.531306,
+    "median": 0.0,
+    "p90": 0.000338068241,
+    "share_positive": 0.4673
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 5.97,
+    "p90_bps": 6.004,
+    "worst_bps": 6.051,
+    "half_spread_bps": 2.985,
+    "cost_per_side_bps": 7.48
+   }
+  },
+  "SNDK-USD": {
+   "funding": {
+    "periods": 1678,
+    "days": 70.1,
+    "annualized_pct": -0.010411,
+    "median": 0.0,
+    "p90": 0.0,
+    "share_positive": 0.053
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 5.988,
+    "p90_bps": 6.002,
+    "worst_bps": 6.015,
+    "half_spread_bps": 2.994,
+    "cost_per_side_bps": 7.49
+   }
+  },
+  "SOL-USD": {
+   "funding": {
+    "periods": 2153,
+    "days": 90.0,
+    "annualized_pct": 0.075284,
     "median": 1.25e-05,
     "p90": 1.25e-05,
     "share_positive": 0.9234
    },
    "spread": {
     "days": 31,
-    "median_bps": 7.836,
-    "p90_bps": 8.232,
-    "worst_bps": 9.363,
-    "half_spread_bps": 3.918,
-    "cost_per_side_bps": 8.42
+    "median_bps": 3.964,
+    "p90_bps": 4.006,
+    "worst_bps": 4.193,
+    "half_spread_bps": 1.982,
+    "cost_per_side_bps": 6.48
    }
   },
-  "XRP-USD": {
+  "SP500-USD": {
    "funding": {
-    "periods": 2153,
-    "days": 90.0,
-    "annualized_pct": 0.089242,
+    "periods": 437,
+    "days": 18.2,
+    "annualized_pct": 0.081842,
     "median": 1.25e-05,
     "p90": 1.25e-05,
-    "share_positive": 0.9851
+    "share_positive": 0.7506
+   },
+   "spread": {
+    "days": 20,
+    "median_bps": 2.999,
+    "p90_bps": 3.006,
+    "worst_bps": 3.007,
+    "half_spread_bps": 1.5,
+    "cost_per_side_bps": 6.0
+   }
+  },
+  "SPCX-USD": {
+   "funding": {
+    "periods": 2068,
+    "days": 86.4,
+    "annualized_pct": -0.068665,
+    "median": 0.0,
+    "p90": 0.0,
+    "share_positive": 0.0754
    },
    "spread": {
     "days": 31,
-    "median_bps": 5.855,
-    "p90_bps": 6.028,
-    "worst_bps": 7.491,
-    "half_spread_bps": 2.928,
-    "cost_per_side_bps": 7.43
+    "median_bps": 7.956,
+    "p90_bps": 8.067,
+    "worst_bps": 30.787,
+    "half_spread_bps": 3.978,
+    "cost_per_side_bps": 8.48
    }
   },
-  "BNB-USD": {
+  "TSLA-USD": {
    "funding": {
-    "periods": 165,
-    "days": 6.9,
-    "annualized_pct": 0.108739,
+    "periods": 992,
+    "days": 41.3,
+    "annualized_pct": 0.083316,
     "median": 1.25e-05,
     "p90": 1.25e-05,
-    "share_positive": 1.0
-   },
-   "spread": {
-    "days": 8,
-    "median_bps": 3.495,
-    "p90_bps": 3.997,
-    "worst_bps": 3.997,
-    "half_spread_bps": 1.747,
-    "cost_per_side_bps": 6.25
-   }
-  },
-  "ZEC-USD": {
-   "funding": {
-    "periods": 2153,
-    "days": 90.0,
-    "annualized_pct": 0.027186,
-    "median": 1.25e-05,
-    "p90": 1.25e-05,
-    "share_positive": 0.9071
+    "share_positive": 0.8438
    },
    "spread": {
     "days": 31,
-    "median_bps": 4.808,
-    "p90_bps": 6.0,
-    "worst_bps": 8.049,
-    "half_spread_bps": 2.404,
-    "cost_per_side_bps": 6.9
+    "median_bps": 5.988,
+    "p90_bps": 6.003,
+    "worst_bps": 6.137,
+    "half_spread_bps": 2.994,
+    "cost_per_side_bps": 7.49
+   }
+  },
+  "UNITREE-USD": {
+   "funding": {
+    "periods": 377,
+    "days": 15.7,
+    "annualized_pct": -0.980859,
+    "median": 0.0,
+    "p90": 4.0536596e-05,
+    "share_positive": 0.1459
+   },
+   "spread": {
+    "days": 17,
+    "median_bps": 7.97,
+    "p90_bps": 8.033,
+    "worst_bps": 9.797,
+    "half_spread_bps": 3.985,
+    "cost_per_side_bps": 8.48
+   }
+  },
+  "WTI-USD": {
+   "funding": {
+    "periods": 2153,
+    "days": 90.0,
+    "annualized_pct": -0.160768,
+    "median": 0.0,
+    "p90": 0.0,
+    "share_positive": 0.0608
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 5.996,
+    "p90_bps": 6.585,
+    "worst_bps": 8.878,
+    "half_spread_bps": 2.998,
+    "cost_per_side_bps": 7.5
+   }
+  },
+  "XAG-USD": {
+   "funding": {
+    "periods": 2153,
+    "days": 90.0,
+    "annualized_pct": 0.150781,
+    "median": 0.0,
+    "p90": 3.23459e-06,
+    "share_positive": 0.1031
+   },
+   "spread": {
+    "days": 31,
+    "median_bps": 7.684,
+    "p90_bps": 8.022,
+    "worst_bps": 8.729,
+    "half_spread_bps": 3.842,
+    "cost_per_side_bps": 8.34
    }
   },
   "XAU-USD": {
    "funding": {
     "periods": 2153,
     "days": 90.0,
-    "annualized_pct": 0.008707,
+    "annualized_pct": 0.008597,
     "median": 0.0,
     "p90": 0.0,
-    "share_positive": 0.0372
+    "share_positive": 0.0362
    },
    "spread": {
     "days": 31,
@@ -150,76 +510,58 @@
     "cost_per_side_bps": 8.5
    }
   },
-  "XAG-USD": {
+  "XRP-USD": {
    "funding": {
     "periods": 2153,
     "days": 90.0,
-    "annualized_pct": 0.15084,
-    "median": 0.0,
-    "p90": 5.126362e-06,
-    "share_positive": 0.104
-   },
-   "spread": {
-    "days": 31,
-    "median_bps": 7.696,
-    "p90_bps": 8.022,
-    "worst_bps": 8.729,
-    "half_spread_bps": 3.848,
-    "cost_per_side_bps": 8.35
-   }
-  },
-  "SP500-USD": {
-   "funding": {
-    "periods": 428,
-    "days": 17.8,
-    "annualized_pct": 0.083563,
+    "annualized_pct": 0.092011,
     "median": 1.25e-05,
     "p90": 1.25e-05,
-    "share_positive": 0.7664
-   },
-   "spread": {
-    "days": 19,
-    "median_bps": 2.999,
-    "p90_bps": 3.002,
-    "worst_bps": 3.007,
-    "half_spread_bps": 1.5,
-    "cost_per_side_bps": 6.0
-   }
-  },
-  "NAS100-USD": {
-   "funding": {
-    "periods": 1139,
-    "days": 47.5,
-    "annualized_pct": -0.036681,
-    "median": 0.0,
-    "p90": 0.0,
-    "share_positive": 0.0061
+    "share_positive": 0.987
    },
    "spread": {
     "days": 31,
-    "median_bps": 2.991,
-    "p90_bps": 3.01,
-    "worst_bps": 4.733,
-    "half_spread_bps": 1.496,
-    "cost_per_side_bps": 6.0
+    "median_bps": 5.822,
+    "p90_bps": 6.028,
+    "worst_bps": 7.491,
+    "half_spread_bps": 2.911,
+    "cost_per_side_bps": 7.41
    }
   },
-  "WTI-USD": {
+  "ZEC-USD": {
    "funding": {
     "periods": 2153,
     "days": 90.0,
-    "annualized_pct": -0.156649,
-    "median": 0.0,
-    "p90": 0.0,
-    "share_positive": 0.0627
+    "annualized_pct": 0.049935,
+    "median": 1.25e-05,
+    "p90": 1.25e-05,
+    "share_positive": 0.9066
    },
    "spread": {
     "days": 31,
-    "median_bps": 5.995,
-    "p90_bps": 6.585,
-    "worst_bps": 8.878,
-    "half_spread_bps": 2.998,
-    "cost_per_side_bps": 7.5
+    "median_bps": 4.999,
+    "p90_bps": 6.0,
+    "worst_bps": 8.049,
+    "half_spread_bps": 2.5,
+    "cost_per_side_bps": 7.0
+   }
+  },
+  "ZHIPU-USD": {
+   "funding": {
+    "periods": 149,
+    "days": 6.2,
+    "annualized_pct": -0.175743,
+    "median": 0.0,
+    "p90": 9.2708325e-05,
+    "share_positive": 0.2752
+   },
+   "spread": {
+    "days": 8,
+    "median_bps": 7.854,
+    "p90_bps": 8.024,
+    "worst_bps": 8.024,
+    "half_spread_bps": 3.927,
+    "cost_per_side_bps": 8.43
    }
   }
  }
