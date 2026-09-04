@@ -2106,9 +2106,11 @@ async def get_market(symbol: str):
     v_last = _num(tick.get("lastPrice"))
     v_stats = {}
     if tick:
+        # field names the market view actually reads (volume_24h_usd / _base), not invented ones
         v_stats = {"change_24h_pct": (_num(tick.get("priceChangePercent")) or 0.0) / 100.0,
                    "high_24h": _num(tick.get("highPrice")), "low_24h": _num(tick.get("lowPrice")),
-                   "volume_24h": _num(tick.get("volume")), "quote_volume_24h": _num(tick.get("quoteVolume")),
+                   "volume_24h_base": _num(tick.get("volume")),
+                   "volume_24h_usd": _num(tick.get("quoteVolume")),
                    "trades_24h": tick.get("count"), "window_min": 1440, "source": "venue"}
     return _json_safe({
         "symbol": symbol, "engine": True,
@@ -2118,7 +2120,7 @@ async def get_market(symbol: str):
         "index_price": float(snap.index_price) if snap else v_index,
         "funding_rate": _market_funding_rate(engine, symbol, snap),
         "funding_countdown_sec": _funding_countdown_sec(time.time(), _funding_interval(engine)),
-        "open_interest": float(snap.open_interest) if snap else None,
+        "open_interest": float(snap.open_interest) if snap else await _venue_open_interest(symbol),
         "spread_bps": float(ob.spread_bps) if ob else _venue_spread_bps(symbol),
         "best_bid": ob.best_bid if ob else None, "best_ask": ob.best_ask if ob else None,
         # the venue's 24 h block when it answered, otherwise whatever the engine had (possibly empty)
@@ -2186,6 +2188,31 @@ def _num(x):
         return float(x)
     except (TypeError, ValueError):
         return None
+
+
+async def _venue_open_interest(symbol: str):
+    """Latest open interest from the venue's stats API — the premium index does not carry it."""
+    cached = _VENUE_MD.setdefault("oi", {}).get(symbol.upper())
+    if cached and time.time() - cached[0] < 300:
+        return cached[1]
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=12.0, headers={"User-Agent": "botstrike/1.0"}) as c:
+            r = await c.get(f"{STRIKE_STATS_BASE}/history/open-interest",
+                            params={"symbol": symbol, "interval": "1d"})
+            r.raise_for_status()
+            payload = r.json()
+        rows = payload.get("data") or []
+        cols = payload.get("columns") or []
+        if not rows:
+            return None
+        last = dict(zip(cols, rows[-1]))
+        val = _num(last.get("open_interest") or last.get("openInterest") or last.get("value"))
+    except Exception as e:  # noqa: BLE001
+        logger.debug("venue_open_interest_error", symbol=symbol, error=str(e)[:120])
+        val = None
+    _VENUE_MD["oi"][symbol.upper()] = (time.time(), val)
+    return val
 
 
 async def _venue_market_data() -> dict:

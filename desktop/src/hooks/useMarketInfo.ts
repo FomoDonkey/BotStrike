@@ -43,7 +43,9 @@ export interface MarketView {
 export function useMarketInfo(symbol: string): MarketView {
   const now = useNow();
   const nowSec = now / 1000;
-  const price = useMarketStore((s) => s.prices[symbol] || 0);
+  // The socket only streams four symbols. For every other market the venue's own last price comes
+  // over REST, so the header shows a price instead of "---" (2026-09-04).
+  const streamed = useMarketStore((s) => s.prices[symbol] || 0);
   const prevPrice = useMarketStore((s) => s.prevPrices[symbol] || 0);
   const info = useMarketStore((s) => s.marketInfo[symbol]);
   const candles = useMarketStore((s) => s.candles[symbol]);
@@ -59,6 +61,7 @@ export function useMarketInfo(symbol: string): MarketView {
   const winStats = useMemo(() => stats24h(candles, minute * 60), [candles, minute]);
 
   return useMemo<MarketView>(() => {
+    const price = streamed || rest?.price || rest?.mark_price || 0;
     const derivedChange = change24h(winStats, price);
     const mark = rest?.mark_price || info?.mark_price || 0;
     const index = rest?.index_price || info?.index_price || 0;
@@ -101,5 +104,5 @@ export function useMarketInfo(symbol: string): MarketView {
       restMissing: ep.missing,
       dataAgeSec: typeof rest?.data_age_sec === "number" ? rest.data_age_sec : null,
     };
-  }, [symbol, price, prevPrice, info, rest, ep.missing, ep.at, winStats, orderbook, wsRegime, riskRegime, riskSince, now, nowSec]);
+  }, [symbol, streamed, prevPrice, info, rest, ep.missing, ep.at, winStats, orderbook, wsRegime, riskRegime, riskSince, now, nowSec]);
 }
