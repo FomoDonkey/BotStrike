@@ -64,6 +64,7 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
   const lastLinesHash = useRef("");
   const lastOverlayHash = useRef("");
   const lastCandleCount = useRef(0);
+  const drawnRef = useRef<Candle[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [chartReady, setChartReady] = useState(false);
   const onChartRef = useRef(onChart);
@@ -219,6 +220,8 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
     // isolated candles with empty slots between them.
     const candles = tfSeconds > sourceSeconds ? resampleCandles(rawCandles, tfSeconds) : rawCandles;
     if (!candles.length) return;
+    drawnRef.current = candles;              // the autoscale provider below reads this
+
     if (firstTimeRef.current !== candles[0].time) {
       firstTimeRef.current = candles[0].time;
       setHistoryStart(candles[0].time);          // store callback, not render: safe to set state here
@@ -362,6 +365,43 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
       console.error("[Chart] markers error:", e);
     }
   }, [trades, chartReady, timeframe, tfSeconds, historyStart, upColor, downColor]);
+
+  // The price scale belongs to the PRICE ACTION, not to the lines drawn over it.
+  //
+  // An exit ladder sits several percent below a trend position, and lightweight-charts includes
+  // price lines in its autoscale — so on silver, whose candles moved 0.5 % across the session, the
+  // ladder at -3.5 % stretched the axis sevenfold and squashed every candle into an unreadable
+  // sliver at the top of the pane. That is the "weird candles" (Edgar, 2026-09-04). The lines are
+  // still drawn, and their numbers are in the legend above the chart when they fall off-screen.
+  useEffect(() => {
+    if (!chartReady || !seriesRef.current) return;
+    seriesRef.current.applyOptions({
+      autoscaleInfoProvider: (original: () => { priceRange: { minValue: number; maxValue: number } } | null) => {
+        try {
+          const c = drawnRef.current;
+          if (!c.length) return original();
+          // only the bars actually on screen, so panning and zooming still rescale
+          const vis = chartRef.current?.timeScale().getVisibleLogicalRange();
+          const from = vis ? Math.max(0, Math.floor(vis.from)) : 0;
+          const to = vis ? Math.min(c.length - 1, Math.ceil(vis.to)) : c.length - 1;
+          let lo = Infinity;
+          let hi = -Infinity;
+          for (let i = from; i <= to; i++) {
+            const k = c[i];
+            if (!k) continue;
+            if (k.low < lo) lo = k.low;
+            if (k.high > hi) hi = k.high;
+          }
+          if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= 0) return original();
+          // a flat stretch has zero range: give it a band so it does not collapse to a line
+          const pad = (hi - lo) * 0.12 || hi * 0.002;
+          return { priceRange: { minValue: lo - pad, maxValue: hi + pad } };
+        } catch {
+          return original();
+        }
+      },
+    });
+  }, [chartReady]);
 
   // Step 4: live price lines (entry / SL / TP / liq of open positions)
   useEffect(() => {
