@@ -6,7 +6,9 @@ import { useNow } from "./useNow";
 import { useEndpoint } from "./useEndpoint";
 import { change24h, fundingCountdownSec, spanLabel, stats24h } from "@/lib/market";
 
-const MARKET_POLL_MS = 10_000;
+// The header now leads with the VENUE's mark rather than the streamed feed's last print, so this
+// poll is what makes it move. At 10 s it visibly lagged the screen it gets compared against.
+const MARKET_POLL_MS = 4_000;
 
 export interface MarketView {
   symbol: string;
@@ -22,7 +24,11 @@ export interface MarketView {
   volumeUsd: number;
   volumeBase: number | null;
   oi: number;
+  /** the VENUE's live spread — what crossing this book actually costs */
   spreadBps: number | null;
+  /** the reference feed's own last print and spread, shown only where the feed is the subject */
+  feedPrice: number | null;
+  feedSpreadBps: number | null;
   regime: string;
   regimeSince: number;
   regimeTf: number;
@@ -61,22 +67,27 @@ export function useMarketInfo(symbol: string): MarketView {
   const winStats = useMemo(() => stats24h(candles, minute * 60), [candles, minute]);
 
   return useMemo<MarketView>(() => {
-    const price = streamed || rest?.price || rest?.mark_price || 0;
+    // EVERY FIGURE THAT DESCRIBES THE MARKET IS THE VENUE'S. The socket streams Binance, which is
+    // the strategies' price reference and not the book an order reaches, so falling back to it here
+    // printed Binance's market on a Strike header — 24 h volume out by a factor of 8,000 and open
+    // interest by 30,000 (audit 2026-09-04). The stream survives where it is honestly the subject:
+    // the chart, the tape, the book ladder, and the last-resort price when the bridge is unreachable.
+    const price = rest?.price || rest?.mark_price || streamed || 0;
     const derivedChange = change24h(winStats, price);
-    const mark = rest?.mark_price || info?.mark_price || 0;
-    const index = rest?.index_price || info?.index_price || 0;
-    const funding = rest?.funding_rate ?? info?.funding_rate ?? null;
+    const mark = rest?.mark_price || 0;
+    const index = rest?.index_price || 0;
+    const funding = rest?.funding_rate ?? null;
     const restAgeSec = ep.at > 0 ? Math.max(0, (now - ep.at) / 1000) : 0;
     const countdownSec = typeof rest?.funding_countdown_sec === "number"
       ? Math.max(0, rest.funding_countdown_sec - restAgeSec)
       : typeof info?.funding_countdown_sec === "number" && info.updated
         ? Math.max(0, info.funding_countdown_sec - (nowSec - info.updated))
         : fundingCountdownSec();
-    const change = rest?.change_24h_pct ?? info?.change_24h_pct ?? derivedChange;
-    const high = rest?.high_24h ?? info?.high_24h ?? (winStats.high !== null ? Math.max(winStats.high, price) : null);
-    const lowRaw = rest?.low_24h ?? info?.low_24h ?? (winStats.low !== null ? Math.min(winStats.low, price || Infinity) : null);
+    const change = rest?.change_24h_pct ?? derivedChange;
+    const high = rest?.high_24h ?? (winStats.high !== null ? Math.max(winStats.high, price) : null);
+    const lowRaw = rest?.low_24h ?? (winStats.low !== null ? Math.min(winStats.low, price || Infinity) : null);
     const low = lowRaw !== null && Number.isFinite(lowRaw) ? lowRaw : null;
-    const bridgeChange = rest?.change_24h_pct ?? info?.change_24h_pct;
+    const bridgeChange = rest?.change_24h_pct;
     const bridgeWindowMin = typeof rest?.window_min === "number" ? rest.window_min : null;
     const spanSec = typeof bridgeChange === "number" ? (bridgeWindowMin !== null ? bridgeWindowMin * 60 : 24 * 3600) : winStats.span_sec;
     const windowIs24h = spanSec >= 23.5 * 3600;
@@ -91,10 +102,13 @@ export function useMarketInfo(symbol: string): MarketView {
       change,
       high,
       low,
-      volumeUsd: rest?.volume_24h_usd || info?.volume_24h || 0,
-      volumeBase: typeof rest?.volume_24h_base === "number" ? rest.volume_24h_base : winStats.volume_base > 0 ? winStats.volume_base : null,
-      oi: rest?.open_interest || info?.open_interest || 0,
-      spreadBps: rest?.spread_bps ?? info?.spread_bps ?? orderbook?.spread_bps ?? null,
+      volumeUsd: rest?.volume_24h_usd ?? 0,
+      volumeBase: typeof rest?.volume_24h_base === "number" ? rest.volume_24h_base : null,
+      // zero open interest is a fact about four of the venue's markets, not a missing value
+      oi: rest?.open_interest ?? 0,
+      spreadBps: rest?.spread_bps ?? null,
+      feedPrice: rest?.feed_price ?? (streamed || null),
+      feedSpreadBps: rest?.feed_spread_bps ?? orderbook?.spread_bps ?? null,
       regime: rest?.regime || wsRegime || riskRegime || "UNKNOWN",
       regimeSince: rest?.regime_since || info?.regime_since || riskSince || 0,
       regimeTf: rest?.regime_timeframe_min || info?.regime_timeframe_min || 15,

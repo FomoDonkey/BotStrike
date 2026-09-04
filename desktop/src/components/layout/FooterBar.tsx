@@ -10,6 +10,7 @@ import { useNow } from "@/hooks/useNow";
 import { EXCHANGE_LABELS, SYMBOLS, SYMBOL_LABELS, DOCS_URL } from "@/lib/constants";
 import { cn, capitalize, formatAge, formatCompactUSD, formatPrice } from "@/lib/utils";
 import { useSymbolChanges } from "@/hooks/useSymbolChanges";
+import { useVenueMarkets } from "@/hooks/useVenueMarkets";
 import { SignedPct } from "@/components/shared/TradeChips";
 
 const TickerItem = memo(function TickerItem({ symbol, change }: { symbol: string; change: number | null }) {
@@ -28,7 +29,11 @@ export function FooterBar({ className }: { className?: string }) {
   const now = useNow();
   const { mode, bridgeConnected, wsConnected } = useSystemStore(useShallow((s) => ({ mode: s.mode, bridgeConnected: s.bridgeConnected, wsConnected: s.wsConnected })));
   const lastTickAt = useMarketStore((s) => s.lastTickAt);
-  const btcVol = useMarketStore((s) => s.marketInfo["BTC-USD"]?.volume_24h ?? 0);
+  // Was BTC's 24 h volume off the Binance stream: $16 B on a venue whose entire book turned over
+  // $5.7 M that day. Summing the venue's own quote volume is both true and the figure the venue
+  // states in this exact spot on its own screen (audit 2026-09-04).
+  const venueMarkets = useVenueMarkets();
+  const venueVol = venueMarkets.list.reduce((a, v) => a + (v.volume_24h_usd || 0), 0);
   const exchange = useExchangeStore((s) => s.exchange);
   const setActivityOpen = useUiStore((s) => s.setActivityOpen);
   const activityOpen = useUiStore((s) => s.activityOpen);
@@ -53,8 +58,8 @@ export function FooterBar({ className }: { className?: string }) {
           {items.map((it, i) => <span key={`dup-${i}`} aria-hidden>{it}</span>)}
         </div>
       </div>
-      <span className="hidden 2xl:inline-flex items-center gap-1.5 px-3 h-full border-l border-hairline font-medium text-text whitespace-nowrap shrink-0" title="BTC 24 h quote volume on the venue">
-        24H Vol <span className="num">{formatCompactUSD(btcVol)}</span>
+      <span className="hidden 2xl:inline-flex items-center gap-1.5 px-3 h-full border-l border-hairline font-medium text-text whitespace-nowrap shrink-0" title="Quote volume across every market the venue lists, last 24 h">
+        24H Vol <span className="num">{venueVol > 0 ? formatCompactUSD(venueVol) : "---"}</span>
       </span>
       <nav className="flex items-center h-full border-l border-hairline shrink-0">
         <button type="button" onClick={() => setActivityOpen(!activityOpen)} className={cn("inline-flex items-center gap-1.5 px-3 h-full font-medium text-text hover:bg-hover", activityOpen && "bg-active")}>

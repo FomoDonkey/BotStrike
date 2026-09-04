@@ -2,8 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/shallow";
 import { Search, Star } from "lucide-react";
 import { useMarketStore } from "@/stores/marketStore";
-import { useEndpoint } from "@/hooks/useEndpoint";
-import { api, type VenueMarket } from "@/lib/api";
+import { useVenueMarkets } from "@/hooks/useVenueMarkets";
 import { fundingDirection, fundingMeaning } from "@/lib/market";
 import { useNow } from "@/hooks/useNow";
 import { useSymbolChanges } from "@/hooks/useSymbolChanges";
@@ -38,15 +37,11 @@ export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerPr
   const info = useMarketStore(useShallow((s) => s.marketInfo));
   const changes = useSymbolChanges(now / 1000);
 
-  const venue = useEndpoint(() => api.markets(), 60_000, "", open);
-  const byMarket = useMemo(() => {
-    const m = new Map<string, VenueMarket>();
-    for (const v of venue.data?.markets ?? []) m.set(v.symbol, v);
-    return m;
-  }, [venue.data]);
+  const venue = useVenueMarkets(open);
+  const byMarket = venue.byMarket;
 
   const rows = useMemo(() => {
-    const all = venue.data?.markets?.length ? venue.data.markets.map((v) => v.symbol) : [...SYMBOLS];
+    const all: string[] = venue.list.length ? venue.list.map((v) => v.symbol) : [...SYMBOLS];
     const base = tab === "favorites" ? all.filter((s) => FAVORITE_SYMBOLS.includes(s))
       : tab === "live" ? all.filter((s) => byMarket.get(s)?.feed ?? SYMBOLS.includes(s as (typeof SYMBOLS)[number]))
       : all;
@@ -58,7 +53,7 @@ export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerPr
       return v?.held ? 0 : v?.feed ? 1 : v?.pool ? 2 : 3;
     };
     return filtered.sort((x, y) => rank(x) - rank(y) || x.localeCompare(y));
-  }, [tab, query, venue.data, byMarket]);
+  }, [tab, query, venue.list, byMarket]);
 
   useEffect(() => {
     if (open) inputRef.current?.focus();
@@ -112,9 +107,12 @@ export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerPr
               <tr><td colSpan={6} className="c text-text">No market matches “{query}”</td></tr>
             )}
             {rows.map((s, i) => {
-              const p = prices[s] || 0;
-              const mi = info[s];
-              const f = mi?.funding_rate;
+              // Every figure in this row is the VENUE's. Reading price/change/volume/OI off the
+              // socket printed Binance's numbers for the four streamed markets and nothing for the
+              // other 27 — one row, two venues (audit 2026-09-04). The stream is the last resort.
+              const v = byMarket.get(s);
+              const p = v?.price || prices[s] || 0;
+              const f = v?.funding_rate;
               return (
                 <tr
                   key={s}
@@ -136,12 +134,11 @@ export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerPr
                     </span>
                   </td>
                   <td className="num">{p > 0 ? formatPrice(p) : "---"}</td>
-                  <td><SignedPct value={changes[s]} /></td>
-                  <td className="num">{formatCompactUSD(mi?.volume_24h ?? 0)}</td>
-                  <td className="num">{mi?.open_interest ? `${formatCompact(mi.open_interest)} ${SYMBOL_LABELS[s] ?? ""}` : "---"}</td>
+                  <td><SignedPct value={typeof v?.change_24h_pct === "number" ? v.change_24h_pct : changes[s]} /></td>
+                  <td className="num">{typeof v?.volume_24h_usd === "number" ? formatCompactUSD(v.volume_24h_usd) : "---"}</td>
+                  <td className="num">{typeof v?.open_interest === "number" ? `${formatCompact(v.open_interest)} ${SYMBOL_LABELS[s] ?? ""}` : "---"}</td>
                   {(() => {
-                    // The venue's rate is the truth for every market; the feed only covers four.
-                    const rate = byMarket.get(s)?.funding_rate ?? f;
+                    const rate = f;
                     return (
                       <td className={cn("num", typeof rate === "number" ? (rate > 0 ? "text-mint" : rate < 0 ? "text-rose" : "text-text") : "text-text-3")}
                           title={typeof rate === "number" ? `${fundingDirection(rate)} — ${fundingMeaning(rate)}` : undefined}>

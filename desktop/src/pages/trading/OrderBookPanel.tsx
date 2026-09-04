@@ -100,7 +100,7 @@ export function OrderBookPanel({ symbol }: { symbol: string }) {
             {mid ? formatPrice(mid) : "---"} <span className="text-[11px]">{up ? "↑" : "↓"}</span>
           </span>
           <span className="text-[11px] text-text-muted num">
-            <Hint title={HINTS.spread}>Spread</Hint>: {spreadAbs !== null ? spreadAbs.toFixed(spreadAbs >= 1 ? 1 : 2) : "---"}
+            <Hint title={"The ladder and this spread are the PRICE FEED's book (Binance), which is what the strategies read — not the venue's. What an order on Strike actually pays is the Spread in the market header and the Details tab."}>Spread (feed)</Hint>: {spreadAbs !== null ? spreadAbs.toFixed(spreadAbs >= 1 ? 1 : 2) : "---"}
             {spreadBps !== null && ` / ${spreadBps < 1 ? spreadBps.toFixed(3) : spreadBps.toFixed(2)} bps`}
           </span>
         </div>

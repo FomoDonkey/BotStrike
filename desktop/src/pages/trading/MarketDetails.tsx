@@ -54,8 +54,14 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
               <span className="font-medium text-text-2">Execution <span className="text-text font-semibold">Strike · paper</span></span>
               <span className="font-medium text-text-2">Type <span className="text-text font-semibold">Perpetual · paper</span></span>
               <span className="font-medium text-text-2">Base / quote <span className="text-text font-semibold">{base} / USD</span></span>
-              {strategies && strategies.length > 0 && (
+              {strategies && strategies.length > 0 ? (
                 <span className="inline-flex items-center gap-2 font-medium text-text-2">Strategies {strategies.map((s) => <StrategyTag key={s} strategy={s} />)}</span>
+              ) : (
+                /* An empty list is a fact, not a gap: only the trend universe is traded, and the
+                   panel used to advertise retired strategies instead of saying so (2026-09-04). */
+                <span className="font-medium text-text-2" title="Only the daily trend book trades, and only over its own universe. This market can be watched here but nothing will open a position on it.">
+                  Strategies <span className="text-text font-semibold">none — not in the trend universe</span>
+                </span>
               )}
             </div>
           </ListSection>
@@ -63,8 +69,10 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
 
         <div className="min-w-0">
           <ListSection title="Order size rules">
-            <ListRow label="Leverage" hint="Leverage applied to this symbol's positions (SymbolConfig.leverage). Trend daily positions are always 1x.">{leverage !== null ? `${leverage}x` : "---"}</ListRow>
-            <ListRow label="Max position" hint="Largest notional the risk manager allows on this symbol">{maxPos !== null ? formatUSD(maxPos) : "---"}</ListRow>
+            <ListRow label="Leverage" hint="Cap on this market's leverage. The daily trend run does not use a fixed figure: it sizes each market by its own volatility (target vol / realised vol) and clamps the result at this cap.">{leverage !== null ? `${leverage}x max` : "---"}</ListRow>
+            <ListRow label="Max position" hint="Largest notional the risk manager allows on this symbol. A market with no per-symbol row has no fixed cap — the daily run sizes it by volatility and the account-wide exposure limit binds instead.">
+              {maxPos !== null ? formatUSD(maxPos) : <span className="text-text-2">No per-market cap</span>}
+            </ListRow>
             <ListRow label="Min notional" hint="Smallest order the paper book accepts">{minNotional !== null ? formatUSD(minNotional) : <span title="symbol_config.min_notional_usd needs bridge ≥ 2.16">---</span>}</ListRow>
             <ListRow label="Risk per trade" hint="Fraction of equity risked between entry and stop on each signal">{trading ? formatPct(trading.risk_per_trade_pct, 2) : "---"}</ListRow>
             <ListRow label="Max total exposure" hint="Sum of open notionals / equity allowed">{trading ? formatPct(trading.max_total_exposure_pct, 0) : "---"}</ListRow>
@@ -104,9 +112,21 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
             <ListRow label="Mark price" hint={HINTS.mark}>{m.mark > 0 ? formatPrice(m.mark) : "---"}</ListRow>
             <ListRow label="Index price" hint={HINTS.index}>{m.index > 0 ? formatPrice(m.index) : "---"}</ListRow>
             <ListRow label="Mark − index" hint="Premium of mark over index — the basis funding corrects">{m.mark > 0 && m.index > 0 ? formatSignedPct((m.mark - m.index) / m.index, 3) : "---"}</ListRow>
-            <ListRow label="Best bid / ask">{ob?.best_bid && ob?.best_ask ? `${formatPrice(ob.best_bid)} / ${formatPrice(ob.best_ask)}` : "---"}</ListRow>
-            <ListRow label="Spread" hint={HINTS.spread}>{ob ? `${ob.spread.toFixed(2)} (${ob.spread_bps.toFixed(3)} bps)` : "---"}</ListRow>
-            <ListRow label="Data age" hint="Seconds since the last tick the engine received for this symbol">{m.dataAgeSec !== null ? `${m.dataAgeSec.toFixed(1)} s` : "---"}</ListRow>
+            {/* Strike's book, which is the one an order crosses — not the streamed reference feed's.
+                Quoting Binance here said BTC cost 0.012 bps to cross where Strike's own screen says
+                0.09, and ADA 4.5 where Strike is 6.3 (audit 2026-09-04). */}
+            <ListRow label="Best bid / ask" hint="Top of the venue's own book">
+              {m.rest?.best_bid && m.rest?.best_ask ? `${formatPrice(m.rest.best_bid)} / ${formatPrice(m.rest.best_ask)}` : "---"}
+            </ListRow>
+            <ListRow label="Spread" hint={HINTS.spread}>
+              {m.rest?.best_bid && m.rest?.best_ask
+                ? `${(m.rest.best_ask - m.rest.best_bid).toFixed(4)} (${(m.spreadBps ?? 0).toFixed(3)} bps)`
+                : m.spreadBps !== null ? `${m.spreadBps.toFixed(3)} bps (measured median)` : "---"}
+            </ListRow>
+            <ListRow label="Reference feed spread" hint={`Spread on the price feed the strategies read (${EXCHANGE_LABELS[exchange] ?? exchange}). Shown apart because it is NOT what an order on the venue pays`}>
+              {ob ? `${ob.spread_bps.toFixed(3)} bps` : m.feedSpreadBps !== null ? `${m.feedSpreadBps.toFixed(3)} bps` : "---"}
+            </ListRow>
+            <ListRow label="Venue quote age" hint="Seconds since the bridge last refreshed this market from the venue">{m.dataAgeSec !== null ? `${m.dataAgeSec.toFixed(1)} s` : "---"}</ListRow>
           </ListSection>
         </div>
 

@@ -34,3 +34,37 @@ collect_ignore = [
     "test_p0_fixes.py",
     "test_execution_intelligence.py",
 ]
+
+
+# ---------------------------------------------------------------------------
+# NO TEST REACHES THE VENUE.
+#
+# The market endpoints call the venue's public API for the figures that describe a Strike market
+# (mark, 24 h block, book, open interest). Two tests were quietly doing that for real: one asserted
+# a mark of 100.6 and got 2,500.53 — the live price of ether — the day the endpoint started asking
+# (2026-09-04). A test that reaches the network is a test that fails on a train, and worse, one that
+# passes for the wrong reason. Every test starts with the venue stubbed out; a test that wants venue
+# data patches these itself, and its patch wins because it is applied after this one.
+import pytest as _pytest
+
+
+@_pytest.fixture(autouse=True)
+def _no_venue_network(monkeypatch):
+    try:
+        from server import bridge as _bridge
+    except Exception:  # noqa: BLE001 - suites that never import the bridge
+        return
+
+    async def _md():
+        return {"ts": 0.0, "ts_tick": 0.0, "ts_info": 0.0,
+                "premium": {}, "ticker": {}, "filters": {}, "depth": {}, "oi": {}}
+
+    async def _depth(_symbol):
+        return None
+
+    async def _oi(_symbol):
+        return None
+
+    monkeypatch.setattr(_bridge, "_venue_market_data", _md, raising=False)
+    monkeypatch.setattr(_bridge, "_venue_depth", _depth, raising=False)
+    monkeypatch.setattr(_bridge, "_venue_open_interest", _oi, raising=False)

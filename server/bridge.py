@@ -1365,6 +1365,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(metrics_broadcast_loop()),
         asyncio.create_task(system_broadcast_loop()),
         asyncio.create_task(_engine_watchdog_loop()),
+        asyncio.create_task(_venue_open_interest_loop()),
     ]
 
     try:
@@ -2017,13 +2018,25 @@ async def get_markets():
     measured = _measured_funding_90d()
     interval = _funding_interval(engine)
     from analytics.funding import annualized_pct
+    # The picker's price, 24 h change, volume and open-interest columns were read off the intraday
+    # feed, so they were Binance's for the four streamed markets and empty for the other 27 — a
+    # single row of the list mixed two venues (audit 2026-09-04). One cached venue snapshot answers
+    # every column for every market, and the open interest comes from the background refresh below.
+    md = await _venue_market_data()
+    oi_cache = _VENUE_MD.get("oi") or {}
     out = []
-    for sym in sorted(set(venue) | set(feed) | pool | held):
+    for sym in sorted(set(venue) | set(feed) | pool | held | set(md["premium"])):
         rate = float(venue.get(sym, 0.0) or 0.0)
+        prem, tick = md["premium"].get(sym) or {}, md["ticker"].get(sym) or {}
+        oi = oi_cache.get(sym)
         out.append({"symbol": sym, "feed": sym in feed, "pool": sym in pool, "held": sym in held,
                     "funding_rate": rate if sym in venue else None,
                     "annualized_pct": round(annualized_pct(rate, interval), 6) if sym in venue else None,
-                    "annualized_90d": measured.get(sym)})
+                    "annualized_90d": measured.get(sym),
+                    "price": _num(prem.get("markPrice")) or _num(tick.get("lastPrice")),
+                    "change_24h_pct": ((_num(tick.get("priceChangePercent")) or 0.0) / 100.0) if tick else None,
+                    "volume_24h_usd": _num(tick.get("quoteVolume")) if tick else None,
+                    "open_interest": oi[1] if isinstance(oi, tuple) else None})
     return _json_safe({"engine": True, "venue": str(getattr(engine.settings.trading, "exchange_venue", "") or ""),
                        "interval_hours": interval, "quote_age_sec": _venue_quote_age(engine), "markets": out})
 
@@ -2095,15 +2108,20 @@ async def get_market(symbol: str):
     det = engine.regime_detector
     rs = det.status(symbol) if hasattr(det, "status") else {}
     ob = snap.orderbook if snap else None
-    # Everything the intraday feed does not cover comes from the venue's own public data, so any of
-    # its markets opens a real panel instead of a column of "---" (2026-09-04).
-    # Only when the intraday feed does not cover this market: a streamed symbol needs no network call
-    # here, and the request path stays as fast as it was.
-    md = await _venue_market_data() if snap is None else _VENUE_MD
+    # THIS HEADER DESCRIBES A STRIKE MARKET, SO EVERY FIGURE IN IT IS STRIKE'S (audit 2026-09-04).
+    # The engine's intraday feed is Binance (exchange_venue="binance"), a price reference for the
+    # strategies — not the venue an order reaches. Reading the header off that feed printed Binance's
+    # market on a Strike screen: 24 h volume of 199,026 BTC against Strike's own 23.89, open interest
+    # of 113,100 BTC against Strike's 3.78, a 0.012 bps spread against Strike's 0.09. Every one of
+    # those made a thin venue look deep, which is exactly the error that gets a size wrong. The feed
+    # keeps the chart, the tape and the book ladder — it is labelled as the reference there.
+    md = await _venue_market_data()
     prem = md["premium"].get(symbol.upper(), {})
     tick = md["ticker"].get(symbol.upper(), {})
     v_mark, v_index = _num(prem.get("markPrice")), _num(prem.get("indexPrice"))
     v_last = _num(tick.get("lastPrice"))
+    v_depth = await _venue_depth(symbol)
+    v_oi = await _venue_open_interest(symbol)
     v_stats = {}
     if tick:
         # field names the market view actually reads (volume_24h_usd / _base), not invented ones
@@ -2112,57 +2130,78 @@ async def get_market(symbol: str):
                    "volume_24h_base": _num(tick.get("volume")),
                    "volume_24h_usd": _num(tick.get("quoteVolume")),
                    "trades_24h": tick.get("count"), "window_min": 1440, "source": "venue"}
+    venue_spread = (v_depth or {}).get("spread_bps")
+    if venue_spread is None:
+        venue_spread = _venue_spread_bps(symbol)          # the measured median, still Strike's
     return _json_safe({
         "symbol": symbol, "engine": True,
         "feed": snap is not None,
-        "price": float(snap.price) if snap else v_last,
-        "mark_price": float(snap.mark_price) if snap else v_mark,
-        "index_price": float(snap.index_price) if snap else v_index,
+        # the venue's mark is the number Strike's own header leads with, so ours leads with it too;
+        # its last print is the fallback, and for a market absent from the ticker (COIN-USD) the mark
+        # is all there is — without it the panel showed "---" on a market that trades (2026-09-04)
+        "price": v_mark or v_last or (float(snap.price) if snap else None),
+        "mark_price": v_mark if v_mark is not None else (float(snap.mark_price) if snap else None),
+        "index_price": v_index if v_index is not None else (float(snap.index_price) if snap else None),
         "funding_rate": _market_funding_rate(engine, symbol, snap),
         "funding_countdown_sec": _funding_countdown_sec(time.time(), _funding_interval(engine)),
-        "open_interest": float(snap.open_interest) if snap else await _venue_open_interest(symbol),
-        "spread_bps": float(ob.spread_bps) if ob else _venue_spread_bps(symbol),
-        "best_bid": ob.best_bid if ob else None, "best_ask": ob.best_ask if ob else None,
+        "open_interest": v_oi if v_oi is not None else (float(snap.open_interest) if snap else None),
+        "spread_bps": venue_spread,
+        "best_bid": (v_depth or {}).get("best_bid"), "best_ask": (v_depth or {}).get("best_ask"),
+        # what the reference feed says, kept apart and labelled as such wherever the UI shows it
+        "feed_price": float(snap.price) if snap else None,
+        "feed_spread_bps": float(ob.spread_bps) if ob else None,
+        "feed_age_sec": round(engine.market_data.get_data_age(symbol), 3) if snap else None,
         # the venue's 24 h block when it answered, otherwise whatever the engine had (possibly empty)
-        **(stats if snap else (v_stats or stats)),
+        **(v_stats or stats),
         "regime": rs.get("regime", "UNKNOWN"), "regime_since": rs.get("confirmed_since", 0.0),
         "regime_candidate": rs.get("candidate", ""), "regime_timeframe_min": rs.get("timeframe_min", 1),
-        # age of whatever actually fed this row; None when nothing has, rather than epoch seconds
-        "data_age_sec": (round(engine.market_data.get_data_age(symbol), 3) if snap
-                         else (round(time.time() - float(md["ts"]), 1) if md.get("ts") else None)),
+        # age of what this header is actually showing — the venue quote — not of the reference feed
+        "data_age_sec": round(time.time() - float(md["ts"]), 1) if md.get("ts") else None,
         "symbol_config": _symbol_config_view(engine, symbol),
         "venue_filters": md["filters"].get(symbol.upper()),
     })
 
 
-_VENUE_MD: dict = {"ts": 0.0, "premium": {}, "ticker": {}, "filters": {}}
-VENUE_MD_TTL_SEC = 20.0
+_VENUE_MD: dict = {"ts": 0.0, "ts_tick": 0.0, "ts_info": 0.0,
+                   "premium": {}, "ticker": {}, "filters": {}, "depth": {}}
+# The mark moves every second and the operator reads this header beside the venue's own screen, so
+# the premium index is refreshed on roughly the venue's cadence. The 24 h block moves slowly and the
+# order filters change about never, so they get their own, far longer, TTLs instead of dragging two
+# extra requests along on every refresh (2026-09-04).
+VENUE_MD_TTL_SEC = 5.0
+VENUE_TICKER_TTL_SEC = 20.0
+VENUE_INFO_TTL_SEC = 900.0
+VENUE_DEPTH_TTL_SEC = 4.0
 STRIKE_PRICE_BASE = os.getenv("BOTSTRIKE_STRIKE_PRICE", "https://api.strikefinance.org/price/v2")
 
 
-async def _fetch_venue_market_data() -> dict:
+async def _fetch_venue_market_data(parts: tuple = ("premium", "ticker", "filters")) -> dict:
     """Mark, index, 24 h stats and the venue's own order filters for EVERY market it lists.
 
     The terminal only streams four symbols, so picking any other market showed a panel of "---" even
     though the book holds four of them and the venue publishes all of it publicly (Edgar, 2026-09-04).
-    Patched in tests. Cached for VENUE_MD_TTL_SEC.
+    Patched in tests. Each part is cached on its own TTL; `parts` says which to actually go and get.
     """
     import httpx
-    out = {"premium": {}, "ticker": {}, "filters": {}}
+    out = {}
     async with httpx.AsyncClient(timeout=15.0, headers={"User-Agent": "botstrike/1.0"}) as c:
+        async def _skip():
+            return None
         prem, tick, info = await asyncio.gather(
-            c.get(f"{STRIKE_PRICE_BASE}/premiumIndex"),
-            c.get(f"{STRIKE_PRICE_BASE}/ticker/24hr"),
-            c.get(f"{STRIKE_PRICE_BASE}/exchangeInfo"),
+            c.get(f"{STRIKE_PRICE_BASE}/premiumIndex") if "premium" in parts else _skip(),
+            c.get(f"{STRIKE_PRICE_BASE}/ticker/24hr") if "ticker" in parts else _skip(),
+            c.get(f"{STRIKE_PRICE_BASE}/exchangeInfo") if "filters" in parts else _skip(),
             return_exceptions=True)
+    for key in parts:
+        out[key] = {}
     for resp, key in ((prem, "premium"), (tick, "ticker")):
-        if isinstance(resp, Exception) or resp.status_code != 200:
+        if resp is None or isinstance(resp, Exception) or resp.status_code != 200:
             continue
         for row in resp.json():
             sym = str(row.get("symbol", "")).upper()
             if sym:
                 out[key][sym] = row
-    if not isinstance(info, Exception) and info.status_code == 200:
+    if info is not None and not isinstance(info, Exception) and info.status_code == 200:
         for sm in (info.json().get("symbols") or []):
             sym = str(sm.get("symbol", "")).upper()
             filt = {f.get("filterType"): f for f in (sm.get("filters") or []) if isinstance(f, dict)}
@@ -2207,7 +2246,13 @@ async def _venue_open_interest(symbol: str):
         if not rows:
             return None
         last = dict(zip(cols, rows[-1]))
-        val = _num(last.get("open_interest") or last.get("openInterest") or last.get("value"))
+        # `a or b` treats a genuine zero as absent, and four of the venue's markets really do carry
+        # no open interest — they showed "---" as if the venue had not answered (audit 2026-09-04).
+        val = None
+        for key in ("open_interest", "openInterest", "value", "oi"):
+            if key in last:
+                val = _num(last[key])
+                break
     except Exception as e:  # noqa: BLE001
         logger.debug("venue_open_interest_error", symbol=symbol, error=str(e)[:120])
         val = None
@@ -2215,18 +2260,97 @@ async def _venue_open_interest(symbol: str):
     return val
 
 
+def _md_lock() -> "asyncio.Lock":
+    """One refresh at a time. The terminal fires several market requests per second (measured on the
+    CT), and without this every one of them that arrived on an expired TTL would open its own
+    connection to the venue — a stampede that gets slower the busier the screen is."""
+    lock = _VENUE_MD.get("lock")
+    if lock is None:
+        lock = _VENUE_MD["lock"] = asyncio.Lock()
+    return lock
+
+
+async def _venue_open_interest_loop():
+    """Keep every market's open interest warm, so the picker shows the venue's own figure.
+
+    Open interest has no bulk endpoint — it is one stats call per market — so a request handler can
+    neither afford 31 of them nor serve "---" forever. One sweep every five minutes costs 0.1 req/s
+    and makes the column true for all 31 markets instead of Binance's for four (2026-09-04).
+    """
+    while True:
+        try:
+            md = await _venue_market_data()
+            syms = sorted(md["premium"]) or sorted(getattr(state.engine.settings, "symbol_names", []) or [])
+            sem = asyncio.Semaphore(6)
+
+            async def one(sym):
+                async with sem:
+                    await _venue_open_interest(sym)
+
+            await asyncio.gather(*(one(s) for s in syms), return_exceptions=True)
+        except Exception as e:  # noqa: BLE001 - a display figure must never kill the loop
+            logger.debug("venue_oi_loop_error", error=str(e)[:160])
+        await asyncio.sleep(270)     # inside the 300 s entry TTL, so a sweep always refreshes
+
+
 async def _venue_market_data() -> dict:
+    """The venue's own view of every market, each part refreshed on the cadence it deserves."""
     now = time.time()
-    if now - float(_VENUE_MD["ts"]) < VENUE_MD_TTL_SEC and _VENUE_MD["premium"]:
+    parts = []
+    if now - float(_VENUE_MD["ts"]) >= VENUE_MD_TTL_SEC or not _VENUE_MD["premium"]:
+        parts.append("premium")
+    if now - float(_VENUE_MD.get("ts_tick") or 0.0) >= VENUE_TICKER_TTL_SEC or not _VENUE_MD["ticker"]:
+        parts.append("ticker")
+    if now - float(_VENUE_MD.get("ts_info") or 0.0) >= VENUE_INFO_TTL_SEC or not _VENUE_MD["filters"]:
+        parts.append("filters")
+    if not parts:
         return _VENUE_MD
-    try:
-        fresh = await _fetch_venue_market_data()
-        if fresh["premium"] or fresh["ticker"]:
-            _VENUE_MD.update(fresh)
-            _VENUE_MD["ts"] = now
-    except Exception as e:  # noqa: BLE001 — a stale cache beats an empty panel
-        logger.debug("venue_market_data_error", error=str(e))
+    async with _md_lock():
+        now = time.time()                           # whoever held the lock may have just refreshed
+        parts = [p for p, stamp, ttl in (("premium", "ts", VENUE_MD_TTL_SEC),
+                                         ("ticker", "ts_tick", VENUE_TICKER_TTL_SEC),
+                                         ("filters", "ts_info", VENUE_INFO_TTL_SEC))
+                 if p in parts and (now - float(_VENUE_MD.get(stamp) or 0.0) >= ttl or not _VENUE_MD[p])]
+        if not parts:
+            return _VENUE_MD
+        try:
+            fresh = await _fetch_venue_market_data(tuple(parts))
+            for key, stamp in (("premium", "ts"), ("ticker", "ts_tick"), ("filters", "ts_info")):
+                if fresh.get(key):                  # a stale cache beats an empty panel
+                    _VENUE_MD[key] = fresh[key]
+                    _VENUE_MD[stamp] = now
+        except Exception as e:  # noqa: BLE001 — a stale cache beats an empty panel
+            logger.debug("venue_market_data_error", error=str(e))
     return _VENUE_MD
+
+
+async def _venue_depth(symbol: str):
+    """Top of the VENUE's book, which is the book an order would actually cross.
+
+    The terminal streams Binance, so the header was quoting Binance's spread on a Strike market:
+    0.012 bps for BTC where Strike's own screen says 0.001 % (0.09 bps), and 4.5 bps for ADA where
+    Strike's book is 6.3 wide (audit 2026-09-04). Half a spread is what a market order pays, so this
+    is not cosmetic. One symbol per call, cached briefly.
+    """
+    sym = symbol.upper()
+    cached = _VENUE_MD.setdefault("depth", {}).get(sym)
+    if cached and time.time() - cached[0] < VENUE_DEPTH_TTL_SEC:
+        return cached[1]
+    import httpx
+    out = None
+    try:
+        async with httpx.AsyncClient(timeout=8.0, headers={"User-Agent": "botstrike/1.0"}) as c:
+            r = await c.get(f"{STRIKE_PRICE_BASE}/depth", params={"symbol": sym, "limit": 5})
+            r.raise_for_status()
+            book = r.json()
+        bid, ask = _num((book.get("bids") or [[None]])[0][0]), _num((book.get("asks") or [[None]])[0][0])
+        if bid and ask and ask > 0 and bid > 0:
+            mid = (bid + ask) / 2.0
+            out = {"best_bid": bid, "best_ask": ask, "spread_bps": round((ask - bid) / mid * 1e4, 4)}
+    except Exception as e:  # noqa: BLE001 - the measured median is the fallback
+        logger.debug("venue_depth_error", symbol=sym, error=str(e)[:120])
+    _VENUE_MD["depth"][sym] = (time.time(), out)
+    return out
 
 
 def _market_slippage_bps(engine, symbol: str) -> float:
@@ -2238,18 +2362,30 @@ def _market_slippage_bps(engine, symbol: str) -> float:
 
 
 def _strategies_on(engine, symbol: str, sc=None) -> list:
-    """Strategies configured for this market, plus the one that actually holds it.
+    """Strategies that would actually trade this market — never one the product has retired.
 
     The panel listed Fibonacci and Divergence — both disabled — for a market whose open position
-    belongs to TREND_DAILY, which was missing entirely (audit 2026-09-03).
+    belongs to TREND_DAILY, which was missing entirely (audit 2026-09-03). It then kept advertising
+    MEAN_REVERSION and DIVERGENCE on ETH and ADA and FIBONACCI_RETRACEMENT on BTC after all three
+    were retired with evidence (audit 2026-09-04): a per-symbol config row outlives the strategy it
+    names, so the list is filtered against what the product still runs, not against the config file.
+    Membership comes from the trend UNIVERSE, not only from today's open positions — a market the
+    daily run rebalances is traded by TREND_DAILY whether or not it happens to be flat right now.
     """
-    out = [s for s in str(getattr(sc, "strategies", "") if sc is not None else "").split(",") if s]
+    from core.types import RETIRED_STRATEGIES
+    out = [s for s in str(getattr(sc, "strategies", "") if sc is not None else "").split(",")
+           if s and s not in RETIRED_STRATEGIES]
     try:
-        for row in (getattr(engine, "trend_engine", None).status().get("positions") or []):
-            if row.get("ui_symbol") == symbol or row.get("symbol") == symbol:
-                if "TREND_DAILY" not in out:
-                    out.insert(0, "TREND_DAILY")
-                break
+        status = getattr(engine, "trend_engine", None).status()
+        want = {symbol.upper()}
+        universe = set()
+        for u in (status.get("universe") or []):
+            u = str(u).upper()
+            universe.add(u if "-" in u else (u[:-4] + "-USD" if u.endswith("USDT") else u))
+        held = {str(r.get("ui_symbol") or r.get("symbol") or "").upper()
+                for r in (status.get("positions") or [])}
+        if (universe | held) & want and "TREND_DAILY" not in out:
+            out.insert(0, "TREND_DAILY")
     except Exception:  # noqa: BLE001 - a label must never break the market endpoint
         pass
     return out
@@ -2300,7 +2436,10 @@ def _symbol_config_view(engine, symbol: str) -> dict:
         try:
             t = engine.settings.trading
             filt = (_VENUE_MD["filters"] or {}).get(symbol.upper()) or {}
-            return {"leverage": 1, "max_position_usd": 0.0,
+            # A market with no per-symbol row has NO fixed cap and NO fixed leverage: the daily run
+            # sizes it by volatility up to trend_leverage_cap. Reporting 0.0 and 1 printed "$0" and
+            # "1x" on gold and the S&P as if they were configured that way (audit 2026-09-04).
+            return {"leverage": float(getattr(t, "trend_leverage_cap", 2.0)), "max_position_usd": None,
                     "min_notional_usd": filt.get("min_notional") or float(t.trend_min_order_usd),
                     "tick_size": filt.get("tick_size"), "step_size": filt.get("step_size"),
                     "strategies": _strategies_on(engine, symbol, None),

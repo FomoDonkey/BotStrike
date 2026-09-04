@@ -365,9 +365,112 @@ def test_a_market_without_an_intraday_feed_still_opens_a_real_panel(st, monkeypa
     m = TestClient(bridge.app).get("/api/market/XAU-USD").json()
     assert m["feed"] is False                       # honest about where this came from
     assert m["mark_price"] == pytest.approx(4526.9) and m["index_price"] == pytest.approx(4527.4)
-    assert m["price"] == pytest.approx(4526.5)
+    # The venue's MARK leads the header, which is the number the venue's own screen leads with;
+    # its last print (4526.5) is only the fallback. On a thin market the two are far apart --
+    # CRCL last traded 12 % away from its mark -- and the mark is the honest one (2026-09-04).
+    assert m["price"] == pytest.approx(4526.9)
     assert m["change_24h_pct"] == pytest.approx(0.0125) and m["high_24h"] == pytest.approx(4550.0)
     assert m["window_min"] == 1440 and m["source"] == "venue"
     assert m["spread_bps"] is not None              # from the measured spread, not an empty book
     assert m["venue_filters"]["min_notional"] == 10.0 and m["venue_filters"]["step_size"] == 0.0001
     assert m["symbol_config"]["min_notional_usd"] == 10.0    # the venue's minimum, not a hard-coded 20
+
+
+def test_the_header_is_the_venue_s_market_never_the_reference_feed_s(st, monkeypatch):
+    """The socket streams Binance. Reading the header off it printed Binance's market on a Strike
+    screen: 24 h volume of 199,026 BTC where Strike's own screen said 23.89, open interest of
+    113,100 BTC where Strike had 3.78, a 0.012 bps spread where Strike's book was 0.09 wide. Every
+    one of those made a thin venue look deep, which is how a size gets set wrong (Edgar, 2026-09-04).
+    """
+    async def _venue():
+        return {"ts": 1_788_000_000.0, "ts_tick": 1_788_000_000.0, "ts_info": 1_788_000_000.0,
+                "premium": {"BTC-USD": {"markPrice": "80857.7", "indexPrice": "80840.1",
+                                        "fundingRate": "0.0000248"}},
+                "ticker": {"BTC-USD": {"lastPrice": "80797.7", "priceChangePercent": "3.7175",
+                                       "highPrice": "82280.8", "lowPrice": "77444.2",
+                                       "volume": "23.8595", "quoteVolume": "1906326.58", "count": 0}},
+                "filters": {}, "depth": {}, "oi": {}}
+
+    async def _depth(_s):
+        return {"best_bid": 80780.4, "best_ask": 80781.1, "spread_bps": 0.0866}
+
+    async def _oi(_s):
+        return 3.78205
+
+    monkeypatch.setattr(bridge, "_venue_market_data", _venue)
+    monkeypatch.setattr(bridge, "_venue_depth", _depth)
+    monkeypatch.setattr(bridge, "_venue_open_interest", _oi)
+
+    class _Feed:                       # what Binance is saying at the same moment
+        @staticmethod
+        def get_snapshot(_s):
+            return SimpleNamespace(price=80833.85, mark_price=80833.0, index_price=80832.0,
+                                   funding_rate=0.0001, open_interest=113_100.0,
+                                   orderbook=SimpleNamespace(spread_bps=0.0124, best_bid=80728.7,
+                                                             best_ask=80728.8))
+
+        @staticmethod
+        def get_24h_stats(_s):
+            return {"change_24h_pct": 0.03942, "high_24h": 83000.0, "low_24h": 77000.0,
+                    "volume_24h_base": 199_026.06, "volume_24h_usd": 16_013_707_676.0,
+                    "window_min": 918, "source": "feed"}
+
+        @staticmethod
+        def get_data_age(_s):
+            return 0.4
+
+    eng = SimpleNamespace(settings=Settings(), market_data=_Feed(), trend_engine=None,
+                          regime_detector=SimpleNamespace(status=lambda s_: {}), _venue_funding={})
+    st.engine, st.running = eng, True
+    m = TestClient(bridge.app).get("/api/market/BTC-USD").json()
+
+    assert m["feed"] is True                                     # the stream is there
+    assert m["price"] == pytest.approx(80857.7)                  # ...and the header is still Strike's
+    assert m["mark_price"] == pytest.approx(80857.7)
+    assert m["volume_24h_base"] == pytest.approx(23.8595)        # not 199,026
+    assert m["open_interest"] == pytest.approx(3.78205)          # not 113,100
+    assert m["spread_bps"] == pytest.approx(0.0866)              # not 0.0124
+    assert m["change_24h_pct"] == pytest.approx(0.037175)        # not 0.03942
+    assert m["window_min"] == 1440 and m["source"] == "venue"
+    # the feed is not thrown away -- it is kept apart, under its own name
+    assert m["feed_price"] == pytest.approx(80833.85)
+    assert m["feed_spread_bps"] == pytest.approx(0.0124)
+
+
+def test_a_market_the_venue_omits_from_its_ticker_still_shows_a_price(st, monkeypatch):
+    """COIN-USD is in premiumIndex but not in ticker/24hr, so the panel had no last print and showed
+    "---" on a market that trades. The mark is what is left, and it is enough (2026-09-04)."""
+    async def _venue():
+        return {"ts": 1_788_000_000.0, "ts_tick": 1_788_000_000.0, "ts_info": 1_788_000_000.0,
+                "premium": {"COIN-USD": {"markPrice": "190.6856", "indexPrice": "190.5",
+                                         "fundingRate": "0"}},
+                "ticker": {}, "filters": {}, "depth": {}, "oi": {}}
+
+    monkeypatch.setattr(bridge, "_venue_market_data", _venue)
+    eng = SimpleNamespace(settings=Settings(), trend_engine=None, _venue_funding={},
+                          market_data=SimpleNamespace(get_snapshot=lambda s_: None,
+                                                      get_24h_stats=lambda s_: {},
+                                                      get_data_age=lambda s_: float("inf")),
+                          regime_detector=SimpleNamespace(status=lambda s_: {}))
+    st.engine, st.running = eng, True
+    m = TestClient(bridge.app).get("/api/market/COIN-USD").json()
+    assert m["price"] == pytest.approx(190.6856) and m["mark_price"] == pytest.approx(190.6856)
+
+
+def test_a_retired_strategy_is_never_advertised_on_a_market(st):
+    """The panel kept listing MEAN_REVERSION and DIVERGENCE on ETH and ADA and
+    FIBONACCI_RETRACEMENT on BTC after all three were retired with evidence: a per-symbol config row
+    outlives the strategy it names, and the panel was reading the row (2026-09-04)."""
+    from core.types import RETIRED_STRATEGIES
+
+    s = Settings()
+    eng = SimpleNamespace(settings=s, trend_engine=None)
+    for sym in ("BTC-USD", "ETH-USD", "ADA-USD", "SOL-USD"):
+        listed = bridge._strategies_on(eng, sym, s.get_symbol_config(sym))
+        assert not (set(listed) & set(RETIRED_STRATEGIES)), f"{sym} advertises a retired strategy"
+
+    # a market the daily run rebalances is TREND_DAILY's, whether or not it is holding it today
+    eng.trend_engine = SimpleNamespace(status=lambda: {"universe": ["BTCUSDT", "XAU-USD"], "positions": []})
+    assert bridge._strategies_on(eng, "XAU-USD", None) == ["TREND_DAILY"]
+    assert bridge._strategies_on(eng, "BTC-USD", None) == ["TREND_DAILY"]
+    assert bridge._strategies_on(eng, "NVDA-USD", None) == []

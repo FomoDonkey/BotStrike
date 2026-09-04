@@ -137,7 +137,7 @@ function OrderBook({ symbol }: { symbol: string }) {
               {mid ? formatPrice(mid) : "---"} <span className="text-[13px]">{up ? "↑" : "↓"}</span>
             </span>
             <span className="text-[11.5px] font-medium text-text-2 num text-right leading-tight">
-              <Hint title={HINTS.spread}>Spread</Hint>: <span className="text-text">{spreadAbs !== null ? spreadAbs.toFixed(spreadAbs >= 1 ? 2 : 3) : "---"}</span>
+              <Hint title={"The ladder and this spread are the PRICE FEED's book (Binance), which is what the strategies read — not the venue's. What an order on Strike actually pays is the Spread in the market header and the Details tab."}>Spread (feed)</Hint>: <span className="text-text">{spreadAbs !== null ? spreadAbs.toFixed(spreadAbs >= 1 ? 2 : 3) : "---"}</span>
               {spreadBps !== null && <span> / <span className="text-text">{spreadBps < 1 ? spreadBps.toFixed(3) : spreadBps.toFixed(2)} bps</span></span>}
             </span>
           </div>

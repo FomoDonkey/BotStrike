@@ -601,9 +601,14 @@ export interface MarketInfoResponse {
   /** minutes of 1m bars behind the 24h block (< 1440 right after a start) */
   window_min?: number;
   open_interest?: number | null;
+  /** the VENUE's live spread (top of Strike's book), not the reference feed's */
   spread_bps?: number | null;
   best_bid?: number | null;
   best_ask?: number | null;
+  /** the reference feed (Binance) kept apart, so nothing shows its numbers as the venue's */
+  feed_price?: number | null;
+  feed_spread_bps?: number | null;
+  feed_age_sec?: number | null;
   regime?: string;
   /** epoch seconds */
   regime_since?: number;
@@ -617,7 +622,8 @@ export interface MarketInfoResponse {
 /** `/api/market/{sym}.symbol_config` (spec §5.6) */
 export interface SymbolConfigInfo {
   leverage: number;
-  max_position_usd: number;
+  /** null when the market has no per-symbol cap: the daily run sizes it by volatility */
+  max_position_usd: number | null;
   min_notional_usd: number;
   strategies: string[];
   taker_fee: number;
@@ -951,6 +957,11 @@ export interface VenueMarket {
   funding_rate: number | null;
   annualized_pct: number | null;
   annualized_90d?: number | null;
+  /** the VENUE's own figures, so no column of the picker is quietly the reference feed's */
+  price?: number | null;
+  change_24h_pct?: number | null;
+  volume_24h_usd?: number | null;
+  open_interest?: number | null;
 }
 
 export interface MarketsResponse {

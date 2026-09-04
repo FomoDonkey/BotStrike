@@ -170,7 +170,11 @@ def test_portfolio_activity_ops_csv_endpoints(st, tmp_path, monkeypatch):
     # symbol_config on /api/market
     m = client.get("/api/market/ETH-USD").json()
     assert m["symbol_config"]["leverage"] >= 1 and m["symbol_config"]["taker_fee"] == 0.0004
-    assert "TREND_DAILY" in m["symbol_config"]["strategies"] or m["symbol_config"]["strategies"]
+    # ETH-USD's config row still names MEAN_REVERSION and DIVERGENCE, both retired with evidence.
+    # A retired strategy is never advertised, so this list is empty rather than misleading -- the
+    # panel says "not in the trend universe" instead of naming something that cannot trade.
+    from core.types import RETIRED_STRATEGIES
+    assert not (set(m["symbol_config"]["strategies"]) & set(RETIRED_STRATEGIES))
 
 
 def test_funding_history_endpoint_parses_and_caches(st, monkeypatch):
@@ -285,6 +289,7 @@ def test_markets_endpoint_lists_the_whole_venue_not_only_the_feed(st, monkeypatc
     r = TestClient(bridge.app).get("/api/markets").json()
 
     by = {m["symbol"]: m for m in r["markets"]}
+    # the venue layer is stubbed out by conftest, so this lists exactly what the engine knows
     assert set(by) == {"BTC-USD", "ETH-USD", "XAU-USD", "ZEC-USD", "DOGE-USD"}
     assert by["BTC-USD"]["feed"] is True and by["BTC-USD"]["pool"] is True
     assert by["XAU-USD"]["held"] is True and by["XAU-USD"]["feed"] is False   # daily book only
