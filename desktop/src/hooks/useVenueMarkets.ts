@@ -2,7 +2,10 @@ import { useMemo } from "react";
 import { api, type VenueMarket } from "@/lib/api";
 import { useEndpoint } from "./useEndpoint";
 
-const VENUE_POLL_MS = 30_000;
+// The picker sits beside the market header, which refreshes every 4 s. At 30 s the two printed
+// visibly different marks for the same market at the same instant (2026-09-04). This endpoint is
+// served from the bridge's own cache, so polling it faster costs the venue nothing.
+const VENUE_POLL_MS = 10_000;
 
 /**
  * Every market as the VENUE describes it, keyed by symbol.

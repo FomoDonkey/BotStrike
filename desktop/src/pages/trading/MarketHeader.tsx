@@ -101,9 +101,12 @@ export function MarketHeader({ market: m, onSymbolChange }: MarketHeaderProps) {
         <Stat label={`${m.winLabel} Change`} hint={winHint}><SignedPct value={m.change} /></Stat>
         <Stat label={`${m.winLabel} High`} hint={winHint}>{m.high ? formatPrice(m.high) : "---"}</Stat>
         <Stat label={`${m.winLabel} Low`} hint={winHint}>{m.low ? formatPrice(m.low) : "---"}</Stat>
-        <Stat label={`${m.winLabel} Vol`} hint={HINTS.vol24}>
-          {m.volumeBase !== null && m.volumeBase > 0 && <span>{formatCompact(m.volumeBase)} {SYMBOL_LABELS[m.symbol] ?? ""} <span className="text-text-2 font-medium">·</span> </span>}
-          {formatCompactUSD(m.volumeUsd)}
+        <Stat label={`${m.winLabel} Vol`} hint={m.statsMissing ? winHint : HINTS.vol24}>
+          {/* "$0" when the venue reports no trades, "---" only when it reports nothing at all. */}
+          {m.statsMissing ? "---" : <>
+            {m.volumeBase !== null && m.volumeBase > 0 && <span>{formatCompact(m.volumeBase)} {SYMBOL_LABELS[m.symbol] ?? m.symbol.split("-")[0]} <span className="text-text-2 font-medium">·</span> </span>}
+            {formatCompactUSD(m.volumeUsd)}
+          </>}
         </Stat>
         {/* Zero is a fact on four of the venue's markets, not a value we failed to fetch. */}
         <Stat label="Open Interest" hint={HINTS.oi}>

@@ -97,7 +97,10 @@ export function formatSignedUSD(value: number, decimals = 2): string {
 
 /** Compact USD for volumes / OI: 12_595_740_564 → "$12.60B". */
 export function formatCompactUSD(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "---";
+  if (!Number.isFinite(value) || value < 0) return "---";
+  // Zero is a value. Markets on the venue really do go a whole day without a trade, and printing
+  // "---" there says "we could not fetch it" about a number we fetched successfully (2026-09-04).
+  if (value === 0) return "$0";
   const abs = Math.abs(value);
   if (abs >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
   if (abs >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;

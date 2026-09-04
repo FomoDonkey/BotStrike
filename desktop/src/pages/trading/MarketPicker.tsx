@@ -136,7 +136,7 @@ export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerPr
                   <td className="num">{p > 0 ? formatPrice(p) : "---"}</td>
                   <td><SignedPct value={typeof v?.change_24h_pct === "number" ? v.change_24h_pct : changes[s]} /></td>
                   <td className="num">{typeof v?.volume_24h_usd === "number" ? formatCompactUSD(v.volume_24h_usd) : "---"}</td>
-                  <td className="num">{typeof v?.open_interest === "number" ? `${formatCompact(v.open_interest)} ${SYMBOL_LABELS[s] ?? ""}` : "---"}</td>
+                  <td className="num">{typeof v?.open_interest === "number" ? `${formatCompact(v.open_interest)} ${SYMBOL_LABELS[s] ?? s.split("-")[0]}` : "---"}</td>
                   {(() => {
                     const rate = f;
                     return (
