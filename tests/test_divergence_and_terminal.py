@@ -299,8 +299,16 @@ def test_candidate_expires_after_trigger_window():
     assert evaluate(l2 * 1.02, last_ts + 3600.0 * (window + 2)) == []
 
 
-def test_market_endpoint_is_json_safe_before_first_tick(st):
-    """Startup: no snapshot yet, data age = inf, 24h stats NaN → 200 with nulls, never a 500."""
+def test_market_endpoint_is_json_safe_before_first_tick(st, monkeypatch):
+    """Startup: no snapshot yet, data age = inf, 24h stats NaN -> 200 with nulls, never a 500.
+
+    The venue fallback is silenced here on purpose: this test is about the pre-tick state, and a test
+    that reaches the network is a test that fails on a train (2026-09-04).
+    """
+    async def _no_venue():
+        return {"ts": 0.0, "premium": {}, "ticker": {}, "filters": {}}
+
+    monkeypatch.setattr(bridge, "_venue_market_data", _no_venue)
     class _NoData:
         def get_snapshot(self, symbol):
             return None
@@ -329,3 +337,37 @@ def test_market_endpoint_is_json_safe_before_first_tick(st):
     assert body["data_age_sec"] is None and body["change_24h_pct"] is None and body["high_24h"] is None
     assert client.get("/api/account").status_code == 200
     assert client.get("/api/positions").json() == {"positions": []}
+
+
+def test_a_market_without_an_intraday_feed_still_opens_a_real_panel(st, monkeypatch):
+    """Only four symbols are streamed, so picking any of the venue's other markets — including the
+    four the book actually holds — showed a column of '---'. The venue publishes all of it."""
+    async def _venue():
+        return {"ts": 1_788_000_000.0,
+                "premium": {"XAU-USD": {"symbol": "XAU-USD", "markPrice": "4526.9", "indexPrice": "4527.4",
+                                        "fundingRate": "0.0000125"}},
+                "ticker": {"XAU-USD": {"symbol": "XAU-USD", "lastPrice": "4526.5", "highPrice": "4550.0",
+                                       "lowPrice": "4500.0", "priceChangePercent": "1.25",
+                                       "volume": "1234.5", "quoteVolume": "5588000", "count": 812}},
+                "filters": {"XAU-USD": {"tick_size": 0.01, "step_size": 0.0001, "min_qty": 0.0001,
+                                        "min_notional": 10.0, "status": "TRADING"}}}
+
+    monkeypatch.setattr(bridge, "_venue_market_data", _venue)
+    class _NoFeed:
+        get_snapshot = staticmethod(lambda s_: None)
+        get_24h_stats = staticmethod(lambda s_: {})
+        get_data_age = staticmethod(lambda s_: float("inf"))
+    eng = SimpleNamespace(settings=Settings(), market_data=_NoFeed(),
+                          regime_detector=SimpleNamespace(status=lambda s_: {}),
+                          trend_engine=None, _venue_funding={})
+    st.engine, st.running = eng, True
+
+    m = TestClient(bridge.app).get("/api/market/XAU-USD").json()
+    assert m["feed"] is False                       # honest about where this came from
+    assert m["mark_price"] == pytest.approx(4526.9) and m["index_price"] == pytest.approx(4527.4)
+    assert m["price"] == pytest.approx(4526.5)
+    assert m["change_24h_pct"] == pytest.approx(0.0125) and m["high_24h"] == pytest.approx(4550.0)
+    assert m["window_min"] == 1440 and m["source"] == "venue"
+    assert m["spread_bps"] is not None              # from the measured spread, not an empty book
+    assert m["venue_filters"]["min_notional"] == 10.0 and m["venue_filters"]["step_size"] == 0.0001
+    assert m["symbol_config"]["min_notional_usd"] == 10.0    # the venue's minimum, not a hard-coded 20

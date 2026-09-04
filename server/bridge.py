@@ -2095,22 +2095,111 @@ async def get_market(symbol: str):
     det = engine.regime_detector
     rs = det.status(symbol) if hasattr(det, "status") else {}
     ob = snap.orderbook if snap else None
+    # Everything the intraday feed does not cover comes from the venue's own public data, so any of
+    # its markets opens a real panel instead of a column of "---" (2026-09-04).
+    # Only when the intraday feed does not cover this market: a streamed symbol needs no network call
+    # here, and the request path stays as fast as it was.
+    md = await _venue_market_data() if snap is None else _VENUE_MD
+    prem = md["premium"].get(symbol.upper(), {})
+    tick = md["ticker"].get(symbol.upper(), {})
+    v_mark, v_index = _num(prem.get("markPrice")), _num(prem.get("indexPrice"))
+    v_last = _num(tick.get("lastPrice"))
+    v_stats = {}
+    if tick:
+        v_stats = {"change_24h_pct": (_num(tick.get("priceChangePercent")) or 0.0) / 100.0,
+                   "high_24h": _num(tick.get("highPrice")), "low_24h": _num(tick.get("lowPrice")),
+                   "volume_24h": _num(tick.get("volume")), "quote_volume_24h": _num(tick.get("quoteVolume")),
+                   "trades_24h": tick.get("count"), "window_min": 1440, "source": "venue"}
     return _json_safe({
         "symbol": symbol, "engine": True,
-        "price": float(snap.price) if snap else None,
-        "mark_price": float(snap.mark_price) if snap else None,
-        "index_price": float(snap.index_price) if snap else None,
+        "feed": snap is not None,
+        "price": float(snap.price) if snap else v_last,
+        "mark_price": float(snap.mark_price) if snap else v_mark,
+        "index_price": float(snap.index_price) if snap else v_index,
         "funding_rate": _market_funding_rate(engine, symbol, snap),
         "funding_countdown_sec": _funding_countdown_sec(time.time(), _funding_interval(engine)),
         "open_interest": float(snap.open_interest) if snap else None,
-        "spread_bps": float(ob.spread_bps) if ob else None,
+        "spread_bps": float(ob.spread_bps) if ob else _venue_spread_bps(symbol),
         "best_bid": ob.best_bid if ob else None, "best_ask": ob.best_ask if ob else None,
-        **stats,
+        # the venue's 24 h block when it answered, otherwise whatever the engine had (possibly empty)
+        **(stats if snap else (v_stats or stats)),
         "regime": rs.get("regime", "UNKNOWN"), "regime_since": rs.get("confirmed_since", 0.0),
         "regime_candidate": rs.get("candidate", ""), "regime_timeframe_min": rs.get("timeframe_min", 1),
-        "data_age_sec": round(engine.market_data.get_data_age(symbol), 3),
+        # age of whatever actually fed this row; None when nothing has, rather than epoch seconds
+        "data_age_sec": (round(engine.market_data.get_data_age(symbol), 3) if snap
+                         else (round(time.time() - float(md["ts"]), 1) if md.get("ts") else None)),
         "symbol_config": _symbol_config_view(engine, symbol),
+        "venue_filters": md["filters"].get(symbol.upper()),
     })
+
+
+_VENUE_MD: dict = {"ts": 0.0, "premium": {}, "ticker": {}, "filters": {}}
+VENUE_MD_TTL_SEC = 20.0
+STRIKE_PRICE_BASE = os.getenv("BOTSTRIKE_STRIKE_PRICE", "https://api.strikefinance.org/price/v2")
+
+
+async def _fetch_venue_market_data() -> dict:
+    """Mark, index, 24 h stats and the venue's own order filters for EVERY market it lists.
+
+    The terminal only streams four symbols, so picking any other market showed a panel of "---" even
+    though the book holds four of them and the venue publishes all of it publicly (Edgar, 2026-09-04).
+    Patched in tests. Cached for VENUE_MD_TTL_SEC.
+    """
+    import httpx
+    out = {"premium": {}, "ticker": {}, "filters": {}}
+    async with httpx.AsyncClient(timeout=15.0, headers={"User-Agent": "botstrike/1.0"}) as c:
+        prem, tick, info = await asyncio.gather(
+            c.get(f"{STRIKE_PRICE_BASE}/premiumIndex"),
+            c.get(f"{STRIKE_PRICE_BASE}/ticker/24hr"),
+            c.get(f"{STRIKE_PRICE_BASE}/exchangeInfo"),
+            return_exceptions=True)
+    for resp, key in ((prem, "premium"), (tick, "ticker")):
+        if isinstance(resp, Exception) or resp.status_code != 200:
+            continue
+        for row in resp.json():
+            sym = str(row.get("symbol", "")).upper()
+            if sym:
+                out[key][sym] = row
+    if not isinstance(info, Exception) and info.status_code == 200:
+        for sm in (info.json().get("symbols") or []):
+            sym = str(sm.get("symbol", "")).upper()
+            filt = {f.get("filterType"): f for f in (sm.get("filters") or []) if isinstance(f, dict)}
+            out["filters"][sym] = {
+                "tick_size": _num(filt.get("PRICE_FILTER", {}).get("tickSize")),
+                "step_size": _num(filt.get("LOT_SIZE", {}).get("stepSize")),
+                "min_qty": _num(filt.get("LOT_SIZE", {}).get("minQty")),
+                "min_notional": _num((filt.get("MIN_NOTIONAL") or filt.get("NOTIONAL") or {}).get("notional")),
+                "status": sm.get("status"),
+            }
+    return out
+
+
+def _venue_spread_bps(symbol: str):
+    """The market's measured median spread, so a market with no live book still shows what it costs."""
+    from strategies.trend_daily import _venue_half_spread_bps
+    half = _venue_half_spread_bps(symbol)
+    return round(half * 2, 3) if half is not None else None
+
+
+def _num(x):
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _venue_market_data() -> dict:
+    now = time.time()
+    if now - float(_VENUE_MD["ts"]) < VENUE_MD_TTL_SEC and _VENUE_MD["premium"]:
+        return _VENUE_MD
+    try:
+        fresh = await _fetch_venue_market_data()
+        if fresh["premium"] or fresh["ticker"]:
+            _VENUE_MD.update(fresh)
+            _VENUE_MD["ts"] = now
+    except Exception as e:  # noqa: BLE001 — a stale cache beats an empty panel
+        logger.debug("venue_market_data_error", error=str(e))
+    return _VENUE_MD
 
 
 def _market_slippage_bps(engine, symbol: str) -> float:
@@ -2165,8 +2254,12 @@ def _symbol_config_view(engine, symbol: str) -> dict:
     try:
         sc = engine.settings.get_symbol_config(symbol)
         t = engine.settings.trading
+        filt = (_VENUE_MD["filters"] or {}).get(symbol.upper()) or {}
         return {"leverage": int(getattr(sc, "leverage", 1)), "max_position_usd": float(getattr(sc, "max_position_usd", 0.0)),
-                "min_notional_usd": 20.0, "strategies": _strategies_on(engine, symbol, sc),
+                # the venue's own minimum when we know it, not a hard-coded 20
+                "min_notional_usd": filt.get("min_notional") or 20.0,
+                "tick_size": filt.get("tick_size"), "step_size": filt.get("step_size"),
+                "strategies": _strategies_on(engine, symbol, sc),
                 # what THIS market's book actually costs to cross, not the global default
                 "slippage_bps": _market_slippage_bps(engine, symbol),
                 "taker_fee": float(getattr(t, "taker_fee", 0.0004)), "maker_fee": float(getattr(t, "maker_fee", 0.0002)),
@@ -2179,7 +2272,10 @@ def _symbol_config_view(engine, symbol: str) -> dict:
         # applies to them (2026-09-04).
         try:
             t = engine.settings.trading
-            return {"leverage": 1, "max_position_usd": 0.0, "min_notional_usd": float(t.trend_min_order_usd),
+            filt = (_VENUE_MD["filters"] or {}).get(symbol.upper()) or {}
+            return {"leverage": 1, "max_position_usd": 0.0,
+                    "min_notional_usd": filt.get("min_notional") or float(t.trend_min_order_usd),
+                    "tick_size": filt.get("tick_size"), "step_size": filt.get("step_size"),
                     "strategies": _strategies_on(engine, symbol, None),
                     "slippage_bps": _market_slippage_bps(engine, symbol),
                     "taker_fee": float(getattr(t, "taker_fee", 0.0004)),
