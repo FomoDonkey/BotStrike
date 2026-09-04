@@ -307,3 +307,40 @@ def test_the_engine_reports_a_short_trend_position_with_the_right_side(monkeypat
     assert rows["BTC-USD"]["side"] == "SELL" and rows["BTC-USD"]["size"] == 0.5   # magnitude + side
     assert rows["BTC-USD"]["notional"] == 500.0                                    # never negative
     assert rows["XAU-USD"]["side"] == "BUY"
+
+
+def test_the_book_is_valued_at_the_venue_mark_not_the_daily_source():
+    """A position is worth what the VENUE says it is worth.
+
+    Marked from the daily source, silver and gold sat 1.15 % above Strike's own mark: the gold
+    position read -$0.004 when against the venue it was -$0.64, and the book's unrealised PnL was
+    overstated by $0.78 on $419 (audit 2026-09-04, measured against premiumIndex). The daily bars
+    keep their job - the SIGNAL is computed from closing bars - but the valuation is the venue's.
+    """
+    import asyncio
+
+    import pandas as pd
+
+    from config.settings import Settings
+    from strategies.trend_daily import BookPosition, TrendDailyEngine
+
+    eng = TrendDailyEngine(Settings(), on_fill=lambda *_a, **_k: None,
+                           equity_provider=lambda: 1000.0)
+    eng.state.positions = {
+        "XAU-USD": BookPosition(symbol="XAU-USD", size=0.0125, entry_price=4526.88,
+                                weight=0.05, opened="2026-09-02", opened_ts=0.0, entry_fee_rate=0.0004, mark_price=4526.60),
+        "NOTONVENUE-USD": BookPosition(symbol="NOTONVENUE-USD", size=1.0, entry_price=10.0,
+                                       weight=0.01, opened="2026-09-02", opened_ts=0.0, entry_fee_rate=0.0004, mark_price=10.0),
+    }
+    eng.venue_marks = {"XAU-USD": 4475.812}          # what Strike says gold is worth right now
+    daily = {"NOTONVENUE-USD": pd.DataFrame({"close": [11.0]},
+                                            index=[pd.Timestamp("2026-09-03", tz="UTC")])}
+
+    asyncio.run(eng.mark_positions(daily))
+
+    gold = eng.state.positions["XAU-USD"]
+    assert gold.mark_price == pytest.approx(4475.812)          # the venue's, not 4526.60
+    assert gold.unrealized_pnl == pytest.approx((4475.812 - 4526.88) * 0.0125)
+    assert gold.unrealized_pnl < -0.6                          # the loss the old marking hid
+    # a market the venue does not quote still falls back to its last daily close
+    assert eng.state.positions["NOTONVENUE-USD"].mark_price == pytest.approx(11.0)

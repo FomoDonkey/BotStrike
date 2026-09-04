@@ -130,6 +130,7 @@ class BotStrike:
         # Perpetual funding accrual (paper): state survives restarts so a settlement is never
         # charged twice nor silently skipped (analytics/funding.py).
         self._venue_funding: dict = {}
+        self._venue_marks: dict = {}          # symbol -> the venue's mark price, same payload
         self._venue_funding_ts: float = 0.0
         self.funding = FundingAccrual.load(
             interval_hours=int(getattr(settings.trading, "funding_interval_hours", 1) or 1))
@@ -927,6 +928,15 @@ class BotStrike:
                 rows = _json.loads(r.read())
             self._venue_funding = {str(x.get("symbol", "")).upper(): float(x.get("fundingRate") or 0.0)
                                    for x in rows}
+            # The same payload carries the venue's MARK, and the book needs it: a position is worth
+            # what the venue says it is worth. Priced off the daily source instead, silver and gold
+            # sat 1.15 % above the venue and the gold position read -$0.004 when it was really -$0.64
+            # (audit 2026-09-04). Free — it is the response we already have in hand.
+            self._venue_marks = {str(x.get("symbol", "")).upper(): float(x.get("markPrice") or 0.0)
+                                 for x in rows if x.get("markPrice")}
+            te = getattr(self, "trend_engine", None)
+            if te is not None:
+                te.venue_marks = dict(self._venue_marks)
             self._venue_funding_ts = now
             logger.info("venue_funding_rates_loaded", markets=len(self._venue_funding))
         except Exception as e:  # noqa: BLE001 — missing rates simply mean no charge this period

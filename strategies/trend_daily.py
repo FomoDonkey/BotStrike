@@ -289,6 +289,9 @@ class TrendDailyEngine:
         self._running = False
         self._run_lock = asyncio.Lock()
         self.last_marks: Dict[str, float] = {}
+        # symbol -> the venue's mark, pushed in by the engine on each premiumIndex refresh; the book
+        # is valued from this, not from the daily source (see mark_positions)
+        self.venue_marks: Dict[str, float] = {}
         self._venue_vol: Dict[str, float] = {}
         self._venue_vol_day: str = ""
         # Edge-monitor kill: no entries; every target is 0 so the book is closed at the
@@ -692,20 +695,39 @@ class TrendDailyEngine:
 
     # ── marking / views ──
     async def mark_positions(self, data: Optional[Dict[str, pd.DataFrame]] = None) -> None:
+        """Value every open position at the VENUE's mark, falling back to the last daily close.
+
+        A position is worth what the venue says it is worth. Marked from the daily source instead,
+        silver and gold sat 1.15 % above Strike's own mark: the gold position read -$0.004 when
+        against the venue it was -$0.64, and the book's unrealised PnL was overstated by $0.78 on
+        $419 (audit 2026-09-04). The daily bars keep their job — the SIGNAL is computed from closing
+        bars and must be — but the valuation is the venue's.
+        """
         st = self.state
         if not st.positions:
             return
-        if data is None:
+        venue = {k: v for k, v in (getattr(self, "venue_marks", None) or {}).items() if v}
+
+        def _venue_mark(sym: str) -> Optional[float]:
+            return venue.get(to_ui_symbol(sym).upper()) or venue.get(str(sym).upper())
+
+        missing = [s for s in st.positions if _venue_mark(s) is None]
+        # only fetch daily bars for what the venue does not quote: on a book the venue covers in
+        # full this drops a network round trip from every pass of the loop
+        if data is None and missing:
             try:
-                data = await asyncio.to_thread(self.store.load, list(st.positions), self._today(), True, 1)
+                data = await asyncio.to_thread(self.store.load, missing, self._today(), True, 1)
             except Exception as e:
                 logger.debug("trend_mark_failed", error=str(e))
-                return
+                data = None
         for sym, pos in st.positions.items():
-            df = data.get(sym)
-            if df is None or not len(df):
-                continue
-            pos.mark_price = float(df["close"].iloc[-1])
+            mark = _venue_mark(sym)
+            if mark is None:
+                df = (data or {}).get(sym)
+                if df is None or not len(df):
+                    continue
+                mark = float(df["close"].iloc[-1])
+            pos.mark_price = float(mark)
             self.last_marks[sym] = pos.mark_price
 
     def exit_ladders(self) -> Dict[str, Dict[str, Any]]:
