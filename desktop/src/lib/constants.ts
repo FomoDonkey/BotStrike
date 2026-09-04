@@ -57,7 +57,10 @@ export const STRATEGY_DESCRIPTIONS: Record<string, string> = {
   ORDER_FLOW_MOMENTUM: "Rides order-flow imbalance bursts (archived).",
   TREND_FOLLOWING: "Intraday breakout following on 1m bars (archived).",
   MARKET_MAKING: "Two-sided quoting around the reservation price (archived).",
-  TREND_DAILY: "Daily Donchian ensemble on Binance spot: long the strongest trends, rebalanced at 00:05 UTC.",
+  // The two halves, in one line, because they are genuinely different venues: the SIGNAL is fitted
+  // on ten years of Binance and Yahoo daily bars (Strike lists 168 days), the POSITION lives on
+  // Strike. Saying only "on Binance spot" made a Strike terminal look mislabelled.
+  TREND_DAILY: "Daily Donchian ensemble: long the strongest trends, rebalanced at 00:05 UTC. Signal from Binance/Yahoo daily bars, positions on Strike.",
   DIVERGENCE: "RSI divergence between confirmed pivots, entered on the structure break with MACD confirmation.",
 };
 

@@ -1284,3 +1284,39 @@ funding rancio el 2026-09-03. Corolario nuevo: cuando la auditoria marque una di
 comprobar si es **skew de medicion** antes de tocar codigo. Cinco "fallos" de funding entre lista y
 panel resultaron ser 32 peticiones concurrentes cruzando el TTL de 5 s: leidos consecutivos, 6/6
 identicos.
+
+## Un feed que no es el venue es una mentira silenciosa (2026-09-04)
+El bot leia Binance y ejecutaba en Strike, y estaba documentado en el codigo, y aun asi el libro de
+papel se llenaba contra un mercado ajeno. La documentacion no arregla una arquitectura: si el
+producto opera en un sitio, los datos vivos vienen de ese sitio. Lo contrario solo se sostiene
+cuando el dato **no existe** en el venue — y entonces hay que decirlo en pantalla.
+
+## Un ACK de exito no es una suscripcion (2026-09-04)
+`BTC-USD@depth` contesta `{"result":null,"id":N}`, identico al de una suscripcion buena, y luego no
+emite jamas. Solo `btc-usd@depth` habla. **Un fallo silencioso que se disfraza de exito es el peor
+tipo de fallo**, y explico anos de "modo Strike no funciona" sin un solo error en los logs.
+Regla: al integrar un stream, no dar por buena la suscripcion — medir que LLEGAN datos, y contra una
+fuente independiente (aqui, REST) que demuestre que habia algo que enviar.
+
+## Medir la delgadez antes de disenar sobre ella (2026-09-04)
+1 trade en 100 segundos en seis mercados. Ese numero decidio tres cosas: las velas vienen del venue y
+no de los ticks, la profundidad se sondea en vez de reconstruirse de diffs, y el simulador de papel
+avanza tambien al cerrar barra. Sin medirlo, cualquiera de las tres habria sido una decision a ciegas.
+
+## Un endpoint puede tener dos comportamientos segun los parametros (2026-09-04)
+`klines?limit=N` devuelve una ventana cacheada de hace horas; `klines?startTime=X&limit=N` devuelve
+hasta el minuto actual. El mismo endpoint, la misma sintaxis de Binance, respuesta distinta. Al
+integrar una API "compatible con", verificar la FRESCURA de lo que llega, no solo la forma.
+
+## El interruptor de verdad puede no ser el que parece (2026-09-04)
+`exchange_venue` en la configuracion, `BOTSTRIKE_AUTOSTART_EXCHANGE` en el servicio, y una
+preferencia en el navegador: tres cosas que parecian elegir el venue. Ninguna lo hacia. El motor lo
+elegia con un `use_binance=True` escrito a mano en `start_engine`, y la etiqueta de la pantalla salia
+de la tercera. **Al cambiar algo configurable, seguir la variable hasta donde se consume de verdad** y
+comprobar que lo que se ve en pantalla sale del mismo sitio que lo que se ejecuta.
+
+## Separar "de que lo aprendo" de "donde lo hago" (2026-09-04)
+La instruccion de Edgar era exacta y vale como principio: los datos VIVOS del venue donde operas, el
+histórico de donde haya mas. Strike da 168 dias; la estrategia esta ajustada sobre diez anos. Son dos
+preguntas distintas — "que compro" (barras diarias, historia larga) y "a que precio esta ahora"
+(el venue) — y mezclarlas rompe una de las dos.

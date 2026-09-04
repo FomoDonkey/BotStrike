@@ -1784,3 +1784,66 @@ libro estaba inflado en 0,78 $ sobre 419 $.
 - [ ] `max_leverage = 5` es configuracion local, no el limite de Strike
 - [ ] El grafico, la cinta y la escalera del libro siguen siendo de Binance (etiquetados como tal).
       Cambiarlos a la profundidad de Strike es una decision de producto pendiente de Edgar
+
+## Todo en vivo sobre Strike; el historico sigue en Binance (2026-09-04, ronda 14)
+Peticion de Edgar: "hazlo con strike todo, excepto el backtest que se haga con datos historicos de
+binance ya que proporciona mas."
+
+### Lo que habia
+El motor **ejecutaba en Strike y leia de Binance**. No era un detalle cosmetico: el libro de papel se
+rellenaba contra un mercado que no es el suyo. Medido el 2026-09-04, Strike movio 1,9 M$ de BTC el
+dia que Binance movio 16.000 M$, con 3,78 BTC de interes abierto frente a 113.100, y un libro siete
+veces mas ancho.
+
+### Investigacion de la API de Strike (todo medido, nada supuesto)
+- **REST compatible con Binance**: klines (1m..1w), trades, depth, ticker/24hr, ticker/price,
+  premiumIndex, exchangeInfo. Limite 2.400 de peso/minuto.
+- **SI hay WebSocket**, en `wss://api.strikefinance.org/ws/price`, con protocolo de Binance:
+  `{"method":"SUBSCRIBE","params":[...],"id":N}` y ACK `{"result":null,"id":N}`.
+- **LOS NOMBRES DE STREAM VAN EN MINUSCULA.** `btc-usd@depth` emite; `BTC-USD@depth` se acepta con
+  el mismo ACK de exito y **no habla nunca**. Ese unico detalle explica por que el modo Strike jamas
+  entrego un tick. El cliente antiguo del repo mandaba ademas otra forma de trama por completo.
+- Streams utiles: `@kline_1m` (continuo: cierra barra cada minuto aunque no haya operado nadie),
+  `@trade` (verificado: 1 trade real en 100 s en seis mercados, y el stream entrego ese 1).
+- `@depth` es un stream de DIFERENCIAS, y el manejador del motor reemplaza el libro entero en cada
+  evento -> se quedaria un libro de tres niveles. Profundidad por snapshot REST.
+- Marca, indice y funding **no tienen stream**: se sondean de premiumIndex, una peticion para los 31.
+- **Sin `startTime` el endpoint de klines contesta desde una ventana cacheada** cuya ultima barra
+  tenia cinco horas. Con `startTime` llega hasta el minuto actual.
+
+### Por que el historico NO se mueve (y era la instruccion correcta)
+Klines diarios que publica Strike: **BTC 168 dias, ETH 164, oro/plata/petroleo 134, S&P 19.** La
+senal diaria esta ajustada sobre **diez anos**. El backtest y las barras diarias siguen en
+Binance + Yahoo, y hay un test que lo fija: `daily_sources.py` y `binance_downloader.py` no pueden
+ramificar por `exchange_venue`.
+
+- [x] `exchange/strike_ws.py`: cliente nuevo que habla el protocolo real
+- [x] Barras del venue -> `market_data.on_closed_bar`. En un venue tan delgado las velas construidas
+      con ticks saldrian vacias; el venue cierra una barra por minuto pase lo que pase
+- [x] Las barras del venue mandan sobre las de ticks: dos constructores no compiten por el minuto
+- [x] `seed_from_strike` pide ventana explicita
+- [x] **`start_engine` forzaba `use_binance=True`**: el bot corria en Binance dijera lo que dijera la
+      configuracion, y `BOTSTRIKE_AUTOSTART_EXCHANGE` solo cambiaba una etiqueta de la UI
+- [x] La etiqueta del venue en pantalla era una **preferencia del navegador** que nadie sincronizaba
+- [x] Cabecera y escalera leian dos sondeos distintos del mismo libro (0,01 bps contra 3,02 en la
+      misma pantalla). Ahora el libro del motor es el unico
+- [x] `exchangeInfo` publica mas reglas de las que se leian: tope de orden a mercado (120 BTC),
+      comision de liquidacion (1,25 %), precisiones, limites de precio, activo de margen
+- [x] La ficha de estrategia decia solo "on Binance spot"; ahora dice las dos mitades
+
+### Verificado en vivo tras desplegar
+- `exchange: strike`, WS conectado, `strike_ws_connected streams=8 symbols=4`
+- `strike_seed_loaded bars=891 hours=15` por simbolo (fresco)
+- Spread del feed = libro real del venue en los cuatro: BTC 0,049 / ETH 3,836 / SOL 3,087 / ADA 2,238
+- Cabecera 0,12 bps = libro 0,123 bps = Details 0,123 bps (una sola fuente)
+- Pantalla: "Paper - Strike feed", "Live data Strike - Execution Strike - Signal history Binance/Yahoo"
+- **Binance sigue descargando historico**: `klines_download_complete ... total_candles=137187`
+- Barras diarias intactas: 9 anos (2017-2026) para todo el universo
+- **Backtest re-ejecutado: 11/11 GO/NO-GO**, Sharpe 2,04 / 1,81 por mitades, 3.654 dias
+- 332 tests en verde
+
+### Sigue abierto
+- [ ] Las comisiones maker/taker (0,02 % / 0,04 %) son configuracion nuestra: Strike **no publica**
+      sus tarifas en la API publica (son por cuenta/nivel). Hay que confirmarlas con la cuenta real
+- [ ] La ruta de ejecucion muestra las reglas del venue pero no las aplica al mandar una orden
+- [ ] `max_leverage = 5` es local, no el limite de Strike
