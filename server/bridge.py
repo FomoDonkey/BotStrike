@@ -2225,6 +2225,9 @@ TAPE_TTL_SEC = 3.0
 _INTERVAL_SEC = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
                  "1h": 3600, "2h": 7200, "4h": 14400, "6h": 21600, "12h": 43200,
                  "1d": 86400, "1w": 604800}
+# Where to go when the requested resolution is too fine for how often a market trades.
+_LADDER = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "1w"]
+_COARSER = {iv: _LADDER[i + 1:] for i, iv in enumerate(_LADDER)}
 
 @app.get("/api/market/{symbol}/klines")
 async def get_market_klines(symbol: str, interval: str = "1m", limit: int = 500):
@@ -2243,45 +2246,39 @@ async def get_market_klines(symbol: str, interval: str = "1m", limit: int = 500)
     cached = _VENUE_MD.setdefault("klines", {}).get(key)
     if cached and time.time() - cached[0] < KLINES_TTL_SEC:
         return cached[1]
-    secs = _INTERVAL_SEC.get(iv, 60)
-    out = {"symbol": sym, "interval": iv, "candles": [], "source": "venue"}
+    out = {"symbol": sym, "interval": iv, "requested_interval": iv, "candles": [], "source": "venue"}
     import httpx
     try:
         async with httpx.AsyncClient(timeout=15.0, headers={"User-Agent": "botstrike/1.0"}) as c:
 
-            async def page(start_ms: int) -> list:
+            async def page(interval: str) -> list:
+                secs = _INTERVAL_SEC.get(interval, 60)
                 r = await c.get(f"{STRIKE_PRICE_BASE}/klines",
-                                params={"symbol": sym, "interval": iv, "limit": limit,
-                                        "startTime": int(start_ms)})
+                                params={"symbol": sym, "interval": interval, "limit": limit,
+                                        "startTime": int((time.time() - limit * secs) * 1000)})
                 r.raise_for_status()
-                data = r.json()
-                return [k for k in data if isinstance(k, list) and len(k) >= 6]
+                return [k for k in r.json() if isinstance(k, list) and len(k) >= 6]
 
-            now_ms = time.time() * 1000
-            # The venue returns the FIRST `limit` bars after startTime, so a wider window does not
-            # give more RECENT bars — it gives older ones. Ask for exactly the window the chart
-            # wants: on a market that trades every minute this is one call ending at the live bar.
-            rows = await page(now_ms - limit * secs * 1000)
-            if len(rows) < limit * 0.5:
-                # A thin market. Strike only writes a 1 m bar for a minute in which something
-                # traded, and silver had gone four hours without a print — the window held a single
-                # candle and the chart was a dot (Edgar, 2026-09-04). Start much earlier and walk
-                # FORWARD page by page, which is the only way this API reaches the present.
-                rows = await page(now_ms - limit * secs * 12 * 1000)
-                for _ in range(4):
-                    if not rows or len(rows) < limit:
-                        break                      # not truncated: this page already reaches the end
-                    last_ts = float(rows[-1][0])
-                    if now_ms - last_ts < secs * 2000:
-                        break                      # already at the live bar
-                    more = await page(last_ts + 1)
-                    if not more:
+            # The venue writes a bar only for a period in which something TRADED, and it returns the
+            # FIRST `limit` bars after startTime — so on a thin market a 1 m window holds a single
+            # candle and widening it only reaches further into the past. Silver, XRP, the S&P, GOOGL
+            # and NIGHT all drew a chart of one dot (Edgar, 2026-09-04).
+            #
+            # The honest answer is not more 1 m bars that do not exist: it is a coarser bar. At 15 m
+            # silver has 283 candles over 70 hours where at 1 m it has one. So the requested interval
+            # is tried first and, if the venue barely fills it, the next resolution up is tried in
+            # turn. `interval` reports what actually came back, and the chart says so.
+            rows = await page(iv)
+            if len(rows) < limit * 0.3:
+                for coarser in _COARSER.get(iv, []):
+                    better = await page(coarser)
+                    if len(better) > len(rows):
+                        rows, out["interval"] = better, coarser
+                    if len(rows) >= limit * 0.3:
                         break
-                    rows += more
-        rows = rows[-limit:]
         out["candles"] = [{"timestamp": float(k[0]) / 1000.0, "open": _num(k[1]), "high": _num(k[2]),
                            "low": _num(k[3]), "close": _num(k[4]), "volume": _num(k[5])}
-                          for k in rows]
+                          for k in rows[-limit:]]
     except Exception as e:  # noqa: BLE001 - an empty chart beats a 500
         logger.debug("venue_klines_error", symbol=sym, interval=iv, error=str(e)[:160])
     _VENUE_MD["klines"][key] = (time.time(), out)
