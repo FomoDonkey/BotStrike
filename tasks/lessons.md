@@ -1410,3 +1410,19 @@ Al ver que el peso bruto por activo daba 5,6x equity, pense que el tope de expos
 recortaria y que el perfil no cumpliria lo prometido. No era asi: faltaba el reparto 1/N, y la
 exposicion real es 0,93x. Lo verifique con la funcion del motor en vez de asumirlo en cualquiera de
 las dos direcciones — ni "seguro que esta mal" ni "seguro que esta bien".
+
+## Cambiar un perfil mueve los valores por defecto del producto (2026-09-04)
+Los defaults de `Settings` SON el perfil equilibrado. Al mover equilibrado de 0,20 a 0,45 se
+desincronizaron y `profile_of()` empezo a devolver "custom": una instalacion nueva habria arrancado
+sin poder decir que expectativa tiene lo que corre. Cuando dos sitios describen la misma cosa, mover
+uno obliga a mover el otro — y conviene que un test lo vigile, como aqui.
+
+## Un test que fija un default se rompe cada vez que el producto decide algo (2026-09-04)
+Ocho tests reventaron por tener escritos los limites por defecto. Los que solo comprobaban "cual es
+el default" deben seguir a la fuente unica; los que EJERCITAN una conducta que depende de un limite
+deben fijar ese limite ellos mismos. El segundo grupo no deberia haberse enterado nunca del cambio.
+
+## Un validador por caso es un examen distinto por caso (2026-09-04)
+Tenia `validate_aggressive.py`. Al tener que validar tambien equilibrado, la tentacion era copiarlo.
+Generalizarlo a `validate_profile.py <perfil>` garantiza que los tres niveles pasan EXACTAMENTE las
+mismas once puertas con la misma matematica; con dos copias, la divergencia es cuestion de tiempo.

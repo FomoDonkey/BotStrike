@@ -2015,3 +2015,30 @@ sale de la cola medida. Todas las puertas que preguntan si la VENTAJA es real qu
 ### Nota
 El target vol nuevo entra en las POSICIONES en la pasada diaria de las 00:05 UTC; los limites de
 perdida ya estan activos. Es lo que dice el propio dialogo antes de aplicar.
+
+## Equilibrado sustituido por 0,45 y validado (2026-09-04, ronda 19)
+Peticion: "sustituye el equilibrado actual por el nivel 1 de los no validados" = target vol 0,45.
+
+### La escalera nueva, los tres niveles validados con el MISMO examen
+| perfil | target | cap | gana/ano | peor caida | peor dia | bajo maximo | dia/sem/pico | gates |
+|---|---|---|---|---|---|---|---|---|
+| conservador | 10 % | 2x | +57 $ | -40 $ | -1,2 % | 592 d | 1/3/6 % | 11/11 |
+| **equilibrado** | **45 %** | **3x** | **+262 $** | **-167 $** | **-5,6 %** | **594 d** | **7/10/22 %** | **11/11** |
+| agresivo | 80 % | 3x | +421 $ | -279 $ | -8,3 % | 620 d | 11/14/36 % | 11/11 |
+
+Equilibrado a 0,45 con techo 3x da exactamente la fila que Edgar eligio (+262 $ / -167 $), porque el
+menu que vio estaba medido a cap 3. Sharpe 1,92 · CAGR 25,8 % · maxDD 16,5 % · DSR 1,00.
+
+- [x] `scripts/validate_profile.py` sustituye a la copia solo-para-agresivo: **un validador generico**,
+      asi ningun nivel tiene un examen mas facil que otro
+- [x] Conservador revalidado tambien: 11/11
+- [x] Escalera de perdidas de la cola medida a este tamano: dia 7 %, semana 10 %, pico 22 %
+- [x] Las tres tarjetas muestran ya peor dia y tiempo bajo maximo
+
+### Efecto secundario real que hubo que arreglar
+Los valores por defecto de `Settings` **son** el perfil equilibrado. Al mover equilibrado se
+desincronizaron y una instalacion nueva habria arrancado en "custom", sin expectativa que mostrar.
+- [x] Defaults alineados (0,45 / 3x / 7 / 10 / 22 %)
+- [x] 8 tests que fijaban los defaults viejos: los que solo comprueban "cual es el default" siguen al
+      perfil; los que EJERCITAN un limite ahora lo fijan ellos mismos, que es el arreglo duradero
+- [x] 340 tests · el bot sigue en agresivo, sin afectar (sus overrides mandan sobre los defaults)
