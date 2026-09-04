@@ -1584,6 +1584,11 @@ async def bot_restart(supplied: str = Depends(supplied_token)):
 
 @app.get("/api/edge")
 async def get_edge():
+    """Live edge monitor. Retired strategies are not part of the product any more, so they are not
+    monitored here: the endpoint listed MEAN_REVERSION, FIBONACCI_RETRACEMENT and DIVERGENCE with a
+    row of zeros each, which reads as three strategies running and producing nothing (audit
+    2026-09-04). The trades they made are still in the trade record; this is the live monitor, and
+    the filter belongs here rather than in analytics/edge.py, which is arithmetic, not product."""
     engine = state.engine
     if not engine:
         return {"window": 0, "min_trades": 0, "strategies": {}}
@@ -1591,7 +1596,11 @@ async def get_edge():
     if not stats:
         await engine._edge_monitor_tick(force=True)
         stats = engine.edge_stats
-    return stats
+    from core.types import RETIRED_STRATEGIES
+    out = dict(stats or {})
+    out["strategies"] = {k: v for k, v in (out.get("strategies") or {}).items()
+                         if k not in RETIRED_STRATEGIES}
+    return out
 
 
 @app.get("/api/trend")

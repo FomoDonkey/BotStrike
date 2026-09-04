@@ -474,3 +474,20 @@ def test_a_retired_strategy_is_never_advertised_on_a_market(st):
     assert bridge._strategies_on(eng, "XAU-USD", None) == ["TREND_DAILY"]
     assert bridge._strategies_on(eng, "BTC-USD", None) == ["TREND_DAILY"]
     assert bridge._strategies_on(eng, "NVDA-USD", None) == []
+
+
+def test_the_edge_monitor_does_not_report_on_retired_strategies(st):
+    """/api/edge listed MEAN_REVERSION, FIBONACCI_RETRACEMENT and DIVERGENCE with a row of zeros
+    each, which reads as three strategies running and producing nothing (audit 2026-09-04)."""
+    from core.types import RETIRED_STRATEGIES
+
+    st.engine = SimpleNamespace(edge_stats={
+        "window": 200, "min_trades": 100,
+        "strategies": {"MEAN_REVERSION": {"n": 0}, "DIVERGENCE": {"n": 0},
+                       "FIBONACCI_RETRACEMENT": {"n": 0}, "TREND_DAILY": {"n": 3}},
+    })
+    st.running = True
+    body = TestClient(bridge.app).get("/api/edge").json()
+    assert set(body["strategies"]) == {"TREND_DAILY"}
+    assert not (set(body["strategies"]) & set(RETIRED_STRATEGIES))
+    assert body["window"] == 200            # the rest of the payload is untouched
