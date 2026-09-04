@@ -2030,12 +2030,14 @@ async def get_markets():
     oi_cache = _VENUE_MD.get("oi") or {}
     out = []
     for sym in sorted(set(venue) | set(feed) | pool | held | set(md["premium"])):
-        rate = float(venue.get(sym, 0.0) or 0.0)
         prem, tick = md["premium"].get(sym) or {}, md["ticker"].get(sym) or {}
+        # The engine loads its own copy once a minute; the same field from the same endpoint is
+        # already in hand here, so the picker is not blank for the first minute after a restart.
+        rate = float(venue[sym] or 0.0) if sym in venue else _num(prem.get("fundingRate"))
         oi = oi_cache.get(sym)
         out.append({"symbol": sym, "feed": sym in feed, "pool": sym in pool, "held": sym in held,
-                    "funding_rate": rate if sym in venue else None,
-                    "annualized_pct": round(annualized_pct(rate, interval), 6) if sym in venue else None,
+                    "funding_rate": rate,
+                    "annualized_pct": round(annualized_pct(rate, interval), 6) if rate is not None else None,
                     "annualized_90d": measured.get(sym),
                     "price": _num(prem.get("markPrice")) or _num(tick.get("lastPrice")),
                     "change_24h_pct": ((_num(tick.get("priceChangePercent")) or 0.0) / 100.0) if tick else None,
