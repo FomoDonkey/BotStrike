@@ -429,7 +429,11 @@ def test_the_header_is_the_venue_s_market_never_the_reference_feed_s(st, monkeyp
     assert m["mark_price"] == pytest.approx(80857.7)
     assert m["volume_24h_base"] == pytest.approx(23.8595)        # not 199,026
     assert m["open_interest"] == pytest.approx(3.78205)          # not 113,100
-    assert m["spread_bps"] == pytest.approx(0.0866)              # not 0.0124
+    # The engine's own feed became the venue's on 2026-09-04, so ITS book is the one the ladder on
+    # screen draws and the header must quote the same snapshot — a second depth call here printed
+    # 0.01 bps in the header against 3.02 in the panel beside it. The venue's REST depth is the
+    # fallback for the 27 markets the engine does not stream (asserted in the test below).
+    assert m["spread_bps"] == pytest.approx(0.0124)
     assert m["change_24h_pct"] == pytest.approx(0.037175)        # not 0.03942
     assert m["window_min"] == 1440 and m["source"] == "venue"
     # the feed is not thrown away -- it is kept apart, under its own name
@@ -491,3 +495,29 @@ def test_the_edge_monitor_does_not_report_on_retired_strategies(st):
     assert set(body["strategies"]) == {"TREND_DAILY"}
     assert not (set(body["strategies"]) & set(RETIRED_STRATEGIES))
     assert body["window"] == 200            # the rest of the payload is untouched
+
+
+def test_a_market_the_engine_does_not_stream_still_gets_the_venue_s_book(st, monkeypatch):
+    """The engine streams four symbols; the other 27 have no book of their own in memory, so the
+    header falls back to the venue's REST depth rather than to nothing (2026-09-04)."""
+    async def _venue():
+        return {"ts": 1_788_000_000.0, "ts_tick": 1_788_000_000.0, "ts_info": 1_788_000_000.0,
+                "premium": {"NVDA-USD": {"markPrice": "229.95", "indexPrice": "229.9",
+                                         "fundingRate": "0"}},
+                "ticker": {}, "filters": {}, "depth": {}, "oi": {}}
+
+    async def _depth(_s):
+        return {"best_bid": 229.88, "best_ask": 230.02, "spread_bps": 6.09}
+
+    monkeypatch.setattr(bridge, "_venue_market_data", _venue)
+    monkeypatch.setattr(bridge, "_venue_depth", _depth)
+    eng = SimpleNamespace(settings=Settings(), trend_engine=None, _venue_funding={},
+                          market_data=SimpleNamespace(get_snapshot=lambda s_: None,
+                                                      get_24h_stats=lambda s_: {},
+                                                      get_data_age=lambda s_: float("inf")),
+                          regime_detector=SimpleNamespace(status=lambda s_: {}))
+    st.engine, st.running = eng, True
+    m = TestClient(bridge.app).get("/api/market/NVDA-USD").json()
+    assert m["feed"] is False
+    assert m["spread_bps"] == pytest.approx(6.09)
+    assert m["best_bid"] == pytest.approx(229.88) and m["best_ask"] == pytest.approx(230.02)

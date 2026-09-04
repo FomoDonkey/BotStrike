@@ -2164,7 +2164,16 @@ async def get_market(symbol: str):
     tick = md["ticker"].get(symbol.upper(), {})
     v_mark, v_index = _num(prem.get("markPrice")), _num(prem.get("indexPrice"))
     v_last = _num(tick.get("lastPrice"))
-    v_depth = await _venue_depth(symbol)
+    # ONE BOOK, ONE AGE. The engine's own feed is the venue's now, so its book is the book the
+    # ladder on screen is drawing. Making a second depth call here gave the header a different
+    # snapshot from the panel beside it — 0.01 bps against 3.02 on the same screen (2026-09-04).
+    # The extra call is only for the 27 markets the engine does not stream.
+    v_depth = None
+    if ob is not None and ob.best_bid and ob.best_ask:
+        v_depth = {"best_bid": ob.best_bid, "best_ask": ob.best_ask,
+                   "spread_bps": round(float(ob.spread_bps), 4)}
+    else:
+        v_depth = await _venue_depth(symbol)
     v_oi = await _venue_open_interest(symbol)
     v_stats = {}
     if tick:
@@ -2193,6 +2202,8 @@ async def get_market(symbol: str):
         "best_bid": (v_depth or {}).get("best_bid"), "best_ask": (v_depth or {}).get("best_ask"),
         # what the reference feed says, kept apart and labelled as such wherever the UI shows it
         "feed_price": float(snap.price) if snap else None,
+        # same venue as `spread_bps` since the engine moved to Strike; kept so a client that still
+        # reads it does not break, and so the two can be compared if they ever diverge again
         "feed_spread_bps": float(ob.spread_bps) if ob else None,
         "feed_age_sec": round(engine.market_data.get_data_age(symbol), 3) if snap else None,
         # the venue's 24 h block when it answered, otherwise whatever the engine had (possibly empty)
