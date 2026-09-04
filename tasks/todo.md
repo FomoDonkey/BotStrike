@@ -1847,3 +1847,48 @@ ramificar por `exchange_venue`.
       sus tarifas en la API publica (son por cuenta/nivel). Hay que confirmarlas con la cuenta real
 - [ ] La ruta de ejecucion muestra las reglas del venue pero no las aplica al mandar una orden
 - [ ] `max_leverage = 5` es local, no el limite de Strike
+
+## Comisiones reales de Strike y auditoria de almacenamiento (2026-09-04, ronda 15)
+Preguntas de Edgar: que pasa con las comisiones maker/taker, y si los historiales llenaran el disco.
+
+### Comisiones: Strike SI las publica, en su documentacion
+`docs.strikefinance.org/perpetuals/trading-fees` (leido 2026-09-04). Tabla por volumen de 30 dias,
+recalculada a diario a las 00:05 UTC:
+
+| Tier | Volumen 30d | Taker | Maker |
+|---|---|---|---|
+| **0** | **$0 - $100K** | **0,050 %** | **-0,005 %** | <- esta cuenta
+| 1 | $100K - $500K | 0,045 % | -0,005 % |
+| 2 | $500K - $2M | 0,040 % | -0,005 % |
+| 6 | >= $200M | 0,028 % | -0,005 % |
+
+Ademas: rebates de maker mejores por cuota de volumen (hasta -0,012 %) y descuento por $STRIKE
+apilado (5 % con 5.000, hasta 40 % con 250.000), aplicable solo a comisiones POSITIVAS.
+
+**Lo que teniamos era de Binance.** El comentario del codigo lo decia en voz alta: "was 5 bps Strike".
+- taker 0,040 % en vez de 0,050 % -> el libro de papel se cobraba 1 bp de menos en cada fill
+- maker +0,020 % cuando Strike **paga** 0,005 % -> signo invertido
+- El editor de ajustes tenia `min=0` en maker_fee, asi que el rebate real era inintroducible
+- [x] Puestos los valores del venue con la tabla completa documentada en `settings.py`
+- [x] **Revalidado con la comision real: 11/11 GO/NO-GO** (el gate ya estresa 25 bps/lado)
+- [x] En pantalla se dice de donde sale el numero y que un negativo es un rebate
+
+### Almacenamiento: medido, no estimado
+Disco del CT 104: **20 GB, 2,4 GB usados (13 %), 17 GB libres.** Inodos al 5 %.
+
+| Que | Ahora | Crece? |
+|---|---|---|
+| `data/binance*/klines/*/1m.parquet` | 82 MB | **si**, 162 MB/ano (4 simbolos, 77 B/vela) |
+| `data/binance_daily` + `data/daily` | 5,9 MB | ~50 KB/ano (1 vela/dia/simbolo) |
+| `logs/` | 57 MB | acotado por logrotate |
+| **journal de systemd** | **472 MB** | era el mayor consumidor, **sin tope** |
+| `trade_database.db` | 72 KB | despreciable |
+
+Proyeccion del unico que crece de verdad: **+0,16 GB al ano** -> a 10 anos, 4,3 GB de 20 (22 %).
+**No hay riesgo de saturacion.**
+
+- [x] Journal capado a 300 MB / 30 dias (sin tope iba al 10 % del disco = 2 GB). Ya bajo a 243 MB
+- [x] `metrics.jsonl.old` de 52 MB estaba fuera de todo patron de logrotate y no se habria tocado
+      nunca; el patron ahora lo incluye
+- [x] El descargador de klines **no poda** (concatena y deduplica). A 162 MB/ano da igual, y esos
+      datos son justo los que alimentan el backtest, asi que se quedan

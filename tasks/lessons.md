@@ -1320,3 +1320,19 @@ La instruccion de Edgar era exacta y vale como principio: los datos VIVOS del ve
 histórico de donde haya mas. Strike da 168 dias; la estrategia esta ajustada sobre diez anos. Son dos
 preguntas distintas — "que compro" (barras diarias, historia larga) y "a que precio esta ahora"
 (el venue) — y mezclarlas rompe una de las dos.
+
+## Un coste copiado de otro sitio es un backtest optimista (2026-09-04)
+Las comisiones eran las de Binance con un comentario que decia "was 5 bps Strike": alguien las bajo
+a proposito y quedo ahi. Un backtest que se cobra de menos aprueba estrategias que no deberia. Y el
+signo del maker estaba invertido: pagabamos por algo que el venue **premia**. Al integrar un venue,
+las comisiones se leen de su documentacion o de fills reales — nunca se heredan del venue anterior.
+
+## Buscar el dato antes de declararlo inexistente (2026-09-04)
+Dije que Strike "no publica sus tarifas" tras mirar solo la API. Estaban en su documentacion, en una
+pagina llamada `trading-fees`, encontrable listando los enlaces de la portada de los docs. La API no
+es la unica superficie publica de un venue: docs, sitemap e indice de paginas tambien lo son.
+
+## Medir el disco en lugar de tranquilizar (2026-09-04)
+La respuesta util a "se llenara el disco" no es "no": es 162 MB/ano de klines, 22 % del disco a diez
+anos, y el mayor consumidor no eran los datos sino **el journal de systemd sin tope, con 472 MB**. Lo
+que se mide se puede acotar; lo que se supone, no.
