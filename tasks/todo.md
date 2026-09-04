@@ -2084,3 +2084,37 @@ correcto, cambio de perfil registrado en actividad); Risk (tres perfiles 11/11);
 devolver, y 10.080 pasó de 12 min. Llegué a poner "~140 barras/s" en la UI como si lo hubiera medido:
 era una extrapolación, no una medición, y la quité. El rendimiento real está **sin medir** y hay que
 perfilar `backtesting/backtester.py`. La UI ahora dice lo que se sabe y nada más.
+
+
+## Backtester perfilado y arreglado (2026-09-04) — CERRADO
+Cierra el punto que quedo ABIERTO arriba ("el backtester es lento y NO vi terminar ninguna ejecucion").
+
+**Medido de verdad, sin profiler, 2.000 barras de BTC 1m:**
+
+| | barras/s | 7 dias (10.080) | 150 dias (216.000) |
+|---|---|---|---|
+| Original (HEAD a19bf4a) | 13,2 | 766 s | 274 min |
+| Optimizado | **51,4** | **196 s** | **70 min** |
+
+3,9x. Las cifras anteriores de "6" y "8 barras/s" estaban medidas con cProfile activo, que infla x2,2.
+
+- [x] `volatility_percentile` vectorizado (era `rolling(100).apply(fn, raw=False)`)
+- [x] `adx` y `directional_indicators` comparten un `_di_pair`; antes calculaban lo mismo dos veces
+- [x] `atr` construye el true range con `np.fmax` en vez de un frame de tres columnas
+- [x] `compute_all` escribe sus columnas en UNA asignacion, no en veintiuna
+- [x] `compute_all(only=...)`: mean_reversion lee 3 columnas del frame 1H y 6 del 5m; se calculaban 21
+- [x] `aggregate_blocks` sustituye `groupby(ndarray).agg(...)` — bit-exacto, ~20x mas rapido
+- [x] Guarda de longitud ANTES de calcular indicadores en `_update_h1_trend`
+- [x] Dos `.copy()` por barra de un frame de 6.000 filas, eliminados
+- [x] 88 tests nuevos (`tests/test_indicators_vectorised.py`) que fijan cada cambio contra el codigo
+      original pegado literalmente. Suite completa: **428 pasan**
+
+**Hallazgo aparte, mas grave que la lentitud:**
+- [x] **El backtest no era reproducible.** `_update_adaptive_thresholds` cacheaba los umbrales de
+      regimen por `time.monotonic()` (15 s de reloj de pared), asi que el resultado dependia de la
+      carga de la CPU: mismos datos y mismo codigo, dos veces, con solo 4 ms de sleep por barra de
+      diferencia -> 256 de 1.900 barras en un regimen distinto. Ahora la cache va por **tiempo de
+      vela**. Verificado: dos procesos distintos dan un resultado JSON identico.
+
+**Medido y descartado:** el logging del bridge (una linea de debug por barra a journald) cuesta ~1 %.
+No se toca.

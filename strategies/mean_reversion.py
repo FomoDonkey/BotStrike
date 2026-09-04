@@ -33,6 +33,7 @@ from core.types import (
     Signal, MarketRegime, MarketSnapshot, StrategyType, Side, Position,
 )
 from strategies.base import BaseStrategy
+from core.bars import aggregate_blocks
 from core.indicators import Indicators
 import structlog
 
@@ -49,6 +50,15 @@ SL_ATR_MULT = 1.5           # 1.5x ATR stop loss — best for ETH/ADA (BTC struc
 TP_ATR_MULT = 4.0           # 4x ATR take profit → gross R:R 2.67:1
 MIN_BARS_1M = 30            # Minimum 1m bars needed
 MIN_BARS_5M = 50            # Minimum resampled bars needed
+
+# The indicator columns this strategy actually reads off each resampled frame. Indicators.compute_all
+# builds twenty-one; recomputing the other fifteen on the 5m frame and the other eighteen on the 1H
+# frame, once per 1m bar, was the bulk of a backtest (measured 2026-09-04). Keep these in step with
+# the code: tests/test_indicators_vectorised.py scans this module and fails if it reads a column
+# that is not declared here, which matters because every read below is a `.get(col, default)` that
+# would otherwise swallow a missing column as its default instead of raising.
+M5_INDICATORS = ("atr", "rsi", "adx", "bb_lower", "bb_upper", "zscore")
+H1_INDICATORS = ("ema_12", "ema_26", "adx")
 # Trailing stop with progressive tightening:
 TRAIL_ACTIVATE_ATR = 1.5    # Start trailing after 1.5x ATR profit
 TRAIL_DISTANCE_ATR = 0.5    # Trail 0.5 ATR behind peak → min capture 1.0 ATR
@@ -432,17 +442,13 @@ class MeanReversionStrategy(BaseStrategy):
 
         # Use last N bars for resampling
         max_input = RESAMPLE_MINUTES * RESAMPLE_BUFFER
-        tail = df.tail(max_input).copy().reset_index(drop=True)
+        tail = df.tail(max_input)           # not .copy(): nothing below mutates it
         n = len(tail) // RESAMPLE_MINUTES * RESAMPLE_MINUTES
-        trim = tail.tail(n).copy().reset_index(drop=True)
+        trim = tail.tail(n)                 # aggregate_blocks builds a new frame anyway
 
-        groups = np.arange(len(trim)) // RESAMPLE_MINUTES
-        resampled = trim.groupby(groups).agg({
-            "open": "first", "high": "max", "low": "min",
-            "close": "last", "volume": "sum",
-        }).reset_index(drop=True)
+        resampled = aggregate_blocks(trim, RESAMPLE_MINUTES)
 
-        self._resampled[symbol] = Indicators.compute_all(resampled)
+        self._resampled[symbol] = Indicators.compute_all(resampled, only=M5_INDICATORS)
 
     def _update_h1_trend(self, symbol: str, df: pd.DataFrame) -> None:
         """Compute 1H trend from 1m bars."""
@@ -452,21 +458,19 @@ class MeanReversionStrategy(BaseStrategy):
             return
 
         max_input = 60 * 100  # 100 hours
-        tail = df.tail(max_input).copy().reset_index(drop=True)
+        tail = df.tail(max_input)           # not .copy(): nothing below mutates it
         n = len(tail) // 60 * 60
-        trim = tail.tail(n).copy().reset_index(drop=True)
+        trim = tail.tail(n)                 # aggregate_blocks builds a new frame anyway
 
-        groups = np.arange(len(trim)) // 60
-        h1 = trim.groupby(groups).agg({
-            "open": "first", "high": "max", "low": "min",
-            "close": "last", "volume": "sum",
-        }).reset_index(drop=True)
+        h1 = aggregate_blocks(trim, 60)
 
-        h1 = Indicators.compute_all(h1)
+        # Length check BEFORE the indicators: computing twenty-one columns only to throw the frame
+        # away on the next line is pure waste.
         if len(h1) < 5:  # Minimum 5 hourly bars for EMA to start converging
             self._h1_trend[symbol] = 0
             self._h1_adx[symbol] = 0
             return
+        h1 = Indicators.compute_all(h1, only=H1_INDICATORS)
 
         last = h1.iloc[-1]
         ema12 = float(last.get("ema_12", 0))

@@ -1451,3 +1451,41 @@ El eje acumulado del funding tenía dos decimales fijos para un rango de 0,001 %
 marcas, tres idénticas y una "−0,00 %". Y el rebate maker de −0,005 % se mostraba como −0,01 %, el
 doble. En un producto donde las cifras son diminutas por naturaleza, los decimales tienen que salir
 del rango de los datos, nunca de una constante.
+
+
+## Un profiler puede mentirte sobre el tamaño del problema (2026-09-04)
+Dije "6 barras/s" y luego "8 barras/s". Ambas cifras estaban medidas **con cProfile activo**, que
+aquí infla el tiempo x2,2. La medición real sin profiler del codigo original era **13,2 barras/s**.
+El profiler sirve para saber DONDE se va el tiempo (proporciones), nunca para decir CUANTO tarda.
+Toda cifra de rendimiento que se le diga a alguien tiene que venir de un cronometro sin instrumentar.
+
+## Un backtest que cambia con la carga de la CPU no es evidencia (2026-09-04)
+`_update_adaptive_thresholds` cacheaba los umbrales de regimen 15 s **de reloj de pared**
+(`time.monotonic()`). En backtest eso significa que cuantas barras comparten umbrales depende de lo
+rapido que corra la maquina. Prueba: mismos 2.000 datos, mismo codigo, dos veces en el MISMO proceso,
+con la unica diferencia de un `sleep(4 ms)` por barra -> **256 de 1.900 barras clasificadas en un
+regimen distinto**. Lo descubri porque optimizar el backtester lo hizo 4x mas rapido y el resultado
+"cambio"; el resultado no cambio, es que nunca habia sido reproducible. Cualquier cache o cooldown en
+la ruta de decision tiene que ir con **tiempo de vela**, nunca con reloj de pared. Y el modo de
+detectarlo es barato: correr lo mismo dos veces a velocidades distintas y comparar.
+
+## `df.groupby(ndarray)` formatea el array entero en cada llamada (2026-09-04)
+5,7 s de un backtest de 34,6 s se iban en `numpy.arrayprint`. No era el logging: pandas recibe la
+clave ndarray, prueba `Index.get_loc(key)`, falla, y **renderiza el array completo dentro del mensaje
+de la excepcion que acto seguido descarta**. La clave del path de 5m tiene exactamente 1.000
+elementos, uno por debajo del umbral de resumen de numpy, asi que imprimia los 1.000 — una vez por
+barra. Reemplazado por un reshape numpy: 20x mas rapido. La leccion general es que un coste raro en
+el perfil (formateo de texto en un bucle numerico) casi siempre es una excepcion construida y tirada.
+
+## La suma de pandas es Kahan; la de numpy no (2026-09-04)
+Al sustituir `groupby().agg({"volume": "sum"})` por un reshape, todo salio bit-exacto menos `volume`,
+con 1e-12 de diferencia. `pandas` usa suma compensada de Kahan en su group_sum; `np.sum` usa suma por
+pares. 1e-12 es despreciable hasta que voltea una comparacion. Replicar Kahan vectorizado costo 6
+lineas y dio identidad bit a bit en 540 formas. Si se reescribe una agregacion, la prueba no es
+"parecido", es `np.array_equal`.
+
+## Optimizar sin una red de identidad es adivinar (2026-09-04)
+Cada paso se valido contra la implementacion anterior *pegada literalmente* como referencia:
+indicadores (18 casos x 32 columnas), subconjuntos `only=` (identicos al pase completo), agregacion
+por bloques (540 formas), y el backtest entero (resultado JSON identico entre procesos). Sin eso,
+"lo hice 4x mas rapido" no se puede afirmar, porque no se sabe si sigue calculando lo mismo.

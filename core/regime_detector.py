@@ -241,9 +241,22 @@ class RegimeDetector:
     def _update_adaptive_thresholds(
         self, df: pd.DataFrame, symbol: str, config: SymbolConfig
     ) -> Dict[str, float]:
-        """Actualiza thresholds adaptativos. Cached por 15s para evitar recalcular."""
-        import time as _time
-        now = _time.monotonic()
+        """Actualiza thresholds adaptativos. Cached 15 s de tiempo de VELA, no de reloj.
+
+        This cache used to be keyed on `time.monotonic()`, which made the whole regime path
+        depend on how fast the process happened to run. Measured 2026-09-04: the same 2,000 bars
+        of BTC, same code, same data, run twice in one process with nothing between them but a
+        4 ms sleep per bar, classified 256 of 1,900 bars into a DIFFERENT regime — because a
+        slower run crosses the 15-wall-second boundary more often and so refreshes the
+        percentile thresholds more often. A backtest whose result moves with CPU load is not
+        evidence of anything, and the same code runs live.
+
+        Bar time fixes it and is also what the cache was always trying to express: the frame is
+        1m bars, so the thresholds cannot change more than once a minute no matter how often the
+        3 s poll loop asks. Live behaviour is unchanged in substance — it now refreshes once per
+        new bar instead of up to four times for the same bar.
+        """
+        now = self._frame_time(df)   # bar timestamp (epoch s); falls back to wall clock only
         last = self._threshold_last_update.get(symbol, 0)
         cached = self._adaptive_thresholds.get(symbol)
         if cached and (now - last) < self._threshold_cache_sec:
