@@ -24,6 +24,18 @@ echo "  restarts: $(systemctl show -p NRestarts --value botstrike-bridge)"
 echo "-- code"
 cd "$APP_DIR" && echo "  commit: $(git log --oneline -1)  branch: $(git rev-parse --abbrev-ref HEAD)"
 [ -f "$APP_DIR/.env" ] && ok ".env present ($(stat -c '%U %a' $APP_DIR/.env))" || bad ".env missing"
+# The web bundle is BUILT LOCALLY and committed (desktop: npm run build:web). Nothing in the deploy
+# path rebuilds it, so a commit that edits the UI source without the rebuilt bundle ships a terminal
+# that silently keeps the old behaviour. On 2026-09-04 four commits of market-data fixes were live in
+# the API and absent from the screen for exactly this reason. Compare what the last UI-touching
+# commit changed.
+UI_SRC=$(cd "$APP_DIR" && git log -1 --format=%H -- desktop/src 2>/dev/null)
+UI_BUNDLE=$(cd "$APP_DIR" && git log -1 --format=%H -- server/webui 2>/dev/null)
+if [ -n "$UI_SRC" ] && [ "$UI_SRC" != "$UI_BUNDLE" ]; then
+  warn "web bundle may be STALE: desktop/src last changed in ${UI_SRC:0:8}, server/webui in ${UI_BUNDLE:0:8} — run 'npm run build:web' in desktop/ and commit"
+else
+  ok "web bundle rebuilt with the UI source ($(ls "$APP_DIR/server/webui/assets"/index-*.js 2>/dev/null | head -1 | xargs -r basename))"
+fi
 grep -q '^BINANCE_API_KEY=.\+' "$APP_DIR/.env" 2>/dev/null && ok "BINANCE_API_KEY set" || warn "BINANCE_API_KEY empty (paper still works with public data)"
 
 echo "-- bridge http"
