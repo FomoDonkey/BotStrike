@@ -2244,19 +2244,44 @@ async def get_market_klines(symbol: str, interval: str = "1m", limit: int = 500)
     if cached and time.time() - cached[0] < KLINES_TTL_SEC:
         return cached[1]
     secs = _INTERVAL_SEC.get(iv, 60)
-    start_ms = int((time.time() - limit * secs) * 1000)
     out = {"symbol": sym, "interval": iv, "candles": [], "source": "venue"}
     import httpx
     try:
         async with httpx.AsyncClient(timeout=15.0, headers={"User-Agent": "botstrike/1.0"}) as c:
-            r = await c.get(f"{STRIKE_PRICE_BASE}/klines",
-                            params={"symbol": sym, "interval": iv, "limit": limit,
-                                    "startTime": start_ms})
-            r.raise_for_status()
-            rows = r.json()
+
+            async def page(start_ms: int) -> list:
+                r = await c.get(f"{STRIKE_PRICE_BASE}/klines",
+                                params={"symbol": sym, "interval": iv, "limit": limit,
+                                        "startTime": int(start_ms)})
+                r.raise_for_status()
+                data = r.json()
+                return [k for k in data if isinstance(k, list) and len(k) >= 6]
+
+            now_ms = time.time() * 1000
+            # The venue returns the FIRST `limit` bars after startTime, so a wider window does not
+            # give more RECENT bars — it gives older ones. Ask for exactly the window the chart
+            # wants: on a market that trades every minute this is one call ending at the live bar.
+            rows = await page(now_ms - limit * secs * 1000)
+            if len(rows) < limit * 0.5:
+                # A thin market. Strike only writes a 1 m bar for a minute in which something
+                # traded, and silver had gone four hours without a print — the window held a single
+                # candle and the chart was a dot (Edgar, 2026-09-04). Start much earlier and walk
+                # FORWARD page by page, which is the only way this API reaches the present.
+                rows = await page(now_ms - limit * secs * 12 * 1000)
+                for _ in range(4):
+                    if not rows or len(rows) < limit:
+                        break                      # not truncated: this page already reaches the end
+                    last_ts = float(rows[-1][0])
+                    if now_ms - last_ts < secs * 2000:
+                        break                      # already at the live bar
+                    more = await page(last_ts + 1)
+                    if not more:
+                        break
+                    rows += more
+        rows = rows[-limit:]
         out["candles"] = [{"timestamp": float(k[0]) / 1000.0, "open": _num(k[1]), "high": _num(k[2]),
                            "low": _num(k[3]), "close": _num(k[4]), "volume": _num(k[5])}
-                          for k in rows if isinstance(k, list) and len(k) >= 6]
+                          for k in rows]
     except Exception as e:  # noqa: BLE001 - an empty chart beats a 500
         logger.debug("venue_klines_error", symbol=sym, interval=iv, error=str(e)[:160])
     _VENUE_MD["klines"][key] = (time.time(), out)
