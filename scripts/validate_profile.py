@@ -1,8 +1,8 @@
-"""Put the aggressive profile (target vol 0.80, cap 3x) through the SAME 11 gates as the book.
+"""Put a risk profile through the SAME 11 gates as the book itself.
 
-Edgar asked for aggressive to be validated like the other two, not merely measured. That means the
-full GO/NO-GO suite from scripts/trend_multi_research.py, run at this profile's own settings, with
-the same maths — not a shorter list invented for the occasion.
+A profile is not 'validated' because someone widened a range: it is validated because it went
+through the full GO/NO-GO suite from scripts/trend_multi_research.py at its OWN settings, with the
+same maths and the same panel. One script for every profile, so no level gets an easier exam.
 
 ONE GATE IS EVALUATED DIFFERENTLY, AND ON PURPOSE. "maxDD < 15 %" is a RISK BUDGET, not a test of
 whether the edge exists: vol targeting scales return and drawdown together at constant Sharpe, so a
@@ -13,7 +13,8 @@ tail. Every other gate — the ones that ask whether the edge is real, survives 
 funding, is not an artefact of look-ahead, and still worked in the recent subperiod — is unchanged
 and must pass on its own terms.
 
-    py -3.12 scripts/validate_aggressive.py
+    py -3.12 scripts/validate_profile.py aggressive
+    py -3.12 scripts/validate_profile.py balanced
 """
 from __future__ import annotations
 
@@ -28,7 +29,6 @@ sys.path.insert(0, ".")
 import scripts.trend_multi_research as R  # noqa: E402
 from config.risk_profiles import PROFILES  # noqa: E402
 
-PROFILE = "aggressive"
 CLASSES = ["crypto", "metal", "index", "energy"]
 
 
@@ -45,14 +45,17 @@ def run(data, target_vol: float, cap: float, **kw) -> Dict:
 
 
 def main() -> int:
-    cfg = PROFILES[PROFILE]
+    name = sys.argv[1] if len(sys.argv) > 1 else "aggressive"
+    if name not in PROFILES:
+        raise SystemExit(f"unknown profile {name!r}; try {list(PROFILES)}")
+    cfg = PROFILES[name]
     tv = float(cfg["trend_target_vol"])
     cap = float(cfg["trend_leverage_cap"])
     dd_budget = float(cfg["max_drawdown_pct"])
 
     data = R.load_panel(only_class=CLASSES)
     span = pd.DatetimeIndex(sorted(set().union(*[d.index for d in data.values()])))
-    print(f"profile '{PROFILE}': target vol {tv} · leverage cap {cap}x · drawdown budget "
+    print(f"profile '{name}': target vol {tv} · leverage cap {cap}x · drawdown budget "
           f"{dd_budget * 100:.0f} %")
     print(f"panel  : {len(data)} markets · {span[0].date()} -> {span[-1].date()} ({len(span)} days)\n")
 
@@ -120,7 +123,7 @@ def main() -> int:
     print(f"\n  {ok}/{len(checks)} -> "
           f"{'VALIDATED at this risk level' if ok == len(checks) else 'NOT VALIDATED — leave it flagged'}")
 
-    out = {"profile": PROFILE, "target_vol": tv, "leverage_cap": cap,
+    out = {"profile": name, "target_vol": tv, "leverage_cap": cap,
            "gates_passed": ok, "gates_total": len(checks), "dsr": dsr, "trials": trials,
            "sharpe": base["sharpe"], "cagr": base["cagr"], "vol": base["vol"],
            "max_dd": base["max_dd"], "skew": base["skew"]}

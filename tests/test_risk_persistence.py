@@ -118,5 +118,6 @@ def test_risk_summary_exposes_the_ladder():
     rm.restore_history(equity=990.0, peak=1000.0, daily_pnl=-3.0, weekly_pnl=-7.0)
     summ = rm.get_risk_summary()
     assert summ["weekly_pnl"] == -7.0
-    assert summ["max_weekly_loss"] == pytest.approx(990.0 * 0.05, rel=1e-6)
+    # against the configured limit, not a literal: the shipped profile is allowed to move
+    assert summ["max_weekly_loss"] == pytest.approx(990.0 * s.trading.max_weekly_loss_pct, rel=1e-6)
     assert summ["equity_peak"] == 1000.0 and summ["drawdown_halted"] is False

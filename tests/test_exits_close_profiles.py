@@ -83,7 +83,10 @@ def test_risk_profiles_scale_target_vol_and_the_ladder_together():
     # validated 14-market panel: +0.5 pts of CAGR for no extra drawdown, because the cap only bound
     # on the quietest 5.6 % of asset-days to begin with (scripts/leverage_cap_study.py).
     assert s.trading.trend_leverage_cap == 3.0
-    assert set(changed) == {"trend_target_vol", "max_drawdown_pct", "max_daily_loss_pct",
+    # balanced already runs the 3x ceiling, so switching to aggressive changes everything except it
+    assert set(changed) >= {"trend_target_vol", "max_drawdown_pct", "max_daily_loss_pct",
+                            "max_weekly_loss_pct"}
+    assert set(changed) <= {"trend_target_vol", "max_drawdown_pct", "max_daily_loss_pct",
                             "max_weekly_loss_pct", "trend_leverage_cap"}
     assert rp.profile_of(s.trading) == "aggressive"
     rp.apply_profile(s.trading, "conservative")

@@ -65,9 +65,13 @@ def test_validate_and_apply_is_atomic_and_reports_restart():
         ov.validate_and_apply(s, {"trading": {"max_drawdown_pct": 0.03, "max_daily_loss_pct": 0.05}})
     assert s.trading.max_drawdown_pct == before
     applied, restart = ov.validate_and_apply(
-        s, {"trading": {"max_drawdown_pct": 0.08, "allocation_trend_daily": 0.5},
+        # the ladder invariant is daily <= weekly <= drawdown; 0.08 is now below the shipped
+        # weekly (0.10), so the patch moves the whole ladder rather than one rung of it
+        s, {"trading": {"max_drawdown_pct": 0.08, "max_weekly_loss_pct": 0.05,
+                        "max_daily_loss_pct": 0.02, "allocation_trend_daily": 0.5},
             "symbols": {"BTC-USD": {"leverage": 1, "strategies": "FIBONACCI_RETRACEMENT"}}})
-    assert set(applied) == {"trading.max_drawdown_pct", "trading.allocation_trend_daily",
+    assert set(applied) == {"trading.max_drawdown_pct", "trading.max_weekly_loss_pct",
+                            "trading.max_daily_loss_pct", "trading.allocation_trend_daily",
                             "symbols.BTC-USD.leverage", "symbols.BTC-USD.strategies"}
     assert restart is False
     assert s.trading.max_drawdown_pct == 0.08 and s.get_symbol_config("BTC-USD").leverage == 1
@@ -102,7 +106,10 @@ def test_persistence_roundtrip_and_reset(tmp_path, monkeypatch):
     assert st["restart_required"] is False and st["overrides"]["trading"]["max_drawdown_pct"] == 0.08
     ov.clear_overrides()
     assert not os.path.exists(path)
-    assert Settings().trading.max_drawdown_pct == 0.10
+    # a reset returns to the SHIPPED default, which tracks the balanced profile rather than a
+    # number frozen in a test (config/risk_profiles.py is the source of truth)
+    from config.risk_profiles import PROFILES
+    assert Settings().trading.max_drawdown_pct == PROFILES["balanced"]["max_drawdown_pct"]
 
 
 def test_saved_overrides_are_lenient_with_unknown_fields(tmp_path, monkeypatch):

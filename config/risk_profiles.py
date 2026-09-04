@@ -76,9 +76,11 @@ PROFILES: Dict[str, Dict[str, float]] = {
     "conservative": {"trend_target_vol": 0.10, "max_drawdown_pct": 0.06,
                      "max_daily_loss_pct": 0.010, "max_weekly_loss_pct": 0.030,
                      "trend_leverage_cap": 2.0},
-    "balanced":     {"trend_target_vol": 0.20, "max_drawdown_pct": 0.10,
-                     "max_daily_loss_pct": 0.020, "max_weekly_loss_pct": 0.050,
-                     "trend_leverage_cap": 2.0},
+    # Balanced moved from 0.20 to 0.45 on 2026-09-04, Edgar's choice from the same measured menu.
+    # Ladder from the measured tail at THIS size: worst day -5.60 %, worst week -7.76 %, maxDD 16.5 %.
+    "balanced":     {"trend_target_vol": 0.45, "max_drawdown_pct": 0.22,
+                     "max_daily_loss_pct": 0.070, "max_weekly_loss_pct": 0.100,
+                     "trend_leverage_cap": 3.0},
     # AGGRESSIVE IS DELIBERATELY BEYOND THE VALIDATED RANGE (Edgar, 2026-09-04). He was shown the
     # measured menu in dollars on his own book and chose the top row. 0.80 target volatility with the
     # 3x ceiling: scripts/aggressive_080_study.py, same 14-market panel, 3,654 days — Sharpe 1.84,
@@ -96,7 +98,8 @@ PROFILES: Dict[str, Dict[str, float]] = {
 EXPECTED: Dict[str, Dict[str, float]] = {
     "conservative": {"sharpe": 1.93, "cagr": 0.056, "vol": 0.028, "max_dd": 0.039,
                      "gates_passed": 11, "gates_total": 11, "dsr": 1.00},
-    "balanced":     {"sharpe": 1.92, "cagr": 0.113, "vol": 0.057, "max_dd": 0.076,
+    "balanced":     {"sharpe": 1.92, "cagr": 0.258, "vol": 0.124, "max_dd": 0.165,
+                     "worst_day": 0.0560, "worst_week": 0.0776, "longest_underwater_days": 594,
                      "gates_passed": 11, "gates_total": 11, "dsr": 1.00},
     # measured at target vol 0.80 with the 3x cap (aggressive_080_study, 2026-09-04)
     "aggressive":   {"sharpe": 1.84, "cagr": 0.415, "vol": 0.200, "max_dd": 0.275,

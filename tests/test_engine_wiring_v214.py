@@ -146,4 +146,5 @@ def test_risk_snapshot_shape():
     for k in ("equity", "peak_equity", "drawdown_pct", "daily_pnl", "daily_limit", "weekly_pnl",
               "weekly_limit", "killed_strategies", "compounding_enabled", "equity_basis"):
         assert k in snap
-    assert snap["daily_limit"] == pytest.approx(1000.0 * 0.02)
+    # against the configured limit, not a literal: the shipped profile is allowed to move
+    assert snap["daily_limit"] == pytest.approx(1000.0 * s.trading.max_daily_loss_pct)

@@ -847,7 +847,9 @@ def test_shutdown_paper_and_dry_run_never_touch_exchange(settings):
 def test_drawdown_halt_flattens_once_then_cancels(settings):
     settings.trading.risk_check_interval_sec = 0.005
     bot = _shutdown_bot(settings)
-    bot.risk_manager.current_drawdown_pct = 0.2   # >= max_drawdown_pct (0.10)
+    # set the limit the test needs rather than inheriting whatever the shipped profile is
+    bot.settings.trading.max_drawdown_pct = 0.10
+    bot.risk_manager.current_drawdown_pct = 0.2   # >= max_drawdown_pct
 
     async def scenario():
         task = asyncio.create_task(bot._risk_monitor_loop())

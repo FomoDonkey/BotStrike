@@ -106,9 +106,12 @@ class TradingConfig:
     # el histórico persistido en la trade DB, no sobre la sesión (audit 2026-09-02:
     # el pico de equity se reiniciaba en cada restart y el circuit breaker del 10%
     # nunca acumulaba entre reinicios).
-    max_drawdown_pct: float = 0.10      # 10% from the all-time peak → halt + flatten
-    max_daily_loss_pct: float = 0.02    # 2% of equity per UTC day → no new entries
-    max_weekly_loss_pct: float = 0.05   # 5% of equity per ISO week → no new entries
+    # The shipped default IS the balanced profile (config/risk_profiles.py). Keep the two in step:
+    # if they drift, a fresh install boots into "custom" and the Risk page can offer no expectation
+    # for what it is running (caught 2026-09-04 when balanced moved to 0.45).
+    max_drawdown_pct: float = 0.22      # 22% from the all-time peak → halt + flatten
+    max_daily_loss_pct: float = 0.07    # 7% of equity per UTC day → no new entries
+    max_weekly_loss_pct: float = 0.10   # 10% of equity per ISO week → no new entries
     max_leverage: int = 5               # Safer for micro account (was 20)
     max_total_exposure_pct: float = 0.6  # 60% max exposure (was 0.8)
     max_open_positions: int = 4          # Max concurrent positions (one per symbol)
@@ -173,10 +176,10 @@ class TradingConfig:
     telegram_regime_min_interval_min: int = 60   # at most one regime message per symbol per hour
     # ── Trend daily parameters (research_r2_trend_evidence §11.2 — validated set) ──
     trend_lookbacks: str = "5,10,20,30,60,90"   # Donchian ensemble lookbacks (days)
-    trend_target_vol: float = 0.20               # annualized vol target per asset
+    trend_target_vol: float = 0.45               # annualized vol target per asset (= balanced)
     trend_vol_window: int = 90                   # days for realized vol
     trend_n_assets: int = 3                      # top-N by 30d median dollar volume
-    trend_leverage_cap: float = 2.0              # cap on the vol scalar (spec: 2.0)
+    trend_leverage_cap: float = 3.0              # cap on the vol scalar (= balanced/aggressive)
     trend_rebalance_threshold: float = 0.20      # only re-trade vol-induced size changes > 20%
     trend_execution_hour_utc: int = 0            # execute at the daily open (00:00 UTC)...
     trend_execution_delay_min: int = 5           # ...plus this delay (candle must exist)

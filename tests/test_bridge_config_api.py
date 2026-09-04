@@ -41,7 +41,8 @@ def test_config_is_available_before_the_engine_starts(st, client):
     body = r.json()
     assert body["engine_running"] is False
     assert body["trading"]["allocation_trend_daily"] == 1.0
-    assert body["trading"]["max_weekly_loss_pct"] == 0.05
+    # 0.10: the shipped default tracks the balanced profile, which moved to 0.45 target vol
+    assert body["trading"]["max_weekly_loss_pct"] == 0.10
     assert body["symbols"][0]["strategies"] == "FIBONACCI_RETRACEMENT,DIVERGENCE"
     assert body["overrides"] == {} and body["restart_required"] is False
     sch = client.get("/api/config/schema").json()
@@ -54,6 +55,7 @@ def test_put_config_validates_persists_and_applies_live(st, client, tmp_path):
     st.engine, st.running = eng, True
     r = client.put("/api/config", json={"trading": {"max_drawdown_pct": 0.9}})
     assert r.status_code == 400 and "<= 0.5" in r.json()["detail"]
+    # deliberately incoherent: daily above the drawdown limit must be refused by the ladder check
     r = client.put("/api/config", json={"trading": {"max_drawdown_pct": 0.03, "max_daily_loss_pct": 0.05}})
     assert r.status_code == 400 and "ladder" in r.json()["detail"]
     r = client.put("/api/config", json={"trading": {"allocation_trend_daily": 0.5, "microstructure_enabled": True},
@@ -121,7 +123,7 @@ def test_strategies_view_offers_only_the_live_ones(st, client):
 
 def test_risk_and_trend_without_engine(st, client):
     r = client.get("/api/risk").json()
-    assert r["engine"] is False and r["max_weekly_loss_pct"] == 0.05 and r["compounding_enabled"] is True
+    assert r["engine"] is False and r["max_weekly_loss_pct"] == 0.10 and r["compounding_enabled"] is True
     t = client.get("/api/trend").json()
     assert t["engine"] is False and t["enabled"] is True and t["positions"] == []
 
