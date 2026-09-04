@@ -245,13 +245,13 @@ def test_terminal_endpoints(st):
     mk = client.get("/api/market/ETH-USD").json()
     assert mk["mark_price"] == 100.6 and mk["high_24h"] == 102.0 and mk["regime"] == "RANGING"
     assert 0 < mk["funding_countdown_sec"] <= 8 * 3600
-    strategies = client.get("/api/strategies").json()["strategies"]
-    div = next(x for x in strategies if x["type"] == "DIVERGENCE")
-    # UNPROVEN, not NO-GO: the 1h line is dead out of sample but 4h still has positive gross AND net
-    # there (t +1.09), which is a different verdict from "no signal" (2026-09-04).
-    assert div["enabled"] is False and div["research"]["verdict"] == "UNPROVEN"
-    assert "out of sample" in div["description"].lower() and div["params"]["timeframe_min"] == 240
-    assert "hidden divergences DIED" in div["research"]["note"]
+    body = client.get("/api/strategies").json()
+    # Divergence was RETIRED on 2026-09-04: widened to 30 markets it had never seen, the 4h line went
+    # from PF 1.11 / +34.4 bps on 323 trades to PF 1.01 / +4.6 bps on 1,479, t 0.95. It is no longer
+    # offered — the record travels in `retired`, and the strategy code stays as the evidence.
+    assert [x["type"] for x in body["strategies"]] == ["TREND_DAILY"]
+    div = next(x for x in body["retired"] if x["type"] == "DIVERGENCE")
+    assert "mirage" in div["reason"] and "2/7" in div["reason"]
 
 
 def _born_candidate():

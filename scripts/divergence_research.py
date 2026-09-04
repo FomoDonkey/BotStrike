@@ -242,6 +242,9 @@ def main() -> int:
     # The study's own §6 says the verdict changes only on a FRESH window. Six markets it never saw
     # is a genuine out-of-sample: same rule, data it was not tuned on (2026-09-04).
     ap.add_argument("--symbols", default="", help="comma-separated override, e.g. an out-of-sample set")
+    # The 4h line is the only one with positive gross AND net out of sample. Making it the BASE puts
+    # it under the full GO/NO-GO checklist instead of a variant line (2026-09-04).
+    ap.add_argument("--timeframe", type=int, default=1, help="hours per bar for the BASE run (1 or 4)")
     args = ap.parse_args()
     syms = [x.strip().upper() for x in args.symbols.split(",") if x.strip()] or SYMS
     data = {s: load(s) for s in syms if os.path.exists(os.path.join(DATA_DIR, f"{s}.parquet"))}
@@ -249,7 +252,12 @@ def main() -> int:
     for s, d in data.items():
         d.attrs["symbol"] = s
     print(f"== data: {len(data)} symbols, {min(len(d) for d in data.values())} bars each (1h)")
-    base = Params()
+    base = Params(tf_hours=args.timeframe, max_hold=24 if args.timeframe >= 4 else 48)
+    if args.timeframe != 1:
+        data = {s_: load(s_, args.timeframe) for s_ in data}
+        for s_, d_ in data.items():
+            d_.attrs["symbol"] = s_
+        print(f"== BASE timeframe: {args.timeframe}h bars, time stop {base.max_hold} bars")
     n_trials = 0
     print("\n== BASE (regular divergences, RSI14, k=3, structure break + MACD, next-open fill, 2R, 8 bps/side)")
     s, per = run_all(data, base); n_trials += 1

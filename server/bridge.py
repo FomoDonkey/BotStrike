@@ -2430,9 +2430,12 @@ async def get_strategies():
             "research": view.get("research"),
         })
     return {"strategies": strategies,
+            # Only the ones that were once offered as real options; the three archived engines never
+            # were, so listing them would be noise rather than a record.
             "retired": [{"type": k, "name": _STRATEGY_NAMES.get(StrategyType(k), k), "reason": v}
                         for k, v in RETIRED_STRATEGIES.items()
-                        if k in (StrategyType.MEAN_REVERSION.value, StrategyType.FIBONACCI_RETRACEMENT.value)]}
+                        if k in (StrategyType.MEAN_REVERSION.value, StrategyType.FIBONACCI_RETRACEMENT.value,
+                                 StrategyType.DIVERGENCE.value)]}
 
 
 def _iso_utc(ts: float) -> str:

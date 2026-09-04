@@ -63,6 +63,12 @@ RETIRED_STRATEGIES: dict = {
     StrategyType.FIBONACCI_RETRACEMENT.value:
         "t = -2.6 with PSR(0) = 0.005 and a bootstrap PnL entirely negative. "
         "tasks/audit/04_backtest_quant_evidence.md",
+    StrategyType.DIVERGENCE.value:
+        "Retired 2026-09-04 by its OWN pre-registered conditions. Widened to 30 markets it had never "
+        "seen: the 4h line went from PF 1.11 / +34.4 bps net on 323 trades to PF 1.01 / +4.6 bps on "
+        "1,479 (t 0.95), and the with-trend variant from PF 3.28 on 13 trades to 1.10 on 115 (t 0.62). "
+        "An effect that collapses as n grows while the t-stat stands still is a small-sample mirage. "
+        "GO/NO-GO 2/7. tasks/research_divergence_final_2026-09-04.md",
     StrategyType.TREND_FOLLOWING.value: "Superseded by TREND_DAILY, which is the validated version.",
     StrategyType.MARKET_MAKING.value: "Archived: never validated, and it needs maker fills the venue does not give us.",
     StrategyType.ORDER_FLOW_MOMENTUM.value:

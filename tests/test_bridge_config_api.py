@@ -56,19 +56,19 @@ def test_put_config_validates_persists_and_applies_live(st, client, tmp_path):
     assert r.status_code == 400 and "<= 0.5" in r.json()["detail"]
     r = client.put("/api/config", json={"trading": {"max_drawdown_pct": 0.03, "max_daily_loss_pct": 0.05}})
     assert r.status_code == 400 and "ladder" in r.json()["detail"]
-    r = client.put("/api/config", json={"trading": {"allocation_divergence": 0.5, "microstructure_enabled": True},
+    r = client.put("/api/config", json={"trading": {"allocation_trend_daily": 0.5, "microstructure_enabled": True},
                                         "symbols": {"ETH-USD": {"mr_zscore_entry": 2.5}}})
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "ok" and body["restart_required"] is False
-    assert set(body["applied"]) == {"trading.allocation_divergence", "trading.microstructure_enabled",
+    assert set(body["applied"]) == {"trading.allocation_trend_daily", "trading.microstructure_enabled",
                                     "symbols.ETH-USD.mr_zscore_entry"}
     # applied LIVE to the engine's settings object and mirrored in the portfolio weights
-    assert eng.settings.trading.allocation_divergence == 0.5
+    assert eng.settings.trading.allocation_trend_daily == 0.5
     assert eng.settings.get_symbol_config("ETH-USD").mr_zscore_entry == 2.5
-    assert eng.portfolio_manager._current_weights[StrategyType.DIVERGENCE] == 0.5
+    assert eng.settings.trading.allocation_trend_daily == 0.5
     # persisted for the next start
-    assert ov.load_overrides()["trading"]["allocation_divergence"] == 0.5
+    assert ov.load_overrides()["trading"]["allocation_trend_daily"] == 0.5
     assert body["config"]["overrides"]["symbols"]["ETH-USD"]["mr_zscore_entry"] == 2.5
     # restart-only field is flagged
     r = client.put("/api/config", json={"trading": {"initial_capital": 300}})
@@ -105,14 +105,17 @@ def test_strategies_view_offers_only_the_live_ones(st, client):
     day someone would enable them, and with no gross edge that day is not coming. The verdict still
     travels, once, in `retired`."""
     r = client.get("/api/strategies").json()
+    # One validated strategy and no pretenders: Divergence was retired on 2026-09-04 when widening it
+    # to 30 unseen markets took the 4h line from PF 1.11 to 1.01 (t 0.95).
     types = [s_["type"] for s_ in r["strategies"]]
-    assert types == ["TREND_DAILY", "DIVERGENCE"]
+    assert types == ["TREND_DAILY"]
     trend = r["strategies"][0]
     assert trend["enabled"] is True and trend["active"] is False        # engine not running
     assert "Donchian" in trend["description"] and trend["params"]["lookbacks"] == "5,10,20,30,60,90"
 
     retired = {x["type"]: x for x in r["retired"]}
-    assert set(retired) == {"MEAN_REVERSION", "FIBONACCI_RETRACEMENT"}
+    assert set(retired) == {"MEAN_REVERSION", "FIBONACCI_RETRACEMENT", "DIVERGENCE"}
+    assert "mirage" in retired["DIVERGENCE"]["reason"]
     assert "gross edge" in retired["MEAN_REVERSION"]["reason"]
     assert "tasks/" in retired["FIBONACCI_RETRACEMENT"]["reason"]       # the evidence, not an opinion
 
@@ -165,6 +168,8 @@ def test_a_retired_strategy_cannot_be_given_capital(st, tmp_path, monkeypatch):
         assert "retired" in detail.lower()
         assert "tasks/" in detail          # the refusal cites the evidence, not just an opinion
 
-    # a strategy that is merely disabled is still configurable
-    assert client.put("/api/config", json={"trading": {"allocation_divergence": 0.1}}).status_code == 200
-    assert "MEAN_REVERSION" in RETIRED_STRATEGIES and "DIVERGENCE" not in RETIRED_STRATEGIES
+    # Divergence joined them on 2026-09-04 when 30 markets it had never seen took the 4h line from
+    # PF 1.11 to 1.01: the bot now has one validated strategy and no pretenders.
+    assert client.put("/api/config", json={"trading": {"allocation_divergence": 0.1}}).status_code == 400
+    assert client.put("/api/config", json={"trading": {"allocation_trend_daily": 1.0}}).status_code == 200
+    assert {"MEAN_REVERSION", "FIBONACCI_RETRACEMENT", "DIVERGENCE"} <= set(RETIRED_STRATEGIES)
