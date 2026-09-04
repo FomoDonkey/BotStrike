@@ -88,6 +88,13 @@ export function RiskPage() {
   }, [positions, equity]);
   const totalExposure = exposure.reduce((a, r) => a + r.notional, 0);
   const maxExposurePct = risk.account?.max_total_exposure_pct ?? null;
+  // The risk manager's cap is equity x max_total_exposure_pct x max_leverage (risk_manager.py
+  // _check_total_exposure). Showing "limit 60 %" next to a dollar total implied the cap was 60 % of
+  // equity: at $418.92 that reads as 69 % of the budget used when the real answer is 14 % (2026-09-04).
+  const maxLeverage = risk.account?.max_leverage ?? null;
+  const exposureCapUsd = maxExposurePct !== null && maxLeverage !== null && equity > 0
+    ? equity * maxExposurePct * maxLeverage : null;
+  const exposureUsed = exposureCapUsd && exposureCapUsd > 0 ? totalExposure / exposureCapUsd : null;
   const killed = Object.entries(risk.killed_strategies ?? {});
 
   return (
@@ -139,12 +146,19 @@ export function RiskPage() {
         </Panel>
 
         <Panel>
-          <PanelHeader title="Exposure by symbol" right={<span className="text-[12px] font-medium text-text-2">total <span className="text-text font-semibold">{formatMoney(totalExposure)}</span>{maxExposurePct !== null && equity > 0 ? ` · limit ${formatPct(maxExposurePct, 0)}` : ""}</span>} />
+          <PanelHeader title="Exposure by symbol" right={
+            <span className="text-[12px] font-medium text-text-2">
+              total <span className="text-text font-semibold">{formatMoney(totalExposure)}</span>
+              {exposureCapUsd !== null
+                ? <> of <span className="text-text font-semibold">{formatMoney(exposureCapUsd)}</span> · {formatPct(exposureUsed ?? 0, 1)} used</>
+                : maxExposurePct !== null ? ` · limit ${formatPct(maxExposurePct, 0)}` : ""}
+            </span>} />
           <div className="px-4 py-3 space-y-3">
             {exposure.map((r) => (
               <div key={r.symbol}>
                 <ListRow label={r.symbol}><span className="inline-flex items-baseline gap-1.5">{formatMoney(r.notional)}<span className="text-text-2 font-medium">· {formatPct(r.ratio, 1)} of equity</span></span></ListRow>
-                <ProgressBar ratio={maxExposurePct ? r.ratio / maxExposurePct : r.ratio} tone={r.ratio > 0.5 ? "amber" : "mint"} />
+                {/* measured against the real cap, not against 60 % of equity */}
+                <ProgressBar ratio={exposureCapUsd ? r.notional / exposureCapUsd : r.ratio} tone={r.ratio > 0.5 ? "amber" : "mint"} />
               </div>
             ))}
             {positions.length === 0 && <p className="text-[12.5px] font-medium text-text">No open positions — exposure 0 %</p>}
@@ -176,7 +190,10 @@ export function RiskPage() {
             <ListRow label="Compounding" hint="ON: sizing uses all-time equity; OFF: the fixed initial capital">{risk.compounding_enabled === null ? "---" : risk.compounding_enabled ? "ON" : "OFF"}</ListRow>
             <ListRow label="Equity basis" hint="Capital the risk manager sizes against right now">{risk.equity_basis > 0 ? formatMoney(risk.equity_basis) : "---"}</ListRow>
             <ListRow label="Max leverage">{risk.account?.max_leverage ? `${risk.account.max_leverage}x` : "---"}</ListRow>
-            <ListRow label="Max total exposure">{maxExposurePct !== null ? formatPct(maxExposurePct, 0) : "---"}</ListRow>
+            <ListRow label="Max total exposure" hint="Cap on the sum of open notionals: equity x this share x max leverage">
+              {maxExposurePct !== null ? formatPct(maxExposurePct, 0) : "---"}
+              {exposureCapUsd !== null && <span className="text-text-2 font-medium"> · {formatMoney(exposureCapUsd)}</span>}
+            </ListRow>
             <ListRow label="Open positions">{positions.length}</ListRow>
             <ListRow label="Regimes">
               <span className="inline-flex flex-wrap gap-1 justify-end">{Object.entries(risk.regimes).map(([s, r]) => <RegimeChip key={s} regime={r} size="xs" suffix={<span className="ml-1 text-text">{s.split("-")[0]}</span>} />)}</span>
