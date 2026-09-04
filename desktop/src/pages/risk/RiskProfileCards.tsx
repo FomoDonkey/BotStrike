@@ -220,6 +220,12 @@ function ProfileCard({ p, selected, canApply, disabledReason, busy, onApply }: {
       <dl className="kv">
         <dt><Hint title="How much the position sizer aims to make the book move per year. This is the lever — not leverage.">Target volatility</Hint></dt>
         <dd>{formatPct(p.target_vol, 0)}</dd>
+        {typeof p.leverage_cap === "number" && (
+          <>
+            <dt><Hint title={p.leverage_note ?? "Ceiling on the position scalar, not a fixed multiplier."}>Leverage ceiling</Hint></dt>
+            <dd>{p.leverage_cap}x max</dd>
+          </>
+        )}
         <dt>Expected return</dt>
         <dd>{formatPct(p.expected_cagr, 1)}</dd>
         <dt>Max drawdown limit</dt>

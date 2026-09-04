@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import time
 import urllib.error
@@ -292,6 +293,9 @@ class TrendDailyEngine:
         # symbol -> the venue's mark, pushed in by the engine on each premiumIndex refresh; the book
         # is valued from this, not from the daily source (see mark_positions)
         self.venue_marks: Dict[str, float] = {}
+        # symbol -> the venue's own order rules (tick, step, minimum notional, market cap). Pushed in
+        # by the engine; see _venue_size, which every order goes through.
+        self.venue_filters: Dict[str, Dict[str, float]] = {}
         self._venue_vol: Dict[str, float] = {}
         self._venue_vol_day: str = ""
         # Edge-monitor kill: no entries; every target is 0 so the book is closed at the
@@ -556,9 +560,16 @@ class TrendDailyEngine:
         # entry or add, in the direction of `delta`
         slip = self._slippage_bps(sym) / 10_000.0
         buying = delta > 0
-        fill = price * (1.0 + slip) if buying else price * (1.0 - slip)
+        fill = self._venue_price(sym, price * (1.0 + slip) if buying else price * (1.0 - slip))
         taker = float(self.config.taker_fee)
-        size = abs(delta) / fill * (1 if buying else -1)            # signed
+        # what the VENUE would accept, not what the maths asked for
+        qty = self._venue_size(sym, abs(delta) / fill, fill, closing=False)
+        if qty <= 0:
+            logger.info("trend_entry_below_venue_minimum", symbol=sym,
+                        wanted_usd=round(abs(delta), 2), rules=self._venue_rules(sym))
+            st.weights[sym] = float(st.weights.get(sym, 0.0)) if pos else 0.0
+            return
+        size = qty * (1 if buying else -1)                          # signed
         if pos:
             total = pos.size + size
             pos.entry_price = (pos.entry_price * abs(pos.size) + fill * abs(size)) / abs(total)
@@ -593,10 +604,19 @@ class TrendDailyEngine:
         taker = float(self.config.taker_fee)
         long_pos = pos.size > 0
         # closing a long SELLS (fills lower), closing a short BUYS (fills higher)
-        fill = price * (1.0 - slip) if long_pos else price * (1.0 + slip)
+        fill = self._venue_price(sym, price * (1.0 - slip) if long_pos else price * (1.0 + slip))
         qty = min(abs(qty), abs(pos.size))
         if qty <= 0:
             return
+        rounded = self._venue_size(sym, qty, fill, closing=True)
+        if rounded <= 0:
+            rounded = abs(pos.size)                 # too small to round: flatten rather than strand
+        # never leave dust the venue would refuse to close on its own
+        leftover = abs(pos.size) - rounded
+        min_notional = float(self._venue_rules(sym).get("min_notional") or 0.0)
+        if leftover > 0 and min_notional > 0 and leftover * fill < min_notional:
+            rounded = abs(pos.size)
+        qty = min(rounded, abs(pos.size))
         signed_qty = qty if long_pos else -qty
         gross = (fill - pos.entry_price) * signed_qty          # sign carries the direction
         fees = pos.entry_price * qty * pos.entry_fee_rate + fill * qty * taker
@@ -692,6 +712,53 @@ class TrendDailyEngine:
             self.save_state()
             logger.warning("trend_position_closed_manually", symbol=sym, price=price, reason=reason)
             return {"closed": True, "symbol": to_ui_symbol(sym), "price": price, "reason": reason}
+
+    def _venue_rules(self, sym: str) -> Dict[str, float]:
+        # getattr, not self.venue_filters: an engine restored from an older pickled state, or a stub
+        # in a test, has no such attribute and an order must not blow up over a missing rule list
+        f = getattr(self, "venue_filters", None) or {}
+        return f.get(to_ui_symbol(sym).upper()) or f.get(str(sym).upper()) or {}
+
+    def _venue_size(self, sym: str, qty: float, price: float, *, closing: bool) -> float:
+        """Round a quantity to something the VENUE would actually accept. Returns 0 to skip.
+
+        The panel showed the venue's rules and nothing enforced them, so the paper book could hold a
+        position Strike would have rejected outright — the wrong lot size, or a notional under its
+        $10 minimum (audit 2026-09-04). Rounding is always DOWN, so obeying the rules never enlarges
+        an order beyond what the strategy asked for.
+
+        A close is treated differently on purpose: the minimum notional does not apply to it (a venue
+        always lets you flatten), and if the leftover would be dust below that minimum the whole
+        position goes instead of stranding a piece that could never be closed on its own.
+        """
+        qty = abs(float(qty))
+        rules = self._venue_rules(sym)
+        if not rules or qty <= 0 or price <= 0:
+            return qty
+        step = float(rules.get("step_size") or 0.0)
+        if step > 0:
+            qty = math.floor(qty / step + 1e-9) * step
+            qty = round(qty, max(0, int(round(-math.log10(step))) if step < 1 else 0))
+        cap = float(rules.get("market_max_qty") or rules.get("max_qty") or 0.0)
+        if cap > 0 and qty > cap:
+            logger.warning("trend_order_capped_by_venue", symbol=sym, wanted=round(qty, 8), cap=cap)
+            qty = cap
+        min_qty = float(rules.get("min_qty") or 0.0)
+        min_notional = float(rules.get("min_notional") or 0.0)
+        if qty <= 0 or (min_qty > 0 and qty < min_qty):
+            return 0.0
+        if not closing and min_notional > 0 and qty * price < min_notional:
+            return 0.0
+        return qty
+
+    def _venue_price(self, sym: str, price: float) -> float:
+        """Round a price to the venue's tick. Half-up: this is a mark for the paper fill, not a
+        resting order, so the nearest tick is the honest one."""
+        rules = self._venue_rules(sym)
+        tick = float(rules.get("tick_size") or 0.0)
+        if tick <= 0 or price <= 0:
+            return price
+        return round(round(price / tick) * tick, 10)
 
     # ── marking / views ──
     async def mark_positions(self, data: Optional[Dict[str, pd.DataFrame]] = None) -> None:

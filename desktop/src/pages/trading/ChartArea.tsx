@@ -174,13 +174,15 @@ export function ChartArea({ market, timeframe, onTimeframe, markers, positions, 
         <div className="md:hidden flex items-center h-9 px-2 border-b border-hairline-soft overflow-x-auto scrollbar-none shrink-0">{toolbar}</div>
       )}
 
-      {/* A market with no intraday stream renders an empty chart. Say why instead of leaving a void:
-          the daily trend book prices these from daily bars, and funding still applies (2026-09-04). */}
+      {/* The engine streams four symbols over the socket; the other 27 get their candles, book and
+          prints from the venue over REST instead, which refreshes every few seconds rather than
+          tick by tick. Everything is here — say where it comes from rather than claim it is live
+          tick data (2026-09-04). */}
       {tab === "chart" && !hasFeed && (
         <div className="px-3 py-2 border-b border-hairline-soft text-[12.5px] font-medium text-text-2 shrink-0">
-          <span className="text-text font-semibold">{symbol}</span> has no intraday stream on this bridge —
-          no chart, order book or tape. It trades in the daily trend book, priced from daily bars; its funding,
-          exit ladder and position are live on the panels beside this.
+          <span className="text-text font-semibold">{symbol}</span> is polled from the venue rather than
+          streamed: the chart, book and tape refresh every few seconds instead of tick by tick. The
+          numbers are Strike's own.
         </div>
       )}
       {tab === "chart" && (

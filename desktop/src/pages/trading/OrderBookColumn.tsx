@@ -130,7 +130,7 @@ function OrderBook({ symbol }: { symbol: string }) {
         <span className="text-right">Total ({base})</span>
       </div>
       {empty ? (
-        <div ref={listRef} className="flex-1 flex"><EmptyState>{unstreamed ? "Not streamed for this market" : "Waiting for order book…"}</EmptyState></div>
+        <div ref={listRef} className="flex-1 flex"><EmptyState>{unstreamed ? "Nothing on the venue right now" : "Waiting for order book…"}</EmptyState></div>
       ) : (
         <div ref={listRef} className="flex-1 min-h-0 overflow-hidden flex flex-col">
           {layout !== "bids" && <div className={cn(layout === "asks" && "flex-1 flex flex-col justify-end")}>{asks.map((r) => <Level key={`a${r.price}`} row={r} side="ask" maxTotal={maxTotal} />)}</div>}

@@ -74,10 +74,16 @@ def test_risk_profiles_scale_target_vol_and_the_ladder_together():
     changed = rp.apply_profile(s.trading, "aggressive")
     assert s.trading.trend_target_vol == 0.30 and s.trading.max_drawdown_pct == 0.15
     assert s.trading.max_daily_loss_pct == 0.03 and s.trading.max_weekly_loss_pct == 0.07
-    assert set(changed) == {"trend_target_vol", "max_drawdown_pct", "max_daily_loss_pct", "max_weekly_loss_pct"}
+    # aggressive also raises the vol-scalar ceiling to 3x (Edgar, 2026-09-04). Measured on the
+    # validated 14-market panel: +0.5 pts of CAGR for no extra drawdown, because the cap only bound
+    # on the quietest 5.6 % of asset-days to begin with (scripts/leverage_cap_study.py).
+    assert s.trading.trend_leverage_cap == 3.0
+    assert set(changed) == {"trend_target_vol", "max_drawdown_pct", "max_daily_loss_pct",
+                            "max_weekly_loss_pct", "trend_leverage_cap"}
     assert rp.profile_of(s.trading) == "aggressive"
     rp.apply_profile(s.trading, "conservative")
     assert s.trading.trend_target_vol == 0.10 and s.trading.max_drawdown_pct == 0.06
+    assert s.trading.trend_leverage_cap == 2.0        # and the ceiling comes back down with it
     assert rp.apply_profile(s.trading, "nonsense") == {}         # unknown profile changes nothing
     s.trading.trend_target_vol = 0.17
     assert rp.profile_of(s.trading) == "custom"
@@ -90,7 +96,8 @@ def test_profile_description_is_honest_about_the_trade_off():
     assert abs(d["sharpe"] - c["sharpe"]) < 0.05                # the edge itself does not change
     # Re-measured 2026-09-04 with funding taken from Strike instead of guessed per asset class: the
     # old figures (152 / 113 on 1,000) understated the book, which the Risk page was quoting as fact.
-    assert d["expected_year_usd"] == pytest.approx(167.0) and d["expected_worst_drawdown_usd"] == pytest.approx(112.0)
+    # 172, not 167: aggressive now runs the 3x cap, re-measured on the same panel (2026-09-04)
+    assert d["expected_year_usd"] == pytest.approx(172.0) and d["expected_worst_drawdown_usd"] == pytest.approx(113.0)
     assert c["expected_year_usd"] == pytest.approx(56.0)
     assert rp.describe("custom")["validated"] is False
     assert [p["profile"] for p in rp.catalog()] == ["conservative", "balanced", "aggressive"]

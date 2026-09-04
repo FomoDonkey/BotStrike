@@ -256,3 +256,116 @@ def test_the_health_broadcast_carries_the_venue_so_the_screen_cannot_disagree():
     i = src.index('"type": "health"')
     block = src[i:i + 900]
     assert '"exchange": state.exchange' in block
+
+
+# ── the venue's order rules are obeyed, not merely displayed ──────────────────────────────────
+
+def _book(filters=None):
+    from strategies.trend_daily import TrendDailyEngine
+    eng = TrendDailyEngine(Settings(), on_fill=lambda *_a, **_k: None, equity_provider=lambda: 1000.0)
+    eng.venue_filters = filters if filters is not None else {
+        "BTC-USD": {"tick_size": 0.1, "step_size": 0.00001, "min_qty": 0.00001,
+                    "max_qty": 1000.0, "market_max_qty": 120.0, "min_notional": 10.0},
+    }
+    return eng
+
+
+def test_an_order_is_rounded_to_the_venue_s_step_and_never_upwards():
+    """A size that is not a multiple of the venue's step is rejected outright by the venue, and the
+    paper book was holding positions Strike would never have opened (audit 2026-09-04). Rounding is
+    DOWN so obeying the rule never enlarges the order the strategy asked for."""
+    eng = _book()
+    # 0.0012345678 BTC at a 0.00001 step -> 0.00123
+    got = eng._venue_size("BTC-USD", 0.0012345678, 80_000.0, closing=False)
+    assert got == pytest.approx(0.00123)
+    assert got <= 0.0012345678
+
+
+def test_an_order_under_the_venue_s_minimum_notional_is_skipped():
+    """Strike asks $10. Below it the venue rejects, so the book must not pretend it filled."""
+    eng = _book()
+    assert eng._venue_size("BTC-USD", 0.0001, 80_000.0, closing=False) == 0.0    # $8
+    assert eng._venue_size("BTC-USD", 0.0002, 80_000.0, closing=False) > 0        # $16
+
+
+def test_a_close_ignores_the_minimum_and_never_strands_dust():
+    """A venue always lets you flatten, and leaving a piece too small to close on its own would
+    strand it forever. Closing rounds the same way but the minimum does not apply."""
+    eng = _book()
+    # an $8 close is allowed even though an $8 entry is not
+    assert eng._venue_size("BTC-USD", 0.0001, 80_000.0, closing=True) > 0
+
+    from strategies.trend_daily import BookPosition
+    eng.state.positions["BTC-USD"] = BookPosition(
+        symbol="BTC-USD", size=0.00025, entry_price=80_000.0, weight=0.02,
+        opened="2026-09-04", opened_ts=0.0, entry_fee_rate=0.0005, mark_price=80_000.0)
+
+    fills = []
+
+    async def _capture(trade):                         # the engine awaits its fill callback
+        fills.append(trade)
+
+    eng._on_fill = _capture
+
+    async def run():
+        # ask to close a part that would leave $8 behind: the whole position must go instead
+        await eng._close_part("BTC-USD", eng.state.positions["BTC-USD"], 0.00015,
+                              80_000.0, 0.0, target_w=0.0, reason="test")
+
+    asyncio.run(run())
+    assert "BTC-USD" not in eng.state.positions, "dust below the venue minimum was left behind"
+
+
+def test_a_market_order_is_capped_at_the_venue_s_market_lot_size():
+    """MARKET_LOT_SIZE.maxQty is 120 BTC on Strike; anything larger has to be worked in pieces."""
+    eng = _book()
+    assert eng._venue_size("BTC-USD", 500.0, 80_000.0, closing=False) == pytest.approx(120.0)
+
+
+def test_a_price_is_rounded_to_the_venue_s_tick():
+    eng = _book()
+    assert eng._venue_price("BTC-USD", 80_123.456) == pytest.approx(80_123.5)
+    assert eng._venue_price("BTC-USD", 80_123.44) == pytest.approx(80_123.4)
+
+
+def test_a_market_with_no_rules_yet_is_left_alone():
+    """The rule list arrives from the venue asynchronously; until it does, an order must not be
+    silently zeroed — that would stop the book trading over a missing lookup."""
+    eng = _book(filters={})
+    assert eng._venue_size("BTC-USD", 0.0012345678, 80_000.0, closing=False) == pytest.approx(0.0012345678)
+    assert eng._venue_price("BTC-USD", 80_123.456) == pytest.approx(80_123.456)
+    # and an engine that never had the attribute at all (older state, a stub) still works
+    delattr(eng, "venue_filters")
+    assert eng._venue_size("BTC-USD", 1.0, 80_000.0, closing=False) == pytest.approx(1.0)
+
+
+def test_the_engine_loads_the_venue_s_rules_for_every_market(monkeypatch):
+    """One hourly exchangeInfo call; the panel had these all along and nothing that placed an order
+    was reading them."""
+    import json as _json
+    import io as _io
+
+    import main as main_mod
+
+    payload = {"symbols": [{"symbol": "BTC-USD", "filters": [
+        {"filterType": "PRICE_FILTER", "tickSize": "0.10"},
+        {"filterType": "LOT_SIZE", "stepSize": "0.00001", "minQty": "0.00001", "maxQty": "1000"},
+        {"filterType": "MARKET_LOT_SIZE", "maxQty": "120"},
+        {"filterType": "MIN_NOTIONAL", "notional": "10"}]}]}
+
+    class _Resp(_io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr("urllib.request.urlopen",
+                        lambda *_a, **_k: _Resp(_json.dumps(payload).encode()))
+
+    eng = SimpleNamespace(_venue_filters={}, _venue_filters_ts=0.0)
+    rules = main_mod.BotStrike._load_venue_filters(eng)
+    assert rules["BTC-USD"]["tick_size"] == pytest.approx(0.1)
+    assert rules["BTC-USD"]["step_size"] == pytest.approx(0.00001)
+    assert rules["BTC-USD"]["min_notional"] == pytest.approx(10.0)
+    assert rules["BTC-USD"]["market_max_qty"] == pytest.approx(120.0)

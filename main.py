@@ -136,6 +136,8 @@ class BotStrike:
         # charged twice nor silently skipped (analytics/funding.py).
         self._venue_funding: dict = {}
         self._venue_marks: dict = {}          # symbol -> the venue's mark price, same payload
+        self._venue_filters: dict = {}        # symbol -> the venue's own order rules (exchangeInfo)
+        self._venue_filters_ts: float = 0.0
         self._venue_funding_ts: float = 0.0
         self.funding = FundingAccrual.load(
             interval_hours=int(getattr(settings.trading, "funding_interval_hours", 1) or 1))
@@ -987,6 +989,7 @@ class BotStrike:
             te = getattr(self, "trend_engine", None)
             if te is not None:
                 te.venue_marks = dict(self._venue_marks)
+                te.venue_filters = self._load_venue_filters()
             self._venue_funding_ts = now
             logger.info("venue_funding_rates_loaded", markets=len(self._venue_funding))
         except Exception as e:  # noqa: BLE001 — missing rates simply mean no charge this period
@@ -995,6 +998,53 @@ class BotStrike:
         # keep zeros: XAU, XAG and SP500 genuinely price at 0 funding on some days, and dropping them
         # made four of six held markets disappear from the funding panel (audit 2026-09-03).
         return {s: r for s, r in self._venue_funding.items() if s in symbols}
+
+    def _load_venue_filters(self) -> dict:
+        """The venue's own order rules per market, from exchangeInfo. Cached for an hour.
+
+        These were displayed on the market panel and read by nothing that places an order: a size
+        that is not a multiple of the venue's step, a price off its tick, or a notional under its
+        minimum is simply rejected, and in paper the book would happily hold a position the venue
+        would never have opened (audit 2026-09-04). exchangeInfo changes about never, so an hourly
+        refresh is generous.
+        """
+        now = time.time()
+        if self._venue_filters and now - self._venue_filters_ts < 3600.0:
+            return self._venue_filters
+        try:
+            import json as _json
+            import urllib.request
+            url = os.getenv("BOTSTRIKE_VENUE_INFO_URL",
+                            "https://api.strikefinance.org/price/v2/exchangeInfo")
+            req = urllib.request.Request(url, headers={"User-Agent": "botstrike/1.0"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                info = _json.loads(r.read())
+            out: dict = {}
+            for sm in (info.get("symbols") or []):
+                sym = str(sm.get("symbol", "")).upper()
+                filt = {f.get("filterType"): f for f in (sm.get("filters") or []) if isinstance(f, dict)}
+
+                def _f(d, k):
+                    try:
+                        return float(d.get(k))
+                    except (TypeError, ValueError):
+                        return None
+
+                out[sym] = {
+                    "tick_size": _f(filt.get("PRICE_FILTER", {}), "tickSize"),
+                    "step_size": _f(filt.get("LOT_SIZE", {}), "stepSize"),
+                    "min_qty": _f(filt.get("LOT_SIZE", {}), "minQty"),
+                    "max_qty": _f(filt.get("LOT_SIZE", {}), "maxQty"),
+                    "market_max_qty": _f(filt.get("MARKET_LOT_SIZE", {}), "maxQty"),
+                    "min_notional": _f(filt.get("MIN_NOTIONAL") or filt.get("NOTIONAL") or {}, "notional"),
+                }
+            if out:
+                self._venue_filters = out
+                self._venue_filters_ts = now
+                logger.info("venue_filters_loaded", markets=len(out))
+        except Exception as e:  # noqa: BLE001 - trading must not stop because a rule list is late
+            logger.warning("venue_filters_unavailable", error=str(e)[:160])
+        return self._venue_filters
 
     async def _funding_loop(self) -> None:
         """Settle perpetual funding on open positions (paper). Live mode gets funding from the

@@ -93,7 +93,7 @@ export function OrderBookPanel({ symbol }: { symbol: string }) {
         <span className="text-right">Total ({base})</span>
       </div>
       {empty ? (
-        <div ref={listRef} className="flex-1 flex items-center justify-center text-text-faint text-xs px-4 text-center" title="This market has no intraday stream on this bridge, so there is no live ladder or tape for it. Its price, funding, spread and top of book on the header and the Details tab are the venue's own.">{unstreamed ? "Not streamed for this market" : "Waiting for order book…"}</div>
+        <div ref={listRef} className="flex-1 flex items-center justify-center text-text-faint text-xs px-4 text-center" title="This market is polled from the venue rather than streamed, so the ladder refreshes every couple of seconds. If it is empty the venue is reporting no resting orders on this side.">{unstreamed ? "No resting orders on the venue" : "Waiting for order book…"}</div>
       ) : (
       <div ref={listRef} className="flex-1 min-h-0 overflow-hidden">
         {asks.map((r) => <Level key={`a${r.price}`} row={r} side="ask" maxTotal={maxTotal} />)}

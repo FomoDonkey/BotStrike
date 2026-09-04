@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useShallow } from "zustand/shallow";
 import { useTradingStore, type TradeData } from "@/stores/tradingStore";
 import { useUiStore } from "@/stores/uiStore";
+import { useVenueFallback } from "@/hooks/useVenueFallback";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useMarketInfo } from "@/hooks/useMarketInfo";
 import { TabBar } from "@/components/ui/TabBar";
@@ -38,6 +39,10 @@ export function TradingPage() {
   const [symbol, setSymbolState] = useState(loadSymbol);
   const setSymbol = (s: string) => { setSymbolState(s); try { localStorage.setItem(SYMBOL_KEY, s); } catch { /* ignore */ } };
   const [timeframe, setTimeframeState] = useState<Timeframe>(loadTimeframe);
+  // Markets the engine does not stream get their candles, book and prints from the venue over
+  // REST, written into the same store the socket writes into — so the chart, the indicators,
+  // the ladder, the depth chart and the tape all work on all 31 markets (2026-09-04).
+  useVenueFallback(symbol, timeframe);
   const setTimeframe = (tf: Timeframe) => { setTimeframeState(tf); try { localStorage.setItem(TF_KEY, tf); } catch { /* ignore */ } };
   const [mobileTab, setMobileTab] = useState<MobileTab>("book");
   const isLg = useMediaQuery("(min-width: 1024px)");

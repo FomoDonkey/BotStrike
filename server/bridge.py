@@ -2217,6 +2217,108 @@ async def get_market(symbol: str):
     })
 
 
+# Per-symbol venue data for the market the operator is LOOKING at. Only ever one symbol at a time,
+# so these cost a request every few seconds, not 31 of them.
+KLINES_TTL_SEC = 10.0
+BOOK_TTL_SEC = 2.0
+TAPE_TTL_SEC = 3.0
+_INTERVAL_SEC = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
+                 "1h": 3600, "2h": 7200, "4h": 14400, "6h": 21600, "12h": 43200,
+                 "1d": 86400, "1w": 604800}
+
+@app.get("/api/market/{symbol}/klines")
+async def get_market_klines(symbol: str, interval: str = "1m", limit: int = 500):
+    """Candles for ANY market the venue lists, not only the four the engine streams.
+
+    The chart, the depth panel and the tape were fed from the engine's own frames, and the engine
+    holds four symbols — so picking any of the other 27 opened a market panel with live numbers in
+    the header and an empty chart underneath (Edgar, 2026-09-04). Strike publishes klines for all 31.
+
+    `startTime` is mandatory in practice: asked without one the venue answers from a cached window
+    whose last bar was five hours old. Cached per (symbol, interval) for KLINES_TTL_SEC.
+    """
+    sym, iv = symbol.upper(), str(interval or "1m")
+    limit = max(1, min(int(limit or 500), 1500))
+    key = f"{sym}:{iv}:{limit}"
+    cached = _VENUE_MD.setdefault("klines", {}).get(key)
+    if cached and time.time() - cached[0] < KLINES_TTL_SEC:
+        return cached[1]
+    secs = _INTERVAL_SEC.get(iv, 60)
+    start_ms = int((time.time() - limit * secs) * 1000)
+    out = {"symbol": sym, "interval": iv, "candles": [], "source": "venue"}
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=15.0, headers={"User-Agent": "botstrike/1.0"}) as c:
+            r = await c.get(f"{STRIKE_PRICE_BASE}/klines",
+                            params={"symbol": sym, "interval": iv, "limit": limit,
+                                    "startTime": start_ms})
+            r.raise_for_status()
+            rows = r.json()
+        out["candles"] = [{"timestamp": float(k[0]) / 1000.0, "open": _num(k[1]), "high": _num(k[2]),
+                           "low": _num(k[3]), "close": _num(k[4]), "volume": _num(k[5])}
+                          for k in rows if isinstance(k, list) and len(k) >= 6]
+    except Exception as e:  # noqa: BLE001 - an empty chart beats a 500
+        logger.debug("venue_klines_error", symbol=sym, interval=iv, error=str(e)[:160])
+    _VENUE_MD["klines"][key] = (time.time(), out)
+    return out
+
+
+@app.get("/api/market/{symbol}/book")
+async def get_market_book(symbol: str, limit: int = 20):
+    """The venue's order book for ANY market, so the ladder is not blank on the 27 unstreamed ones."""
+    sym = symbol.upper()
+    limit = max(5, min(int(limit or 20), 50))
+    key = f"{sym}:{limit}"
+    cached = _VENUE_MD.setdefault("books", {}).get(key)
+    if cached and time.time() - cached[0] < BOOK_TTL_SEC:
+        return cached[1]
+    out = {"symbol": sym, "bids": [], "asks": [], "source": "venue", "spread_bps": None}
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10.0, headers={"User-Agent": "botstrike/1.0"}) as c:
+            r = await c.get(f"{STRIKE_PRICE_BASE}/depth", params={"symbol": sym, "limit": limit})
+            r.raise_for_status()
+            book = r.json()
+        out["bids"] = [[_num(px), _num(qty)] for px, qty in (book.get("bids") or [])]
+        out["asks"] = [[_num(px), _num(qty)] for px, qty in (book.get("asks") or [])]
+        if out["bids"] and out["asks"]:
+            bid, ask = out["bids"][0][0], out["asks"][0][0]
+            if bid and ask:
+                out["spread_bps"] = round((ask - bid) / ((ask + bid) / 2) * 1e4, 4)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("venue_book_error", symbol=sym, error=str(e)[:160])
+    _VENUE_MD["books"][key] = (time.time(), out)
+    return out
+
+
+@app.get("/api/market/{symbol}/trades")
+async def get_market_trades(symbol: str, limit: int = 50):
+    """The venue's recent prints for ANY market. Strike returns them newest-first; the tape reads
+    them oldest-first like every other feed, so they are reversed here."""
+    sym = symbol.upper()
+    limit = max(1, min(int(limit or 50), 500))
+    cached = _VENUE_MD.setdefault("tape", {}).get(sym)
+    if cached and time.time() - cached[0] < TAPE_TTL_SEC:
+        return cached[1]
+    out = {"symbol": sym, "trades": [], "source": "venue"}
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10.0, headers={"User-Agent": "botstrike/1.0"}) as c:
+            r = await c.get(f"{STRIKE_PRICE_BASE}/trades", params={"symbol": sym, "limit": limit})
+            r.raise_for_status()
+            rows = r.json()
+        trades = [{"price": _num(t.get("price")), "quantity": _num(t.get("qty")),
+                   "timestamp": float(t.get("time") or 0) / 1000.0,
+                   "side": "sell" if t.get("isBuyerMaker") else "buy"}
+                  for t in rows if isinstance(t, dict)]
+        trades.sort(key=lambda t: t["timestamp"])
+        out["trades"] = trades
+    except Exception as e:  # noqa: BLE001
+        logger.debug("venue_trades_error", symbol=sym, error=str(e)[:160])
+    _VENUE_MD["tape"][sym] = (time.time(), out)
+    return out
+
+
 _VENUE_MD: dict = {"ts": 0.0, "ts_tick": 0.0, "ts_info": 0.0,
                    "premium": {}, "ticker": {}, "filters": {}, "depth": {}}
 # The mark moves every second and the operator reads this header beside the venue's own screen, so

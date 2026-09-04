@@ -536,6 +536,9 @@ export interface RiskProfileInfo {
   /** false → outside the range the research validated */
   validated: boolean;
   target_vol: number;
+  /** ceiling on the position scalar for this profile (2x, or 3x on aggressive) */
+  leverage_cap?: number;
+  leverage_note?: string;
   expected_cagr: number;
   expected_vol: number;
   expected_max_dd: number;
@@ -967,6 +970,30 @@ export function probeBridge(baseUrl: string): Promise<HealthResponse> {
 // ── Public API ───────────────────────────────────────────────────
 
 /** GET /api/markets — the venue's tradable universe, tagged by what each market offers here. */
+/** `/api/market/{sym}/klines` — the venue's candles for any market it lists. */
+export interface VenueKlinesResponse {
+  symbol: string;
+  interval: string;
+  source?: string;
+  candles: { timestamp: number; open: number; high: number; low: number; close: number; volume: number }[];
+}
+
+/** `/api/market/{sym}/book` — the venue's order book for any market it lists. */
+export interface VenueBookResponse {
+  symbol: string;
+  source?: string;
+  bids: [number, number][];
+  asks: [number, number][];
+  spread_bps: number | null;
+}
+
+/** `/api/market/{sym}/trades` — the venue's recent prints, oldest first. */
+export interface VenueTradesResponse {
+  symbol: string;
+  source?: string;
+  trades: { price: number; quantity: number; timestamp: number; side: "buy" | "sell" }[];
+}
+
 export interface VenueMarket {
   symbol: string;
   /** a live intraday stream: chart, order book and tape work */
@@ -1027,6 +1054,13 @@ export const api = {
   account: () => request<AccountResponse>("/api/account"),
   /** Bridge ≥ 2.15 — market header data for one symbol (404 on older bridges). */
   market: (symbol: string) => request<MarketInfoResponse>(`/api/market/${encodeURIComponent(symbol)}`),
+  /** Candles, book and prints for ANY market the venue lists — the engine only streams four. */
+  marketKlines: (symbol: string, interval = "1m", limit = 500) =>
+    request<VenueKlinesResponse>(`/api/market/${encodeURIComponent(symbol)}/klines?interval=${encodeURIComponent(interval)}&limit=${limit}`),
+  marketBook: (symbol: string, limit = 20) =>
+    request<VenueBookResponse>(`/api/market/${encodeURIComponent(symbol)}/book?limit=${limit}`),
+  marketTrades: (symbol: string, limit = 50) =>
+    request<VenueTradesResponse>(`/api/market/${encodeURIComponent(symbol)}/trades?limit=${limit}`),
   dataCatalog: () => request<DataCatalogResponse>("/api/data/catalog"),
   /** Bridge ≥ 2.16 — portfolio page data (404 on older bridges). */
   portfolio: () => request<PortfolioResponse>("/api/portfolio"),

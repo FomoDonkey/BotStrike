@@ -29,7 +29,7 @@ export function DepthChart({ symbol }: { symbol: string }) {
     return [...bids.reverse(), ...asks];
   }, [ob]);
 
-  if (!data.length) return <EmptyState>{unstreamed ? "Not streamed for this market" : "Waiting for order book…"}</EmptyState>;
+  if (!data.length) return <EmptyState>{unstreamed ? "Nothing on the venue right now" : "Waiting for order book…"}</EmptyState>;
   const mid = ob?.mid_price ?? null;
 
   return (
