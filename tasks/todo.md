@@ -1691,3 +1691,21 @@ Edgar, con las dos terminales abiertas, tenía razón en las tres cosas:
       una orden se rechazaría por precisión o por mínimo. Bloqueante para el canario
 - [ ] PENDIENTE: `max_leverage = 5` y `leverage = 2` por símbolo son de configuración, no de Strike
       (que permite hasta 100x en BTC). El libro diario no usa apalancamiento, así que hoy no muerde
+
+## Panel de mercado real para los 31 activos de Strike (2026-09-04, ronda 12)
+Petición: que al elegir cualquier activo del buscador salga el panel con datos, no con "---".
+- [x] El terminal solo emite 4 símbolos; los otros 27 mostraban "---" en precio, marca, índice,
+      estadísticas de 24h, spread y todas las reglas de orden, aunque Strike lo publica todo
+- [x] `/api/market/{symbol}` recurre al venue cuando no hay feed: marca e índice de `premiumIndex`,
+      bloque de 24h de `ticker/24hr`, spread del medido, interés abierto de la API de estadísticas
+      (cacheado 5 min) y **los filtros propios del venue** de `exchangeInfo`
+- [x] Eso cierra además el hueco que había anotado: el bot NO leía tick size, step size ni mínimo de
+      nocional; usaba 20 $ fijo. Ahora usa el del venue (10 $ en Strike)
+- [x] La fila lleva `feed: false` para no fingir de dónde vienen los números, y el venue solo se
+      consulta para lo que el feed no cubre (un símbolo emitido no gasta llamada de red)
+- [x] Precio principal con reserva REST (leía solo el store del WebSocket) y volumen mapeado a los
+      campos que la vista lee de verdad
+- [x] **Medidos spread y funding de los 31 mercados** (antes 12): mediana 7,5 bps/lado, peor 56.
+      NIGHT-USD resulta tener 103 bps de spread — ahora el bot lo sabe y lo cobra
+- [x] Verificado en el navegador: XAU-USD abre con precio 4.478,47, marca, índice, 24h alto/bajo,
+      volumen, interés abierto 8,17 y spread 8,00 bps
