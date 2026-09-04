@@ -1240,3 +1240,47 @@
   así que asumí que el token se regeneraba en cada reinicio y que mis despliegues lo habían roto. La
   variable se llama `BOTSTRIKE_AUTH_TOKEN`. **Comprobar el nombre exacto antes de construir una teoría
   sobre una ausencia.**
+
+## Un terminal habla por UN venue (2026-09-04)
+El bot lee precios de Binance y opera en Strike. Esa dualidad estaba bien documentada en el codigo y
+aun asi se filtro a la pantalla: volumen 24 h, interes abierto, spread, cambio y libro salian de
+Binance bajo cabeceras que decian describir un mercado de Strike. Nadie miente, y sin embargo la
+pantalla mentia: 16.000 M$ de volumen donde el venue movia 1,9 M$.
+**Regla:** toda cifra que DESCRIBE un mercado es del venue donde va la orden. La referencia de
+precio solo aparece donde el sujeto es la referencia, y con su nombre puesto.
+
+## Una posicion vale lo que dice el venue (2026-09-04)
+Peor que un adorno mal puesto: el libro se valoraba con el cierre diario de Yahoo. Oro y plata a
++1,15 % de la marca de Strike, y la posicion de oro leyendose plana (-0,004 $) cuando perdia 0,64 $.
+La senal SI debe salir de barras de cierre — es una estrategia diaria — pero la VALORACION es otra
+cosa. Separar las dos preguntas: "que compro" (barras) y "cuanto vale ahora" (venue).
+
+## Un cero no es un hueco (2026-09-04)
+`formatCompactUSD` devolvia "---" para 0, `x or y` se comia un 0 legitimo, y `m.oi > 0` convertia
+cuatro mercados sin interes abierto en cuatro fallos de red aparentes. Un cero que el venue publica
+es informacion: dice que ese mercado no movio nada. Distinguir siempre "no hay dato" de "el dato es
+cero", en el formateador y en el `??` frente al `||`.
+
+## Un marcador de posicion es una promesa (2026-09-04)
+"Waiting for order book..." en un mercado que este puente no emite nunca. El texto prometia algo que
+no iba a pasar. Si un panel no se va a llenar, tiene que decirlo.
+
+## Ningun test toca la red (2026-09-04)
+Dos tests llegaban a la API de Strike de verdad: uno afirmaba una marca de 100,6 y recibia 2.500,53,
+el precio real del ether ese dia. Un test que toca la red es un test que falla en un tren y, peor,
+que pasa por el motivo equivocado. Ahora conftest deja el venue anulado para todos y quien quiera
+datos del venue los inyecta.
+
+## El deploy no construye la UI (2026-09-04)
+`server/webui` se compila en local y se commitea; nada en la ruta de despliegue lo reconstruye.
+Cuatro commits de correcciones estuvieron vivos en la API y ausentes de la pantalla por eso.
+`deploy/verify.sh` compara ahora el ultimo commit que toca `desktop/src` con el ultimo que toca
+`server/webui`. **Al tocar la UI: `cd desktop && npm run build:web` y commitear el bundle.**
+
+## Un dato vivo se muestrea en el TIEMPO (confirmado otra vez, 2026-09-04)
+El script de auditoria hace dos pasadas separadas 45 s y tolera la deriva medida entre ambas. Sin
+eso, comparar dos lecturas instantaneas da un aprobado falso — que es exactamente como se colo el
+funding rancio el 2026-09-03. Corolario nuevo: cuando la auditoria marque una diferencia diminuta,
+comprobar si es **skew de medicion** antes de tocar codigo. Cinco "fallos" de funding entre lista y
+panel resultaron ser 32 peticiones concurrentes cruzando el TTL de 5 s: leidos consecutivos, 6/6
+identicos.

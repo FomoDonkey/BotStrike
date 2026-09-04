@@ -1709,3 +1709,78 @@ Petición: que al elegir cualquier activo del buscador salga el panel con datos,
       NIGHT-USD resulta tener 103 bps de spread — ahora el bot lo sabe y lo cobra
 - [x] Verificado en el navegador: XAU-USD abre con precio 4.478,47, marca, índice, 24h alto/bajo,
       volumen, interés abierto 8,17 y spread 8,00 bps
+
+## Auditoría milimétrica de los 31 activos y de toda la UI (2026-09-04, ronda 13)
+Petición: "revisa al milímetro y al detalle todos los activos y toda la UI para verificar que todo
+quedó perfectamente. Cuando digo todo es todo."
+
+Método: script que contrasta el bot contra la API pública de Strike campo a campo, en DOS pasadas
+separadas 45 s (un dato vivo se muestrea en el TIEMPO, no una vez), más recorrido visual de las
+siete páginas en el navegador con la pestaña de Strike al lado.
+
+### El fallo de fondo que destapó
+El feed del motor es **Binance** (`exchange_venue="binance"`), una referencia de precio para las
+estrategias — no el libro al que llega una orden. La cabecera, el selector, el pie y la marquesina lo
+estaban leyendo, así que un terminal de Strike imprimía el mercado de Binance:
+
+| Dato | Mostraba | Strike de verdad | Factor |
+|---|---|---|---|
+| Volumen 24 h BTC | 199.026 BTC / 16.000 M$ | 23,89 BTC / 1,9 M$ | 8.300x |
+| Interés abierto BTC | 113.100 BTC | 3,78 BTC | 30.000x |
+| Spread BTC | 0,012 bps | 0,09 bps | 7x |
+| Spread ADA | 4,49 bps | 6,28 bps | |
+| Cambio 24 h BTC | +3,98 % | +3,72 % | |
+
+Todos hacen que un venue delgado parezca profundo, que es exactamente el error que hace equivocar
+un tamaño de posición.
+
+- [x] Cabecera, selector, pie y marquesina: **cada cifra que describe el mercado es la del venue**
+- [x] El feed no se tira: queda en `feed_price` / `feed_spread_bps`, etiquetado donde se muestra
+- [x] COIN-USD no está en el ticker 24h de Strike: sin precio, el panel salía "---" en un mercado
+      que opera. Ahora encabeza con la marca, igual que la propia cabecera de Strike
+- [x] Estrategias **retiradas** anunciadas en los paneles (ETH y ADA: MEAN_REVERSION y DIVERGENCE;
+      BTC: FIBONACCI) y en `/api/edge`. Filtradas; ahora dice "none - not in the trend universe"
+- [x] Un cero del venue no es un dato que falte: OI cero en 4 mercados y volumen cero en GOOGL
+      salían como "---"
+- [x] "Waiting for order book..." en los 27 mercados sin stream: una promesa que no se puede cumplir
+- [x] Una sola fuente para el funding (la cotización más fresca) en panel, lista y página de funding
+- [x] Sin hueco de funding tras un reinicio (antes: un minuto con todo en blanco)
+- [x] Escritura atómica del cache diario: el deploy dejó WTI-USD.parquet en 0 bytes
+- [x] El pool por defecto es el validado 11/11; el anterior nombraba EOSUSDT, cuya serie acaba el
+      2025-05-26
+- [x] La línea de log decía "Engine: 0 trades | PnL $+0.00" con seis posiciones abiertas y +14 $
+- [x] `deploy/verify.sh` avisa si el bundle web va por detrás del código fuente
+
+### EL MAS CARO: el libro se valoraba fuera del venue
+Las posiciones se marcaban al **cierre diario** (Yahoo para oro/plata/indices/petroleo), no a la
+marca de Strike. Medido contra premiumIndex el 2026-09-04:
+
+| Mercado | Marca del libro | Marca del venue | Error |
+|---|---|---|---|
+| XAG-USD | 67,5100 | 66,7386 | +1,156 % |
+| XAU-USD | 4.526,60 | 4.475,81 | +1,135 % |
+| WTI-USD | 91,9500 | 91,5730 | +0,412 % |
+
+La posición de oro marcaba **-0,004 $ cuando de verdad era -0,64 $**, y el PnL no realizado del
+libro estaba inflado en 0,78 $ sobre 419 $.
+- [x] El motor cachea la marca del venue del mismo `premiumIndex` que ya pide para el funding
+- [x] `mark_positions` valora a la marca del venue; el cierre diario queda de reserva
+- [x] Las barras diarias conservan su trabajo real: la SEÑAL se calcula con cierres y debe ser así
+- [x] Verificado tras desplegar: error total **de -0,78 $ a +0,026 $** (el residuo es la cadencia)
+- [x] Test que fija la regla (`test_the_book_is_valued_at_the_venue_mark_not_the_daily_source`)
+
+### Estado final medido
+- 31/31 mercados: precio, marca, indice, funding, cuenta atras, spread, interes abierto y filtros
+  de orden coinciden con la API de Strike. Precio a +0,00 % en los 31.
+- Los unicos "fallos" que quedan son de Strike, no del bot: **Strike no publica bloque de 24 h para
+  COIN-USD** (el panel lo dice con esas palabras).
+- Avisos restantes, todos correctos por diseño: 25 mercados sin estrategia (solo se opera el
+  universo de tendencia) y 12 con slippage != medio spread vivo (el modelo usa la **mediana
+  medida**, mas estable que una foto).
+- 319 tests en verde.
+
+### Sigue abierto (no bloqueante en papel, SI para el canario)
+- [ ] La ruta de ejecucion muestra los filtros del venue pero no los aplica al mandar una orden
+- [ ] `max_leverage = 5` es configuracion local, no el limite de Strike
+- [ ] El grafico, la cinta y la escalera del libro siguen siendo de Binance (etiquetados como tal).
+      Cambiarlos a la profundidad de Strike es una decision de producto pendiente de Edgar
