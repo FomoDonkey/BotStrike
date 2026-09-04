@@ -2113,6 +2113,14 @@ async def get_market(symbol: str):
     })
 
 
+def _market_slippage_bps(engine, symbol: str) -> float:
+    """Half the market's measured spread on the venue, floored at the configured default."""
+    from strategies.trend_daily import _venue_half_spread_bps
+    base = float(getattr(engine.settings.trading, "slippage_bps", 1.5) or 1.5)
+    half = _venue_half_spread_bps(symbol)
+    return round(max(base, half) if half is not None else base, 3)
+
+
 def _strategies_on(engine, symbol: str, sc) -> list:
     """Strategies configured for this market, plus the one that actually holds it.
 
@@ -2159,6 +2167,8 @@ def _symbol_config_view(engine, symbol: str) -> dict:
         t = engine.settings.trading
         return {"leverage": int(getattr(sc, "leverage", 1)), "max_position_usd": float(getattr(sc, "max_position_usd", 0.0)),
                 "min_notional_usd": 20.0, "strategies": _strategies_on(engine, symbol, sc),
+                # what THIS market's book actually costs to cross, not the global default
+                "slippage_bps": _market_slippage_bps(engine, symbol),
                 "taker_fee": float(getattr(t, "taker_fee", 0.0004)), "maker_fee": float(getattr(t, "maker_fee", 0.0002)),
                 "maintenance_margin": 0.005, "max_leverage": int(getattr(t, "max_leverage", 5)),
                 "risk_per_trade_pct": float(getattr(t, "risk_per_trade_pct", 0.0))}

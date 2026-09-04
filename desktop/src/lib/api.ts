@@ -623,6 +623,8 @@ export interface SymbolConfigInfo {
   taker_fee: number;
   maker_fee: number;
   maintenance_margin: number;
+  /** half this market's own measured spread on the venue, floored at the configured default */
+  slippage_bps?: number;
 }
 
 // ── v2.16 (spec §5) ──────────────────────────────────────────────

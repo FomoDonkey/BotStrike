@@ -469,3 +469,38 @@ def test_a_short_is_coherent_end_to_end_from_the_engine_to_the_row_the_ui_reads(
     feed = type("E", (), {"paper_sim": None, "trend_engine": _Trend()})()
     frow = m.BotStrike._funding_positions(feed)[0]
     assert frow["side"] == "SELL" and frow["size"] > 0 and frow["notional"] > 0
+
+
+def test_each_market_is_charged_its_own_measured_spread():
+    """`slippage_bps` is one number calibrated for Binance ('deep book') and was applied to gold and
+    silver alike. Strike's own measurement runs 0.23 bps on BTC to 8.0 on XAU (2026-09-04)."""
+    eng, _, _ = _exec_engine()
+    eng.config.slippage_bps = 1.5
+
+    btc = TrendDailyEngine._slippage_bps(eng, "BTCUSDT")
+    xau = TrendDailyEngine._slippage_bps(eng, "XAU-USD")
+    xag = TrendDailyEngine._slippage_bps(eng, "XAG-USD")
+
+    # BTC's book is deep: the configured value is the floor, so it does not get cheaper than 1.5
+    assert btc == pytest.approx(1.5)
+    # the metals cross a spread several times wider, and now pay for it
+    assert xau > 3.0 and xag > 3.0
+    assert xau > btc and xag > btc
+
+    # a market the venue never measured falls back to the configured value
+    assert TrendDailyEngine._slippage_bps(eng, "NOTAMARKET-USD") == pytest.approx(1.5)
+
+
+def test_the_wider_spread_reaches_the_fill():
+    """The point of measuring it is that the paper book pays it."""
+    import asyncio as _aio
+    eng, fills, _ = _exec_engine()
+    eng.config.slippage_bps = 1.5
+    run = lambda **kw: _aio.get_event_loop_policy().new_event_loop().run_until_complete(
+        TrendDailyEngine._execute_symbol(eng, **kw))
+
+    run(sym="BTCUSDT", target_w=0.10, price=100.0, equity=1000.0, today_key="2026-09-04", now=1.0)
+    run(sym="XAU-USD", target_w=0.10, price=100.0, equity=1000.0, today_key="2026-09-04", now=1.0)
+    btc_fill = eng.state.positions["BTCUSDT"].entry_price
+    xau_fill = eng.state.positions["XAU-USD"].entry_price
+    assert xau_fill > btc_fill        # the metal's entry is worse, because its book is thinner

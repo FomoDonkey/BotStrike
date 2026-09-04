@@ -172,6 +172,27 @@ class DailyDataStore:
 
 
 # ── Book / state ───────────────────────────────────────────────────────────────
+_VENUE_COSTS: Dict[str, Any] = {"mtime": 0.0, "half_spread": {}}
+
+
+def _venue_half_spread_bps(ui_symbol: str) -> Optional[float]:
+    """Half the median spread this market showed on the venue, or None if it was never measured."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "strike_costs.json")
+    try:
+        mtime = os.path.getmtime(path)
+        if mtime != _VENUE_COSTS["mtime"]:
+            with open(path, encoding="utf-8") as fh:
+                raw = json.load(fh)
+            _VENUE_COSTS["half_spread"] = {
+                k: float(v["spread"]["half_spread_bps"])
+                for k, v in (raw.get("markets") or {}).items()
+                if isinstance(v, dict) and (v.get("spread") or {}).get("half_spread_bps") is not None}
+            _VENUE_COSTS["mtime"] = mtime
+    except Exception:  # noqa: BLE001 — a missing snapshot just means "use the configured value"
+        return _VENUE_COSTS["half_spread"].get(ui_symbol)
+    return _VENUE_COSTS["half_spread"].get(ui_symbol)
+
+
 @dataclass
 class BookPosition:
     symbol: str                 # pool symbol (BTCUSDT)
@@ -464,6 +485,20 @@ class TrendDailyEngine:
             logger.error("trend_daily_run_failed", error=str(e), error_type=type(e).__name__)
             return {"status": "error", "error": st.last_error}
 
+    def _slippage_bps(self, sym: str) -> float:
+        """Half the market's own measured spread, not one number for every market.
+
+        `slippage_bps` defaults to 1.5 and its comment says "Binance Futures has deep book" — it was
+        calibrated for a different venue and applied to gold, silver and ADA alike. Strike's measured
+        spreads (data/strike_costs.json, scripts/strike_market_stats.py) run from 0.23 bps on BTC to
+        8.0 on XAU, so a flat 1.5 understates the cost of the illiquid half of the book by ~2.6x and
+        overstates BTC's by 13x. Crossing the book costs half the spread, so that is what we charge,
+        with the configured value as the floor and the fallback (2026-09-04).
+        """
+        base = float(self.config.slippage_bps)
+        half = _venue_half_spread_bps(to_ui_symbol(sym))
+        return max(base, half) if half is not None else base
+
     async def _execute_symbol(self, sym: str, target_w: float, price: float, equity: float,
                               today_key: str, now: float) -> None:
         """Move one market from what we hold to what the model wants, in SIGNED notional.
@@ -500,13 +535,13 @@ class TrendDailyEngine:
             return
 
         if closing:
-            fill_price = price * (1.0 - float(self.config.slippage_bps) / 10_000.0 * (1 if pos.size > 0 else -1))
+            fill_price = price * (1.0 - self._slippage_bps(sym) / 10_000.0 * (1 if pos.size > 0 else -1))
             qty = abs(pos.size) if target == 0.0 else min(abs(pos.size), abs(delta) / fill_price)
             await self._close_part(sym, pos, qty, price, now, target_w=target_w, reason="exit")
             return
 
         # entry or add, in the direction of `delta`
-        slip = float(self.config.slippage_bps) / 10_000.0
+        slip = self._slippage_bps(sym) / 10_000.0
         buying = delta > 0
         fill = price * (1.0 + slip) if buying else price * (1.0 - slip)
         taker = float(self.config.taker_fee)
@@ -541,7 +576,7 @@ class TrendDailyEngine:
                           target_w: float, reason: str) -> None:
         """Close `qty` units of a position, whichever way it points, realising the PnL of that part."""
         st = self.state
-        slip = float(self.config.slippage_bps) / 10_000.0
+        slip = self._slippage_bps(sym) / 10_000.0
         taker = float(self.config.taker_fee)
         long_pos = pos.size > 0
         # closing a long SELLS (fills lower), closing a short BUYS (fills higher)

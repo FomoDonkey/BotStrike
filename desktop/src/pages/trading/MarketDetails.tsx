@@ -96,7 +96,11 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
 
         <div className="min-w-0">
           <ListSection title="Price protection">
-            <ListRow label="Slippage model" hint="Paper fills are moved against you by this many basis points of the mark price">{trading ? `${trading.slippage_bps} bps` : "---"}</ListRow>
+            {/* Per market, not one number for all of them: BTC's book is 0.23 bps wide and gold's
+                is 8 (measured on the venue, 2026-09-04). */}
+            <ListRow label="Slippage model" hint="Paper fills are moved against you by this many basis points: half this market's own measured spread on the venue, floored at the configured default">
+              {typeof sc?.slippage_bps === "number" ? `${sc.slippage_bps} bps` : trading ? `${trading.slippage_bps} bps` : "---"}
+            </ListRow>
             <ListRow label="Mark price" hint={HINTS.mark}>{m.mark > 0 ? formatPrice(m.mark) : "---"}</ListRow>
             <ListRow label="Index price" hint={HINTS.index}>{m.index > 0 ? formatPrice(m.index) : "---"}</ListRow>
             <ListRow label="Mark − index" hint="Premium of mark over index — the basis funding corrects">{m.mark > 0 && m.index > 0 ? formatSignedPct((m.mark - m.index) / m.index, 3) : "---"}</ListRow>
