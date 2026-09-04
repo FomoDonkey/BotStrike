@@ -1,3 +1,4 @@
+import { useExchangeStore } from "./exchangeStore";
 import { create } from "zustand";
 import { HEALTH_STALE_MS, HEALTH_WATCHDOG_TICK_MS, STORE_FLUSH_MS } from "@/lib/constants";
 
@@ -94,7 +95,9 @@ export const useSystemStore = create<SystemState>((set) => {
     _lastHealthAt: 0,
     logs: [],
 
-    onHealth: (data) =>
+    onHealth: (data) => {
+      // the venue is whatever the engine reports, never what this browser last remembered
+      useExchangeStore.getState().syncFromEngine((data as { exchange?: string }).exchange);
       set({
         engineRunning: data.engine_running ?? false,
         mode: data.mode ?? "paper",
@@ -103,7 +106,8 @@ export const useSystemStore = create<SystemState>((set) => {
         clientsConnected: data.clients_connected ?? 0,
         _lastHealthAt: Date.now(),
         bridgeConnected: true,
-      }),
+      });
+    },
 
     onLog: (data) =>
       queueLog({

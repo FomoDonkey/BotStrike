@@ -15,10 +15,10 @@ import { formatCountdown, PAPER_MAINTENANCE_MARGIN, positionNotional, fundingDir
 const CONFIG_POLL_MS = 60_000;
 
 const ABOUT: Record<string, string> = {
-  "BTC-USD": "Bitcoin perpetual. The largest and most liquid crypto market; the bot's regime reference symbol. Prices from Binance Futures, execution on Strike.",
-  "ETH-USD": "Ether perpetual. Second by liquidity; trades in the same trend and mean-reversion books as BTC. Prices from Binance Futures, execution on Strike.",
-  "SOL-USD": "Solana perpetual. Higher beta than BTC/ETH — wider ATR stops and smaller sizes. Prices from Binance Futures, execution on Strike.",
-  "ADA-USD": "Cardano perpetual. Lower price, larger contract sizes; same risk rules as the other symbols. Prices from Binance Futures, execution on Strike.",
+  "BTC-USD": "Bitcoin perpetual. The largest and most liquid crypto market; the bot's regime reference symbol. Priced and executed on Strike.",
+  "ETH-USD": "Ether perpetual. Second by liquidity; trades in the same trend and mean-reversion books as BTC. Priced and executed on Strike.",
+  "SOL-USD": "Solana perpetual. Higher beta than BTC/ETH — wider ATR stops and smaller sizes. Priced and executed on Strike.",
+  "ADA-USD": "Cardano perpetual. Lower price, larger contract sizes; same risk rules as the other symbols. Priced and executed on Strike.",
 };
 
 /** Details tab (spec §3.1): About · Order size rules · Funding & fees · Price protection · Regime parameters. */
@@ -50,8 +50,11 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[12.5px]">
               {/* This is where the PRICES come from. Execution is Strike; calling the feed "Venue"
                   on a page about a market the bot trades elsewhere reads as the wrong claim. */}
-              <span className="font-medium text-text-2">Price feed <span className="text-text font-semibold">{EXCHANGE_LABELS[exchange] ?? exchange}</span></span>
+              {/* One venue for both, since 2026-09-04. The daily bars the signal is computed from
+                  still come from Binance and Yahoo, because Strike's history is 168 days deep. */}
+              <span className="font-medium text-text-2">Live data <span className="text-text font-semibold">{EXCHANGE_LABELS[exchange] ?? exchange}</span></span>
               <span className="font-medium text-text-2">Execution <span className="text-text font-semibold">Strike · paper</span></span>
+              <span className="font-medium text-text-2" title="Strike lists 168 days of daily bars for BTC and 19 for the S&P; the Donchian ensemble is fitted on ten years, so its daily history comes from Binance and Yahoo">Signal history <span className="text-text font-semibold">Binance · Yahoo</span></span>
               <span className="font-medium text-text-2">Type <span className="text-text font-semibold">Perpetual · paper</span></span>
               <span className="font-medium text-text-2">Base / quote <span className="text-text font-semibold">{base} / USD</span></span>
               {strategies && strategies.length > 0 ? (
@@ -123,7 +126,7 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
                 ? `${(m.rest.best_ask - m.rest.best_bid).toFixed(4)} (${(m.spreadBps ?? 0).toFixed(3)} bps)`
                 : m.spreadBps !== null ? `${m.spreadBps.toFixed(3)} bps (measured median)` : "---"}
             </ListRow>
-            <ListRow label="Reference feed spread" hint={`Spread on the price feed the strategies read (${EXCHANGE_LABELS[exchange] ?? exchange}). Shown apart because it is NOT what an order on the venue pays`}>
+            <ListRow label="Live book spread" hint={`Top of the streamed book from ${EXCHANGE_LABELS[exchange] ?? exchange}, which is the same venue the order goes to. It moves faster than the measured median above; both describe the same book`}>
               {ob ? `${ob.spread_bps.toFixed(3)} bps` : m.feedSpreadBps !== null ? `${m.feedSpreadBps.toFixed(3)} bps` : "---"}
             </ListRow>
             <ListRow label="Venue quote age" hint="Seconds since the bridge last refreshed this market from the venue">{m.dataAgeSec !== null ? `${m.dataAgeSec.toFixed(1)} s` : "---"}</ListRow>

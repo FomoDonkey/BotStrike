@@ -79,6 +79,7 @@ export const STORE_FLUSH_MS = 100;
 export const TRADE_ALERT_MAX_AGE_MS = 60_000;
 
 export const EXCHANGE_LABELS: Record<string, string> = {
+  strike: "Strike",
   binance: "Binance",
   hyperliquid: "Hyperliquid",
 };

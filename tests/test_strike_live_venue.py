@@ -243,3 +243,16 @@ def test_the_engine_picks_its_feed_from_the_venue(venue, expected):
     assert "StrikeMarketWebSocket" in src            # the client that speaks the real protocol
     assert "StrikeWebSocket(settings)" not in src    # not the one that never delivered a tick
     _ = venue, expected
+
+
+def test_the_health_broadcast_carries_the_venue_so_the_screen_cannot_disagree():
+    """The terminal's venue label was a browser preference that nothing synced: after the engine
+    moved to Strike the header still read "Binance feed" (2026-09-04)."""
+    import inspect
+
+    import server.bridge as bridge
+
+    src = inspect.getsource(bridge)
+    i = src.index('"type": "health"')
+    block = src[i:i + 900]
+    assert '"exchange": state.exchange' in block

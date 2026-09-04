@@ -51,7 +51,7 @@ export function FooterBar({ className }: { className?: string }) {
         <span className={cn("w-2 h-2 rounded-full", !bridgeConnected ? "bg-rose" : live ? "bg-mint" : "bg-amber")} />
         {capitalize(mode.replace("_", " "))}
       </span>
-      <span className="hidden xl:inline-flex items-center gap-1.5 px-3 h-full border-r border-hairline font-medium text-text whitespace-nowrap shrink-0" title="Age of the last market tick">
+      <span className="hidden xl:inline-flex items-center gap-1.5 px-3 h-full border-r border-hairline font-medium text-text whitespace-nowrap shrink-0" title="Age of the last market tick from the venue the engine is connected to">
         {EXCHANGE_LABELS[exchange] ?? exchange} feed <span className="num text-text-2">{formatAge(age)}</span>
       </span>
       <div className="marquee flex-1 min-w-0 overflow-hidden h-full">

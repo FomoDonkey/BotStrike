@@ -1158,6 +1158,11 @@ async def system_broadcast_loop():
                 "uptime_sec": time.time() - state.start_time,
                 "ws_connected": ws_connected,
                 "clients_connected": state.channels.client_count,
+                # The venue the ENGINE is on. The terminal used to take this from a browser
+                # preference nothing ever synced, so the screen said "Binance feed" while the bot
+                # ran on Strike (2026-09-04). A label that can disagree with the engine is worse
+                # than no label.
+                "exchange": state.exchange,
             })
 
             # Send periodic engine status to Live Logs (every ~15s = 5 health cycles)
