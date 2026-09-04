@@ -123,8 +123,14 @@ export function PortfolioPage() {
         <button type="button" onClick={() => setTab("history")} className="text-[12.5px] font-semibold text-mint hover:underline">See trade history →</button>
       </ListSection>
       <ListSection title="Fees">
-        <ListRow label="Taker (paper)">{p ? formatPct(p.fees_taker, 2) : "---"}</ListRow>
-        <ListRow label="Maker (paper)">{p ? formatPct(p.fees_maker, 2) : "---"}</ListRow>
+        {/* Three decimals, not two: Strike's tier-0 maker fee is -0.005 %, which rounds to
+            "-0.01 %" at two and misstates the rebate by double (audit 2026-09-04). */}
+        <ListRow label="Taker (paper)" hint="Strike's published taker fee for this account's tier, charged on fill notional">
+          {p ? formatPct(p.fees_taker, 3) : "---"}
+        </ListRow>
+        <ListRow label="Maker (paper)" hint="Negative means the venue PAYS you: Strike tier 0 credits a rebate on eligible maker fills. The daily trend run crosses the spread, so in practice it pays the taker fee above">
+          {p ? <span className={p.fees_maker < 0 ? "text-mint" : undefined}>{formatPct(p.fees_maker, 3)}{p.fees_maker < 0 ? " rebate" : ""}</span> : "---"}
+        </ListRow>
       </ListSection>
       <ListSection title="Analysis">
         <ListRow label="Longest win streak" hint="Consecutive UTC days with positive realised PnL">{p ? `${p.analysis.longest_win_streak_days} ${p.analysis.longest_win_streak_days === 1 ? "day" : "days"}` : "---"}</ListRow>
