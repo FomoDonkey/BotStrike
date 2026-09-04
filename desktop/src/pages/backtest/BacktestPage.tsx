@@ -36,12 +36,15 @@ export function BacktestPage() {
 
   // How much history to replay. The endpoint's default is "all" — 216,000 one-minute bars.
   //
-  // The times below are MEASURED, on the box that runs them (CT 104, the bridge's own venv, calling
-  // the same _run_backtest_sync the endpoint calls), not extrapolated: 10,080 bars in 41.4 s =
-  // 243 bars/s, 2,000 bars in 7.4 s = 271 bars/s. Before the 2026-09-04 profiling pass the same
-  // 10,080 bars took 136.6 s (73.8 bars/s) — the run this page used to say it had never seen finish.
-  // Anything quoted here has to come from a stopwatch on that machine; a rate measured under
-  // cProfile is ~2.2x too slow and a rate from a laptop is ~5x too slow.
+  // The times below are MEASURED through this page, on the machine that serves it, with the bot
+  // running — which is the only condition a user ever sees: 10,080 bars in 52 s = ~195 bars/s
+  // (2026-09-04). Before that day's profiling pass the same window took 136.6 s, and this page said
+  // it had never seen a run finish.
+  //
+  // Note the three figures this page could have quoted and which one is right. The same 10,080 bars
+  // measure 41 s in a standalone process on the same box (the backtest runs in a worker thread and
+  // shares the GIL with the trading loop, so in-process is slower), ~2 min on a laptop, and ~5 min
+  // under cProfile. Only the first is what the user experiences, so it is the one on screen.
   const [bars, setBars] = useState(10_080);
   const runBacktest = async () => {
     setRunning(true);
@@ -101,14 +104,14 @@ export function BacktestPage() {
             </label>
             <label className="block">
               <span className="text-[12.5px] font-medium text-text-2 block mb-1"
-                    title="One-minute bars to replay, newest first. Times measured on this server at 243 bars/s (2026-09-04); a slower machine will take longer. It runs off the trading loop, so the bot keeps trading while it works.">
+                    title="One-minute bars to replay, newest first. Times measured through this page with the bot running, ~195 bars/s (2026-09-04). It runs off the trading loop, so the bot keeps trading while it works.">
                 History
               </span>
               <select value={bars} onChange={(e) => setBars(Number(e.target.value))} className={cn(INPUT_CLS, "bs-select")}>
-                <option value={10_080}>1 week · 10k bars · ~40 s</option>
-                <option value={43_200}>1 month · 43k bars · ~3 min</option>
-                <option value={129_600}>3 months · 130k bars · ~9 min</option>
-                <option value={0}>Everything local · 216k bars · ~15 min</option>
+                <option value={10_080}>1 week · 10k bars · ~50 s</option>
+                <option value={43_200}>1 month · 43k bars · ~4 min</option>
+                <option value={129_600}>3 months · 130k bars · ~11 min</option>
+                <option value={0}>Everything local · 216k bars · ~19 min</option>
               </select>
             </label>
             <Button variant="primary" className="w-full h-9" icon={<Play className="w-4 h-4" />} onClick={runBacktest} loading={running} disabled={!canRun} title={canRun ? undefined : "Remote bridge — set the auth token in Settings → Connection to run backtests"}>
@@ -117,8 +120,8 @@ export function BacktestPage() {
             {running && (
               <p className="text-[12px] font-medium text-text-2 leading-snug">
                 Replaying {bars ? `${bars.toLocaleString()} one-minute bars` : "the whole local history"}
-                {" "}at roughly 243 bars a second, measured on this server. There is no cancel, but it
-                runs off the trading loop, so the bot keeps trading while it works.
+                {" "}at roughly 195 bars a second, measured here with the bot running. There is no
+                cancel, but it runs off the trading loop, so the bot keeps trading while it works.
               </p>
             )}
             {!canRun && <p className="text-[12px] font-medium text-amber">Remote bridge without a token — backtests are disabled here.</p>}
