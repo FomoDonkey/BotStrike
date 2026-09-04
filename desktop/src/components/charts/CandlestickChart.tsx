@@ -6,6 +6,7 @@ import { resampleCandles } from "@/lib/indicators";
 import { COLOR_DOWN, COLOR_UP } from "@/lib/constants";
 import { formatPrice } from "@/lib/utils";
 import { applyOverlays, applyPriceLines, type DivergenceOverlay, type OverlayRefs, type PriceLineSpec } from "./chartOverlays";
+import type { AutoscaleInfo } from "lightweight-charts";
 import { CHART_THEME, TF_SECONDS, type Timeframe } from "./chartConfig";
 
 export type { Timeframe };
@@ -140,6 +141,37 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
           borderDownColor: colorsRef.current.down,
           wickUpColor: colorsRef.current.up,
           wickDownColor: colorsRef.current.down,
+          // THE PRICE SCALE BELONGS TO THE PRICE ACTION, NOT TO THE LINES DRAWN OVER IT.
+          //
+          // An exit ladder sits several percent below a trend position and lightweight-charts
+          // includes price lines in its autoscale, so on silver — whose candles moved 0.5 % across
+          // the session — the entry line pinned the top of the axis at 67.25 and squashed every
+          // candle into an unreadable sliver. That is the "weird candles" (Edgar, 2026-09-04).
+          // Set here rather than in an effect: an effect keyed on chartReady ran before the series
+          // existed and the option was silently never applied.
+          autoscaleInfoProvider: (original: () => AutoscaleInfo | null): AutoscaleInfo | null => {
+            try {
+              const c = drawnRef.current;
+              if (!c.length) return original();
+              const vis = chart.timeScale().getVisibleLogicalRange();
+              const from = vis ? Math.max(0, Math.floor(vis.from)) : 0;
+              const to = vis ? Math.min(c.length - 1, Math.ceil(vis.to)) : c.length - 1;
+              let lo = Infinity;
+              let hi = -Infinity;
+              for (let i = from; i <= to; i++) {
+                const k = c[i];
+                if (!k) continue;
+                if (k.low < lo) lo = k.low;
+                if (k.high > hi) hi = k.high;
+              }
+              if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= 0) return original();
+              // a flat stretch has zero range: give it a band so it does not collapse to a line
+              const pad = (hi - lo) * 0.12 || hi * 0.002;
+              return { priceRange: { minValue: lo - pad, maxValue: hi + pad } };
+            } catch {
+              return original();
+            }
+          },
         });
 
         const volumeSeries = chart.addHistogramSeries({
@@ -365,43 +397,6 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
       console.error("[Chart] markers error:", e);
     }
   }, [trades, chartReady, timeframe, tfSeconds, historyStart, upColor, downColor]);
-
-  // The price scale belongs to the PRICE ACTION, not to the lines drawn over it.
-  //
-  // An exit ladder sits several percent below a trend position, and lightweight-charts includes
-  // price lines in its autoscale — so on silver, whose candles moved 0.5 % across the session, the
-  // ladder at -3.5 % stretched the axis sevenfold and squashed every candle into an unreadable
-  // sliver at the top of the pane. That is the "weird candles" (Edgar, 2026-09-04). The lines are
-  // still drawn, and their numbers are in the legend above the chart when they fall off-screen.
-  useEffect(() => {
-    if (!chartReady || !seriesRef.current) return;
-    seriesRef.current.applyOptions({
-      autoscaleInfoProvider: (original: () => { priceRange: { minValue: number; maxValue: number } } | null) => {
-        try {
-          const c = drawnRef.current;
-          if (!c.length) return original();
-          // only the bars actually on screen, so panning and zooming still rescale
-          const vis = chartRef.current?.timeScale().getVisibleLogicalRange();
-          const from = vis ? Math.max(0, Math.floor(vis.from)) : 0;
-          const to = vis ? Math.min(c.length - 1, Math.ceil(vis.to)) : c.length - 1;
-          let lo = Infinity;
-          let hi = -Infinity;
-          for (let i = from; i <= to; i++) {
-            const k = c[i];
-            if (!k) continue;
-            if (k.low < lo) lo = k.low;
-            if (k.high > hi) hi = k.high;
-          }
-          if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= 0) return original();
-          // a flat stretch has zero range: give it a band so it does not collapse to a line
-          const pad = (hi - lo) * 0.12 || hi * 0.002;
-          return { priceRange: { minValue: lo - pad, maxValue: hi + pad } };
-        } catch {
-          return original();
-        }
-      },
-    });
-  }, [chartReady]);
 
   // Step 4: live price lines (entry / SL / TP / liq of open positions)
   useEffect(() => {
