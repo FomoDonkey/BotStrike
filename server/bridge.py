@@ -2361,10 +2361,19 @@ def _strategy_view(settings: Settings, st: StrategyType) -> dict:
                 f"pivots ±{tc.div_pivot_k} · first pivot RSI <{tc.div_rsi_os:g}/>{tc.div_rsi_ob:g} · "
                 f"trigger = close beyond the pivot bar within {tc.div_trigger_window} bars"
                 f"{' + MACD' if tc.div_require_macd else ''} · stop pivot ∓{tc.div_atr_buffer:g}×ATR · TP {tc.div_rr:g}R · "
-                f"time stop {tc.div_max_hold} bars · RESEARCH 2026-09-02: NO-GO (1h: PF 0.77, t −2.15; 4h: PF 1.00)")
+                f"time stop {tc.div_max_hold} bars · RESEARCH: 1h NO-GO, and confirmed dead OUT OF SAMPLE "
+                f"on 6 markets it had never seen (gross −1.2 bps over 1,136 trades). The 4h variant is the only "
+                f"line still alive: gross +50.4 bps, net +34.4 bps over 323 out-of-sample trades, t +1.09 — "
+                f"unproven, not dead (the bar is t ≥ 2)")
         return {"description": desc, "params": params, "symbols": symbols, "group": "divergence",
-                "research": {"verdict": "NO-GO", "checks": "2/7", "trades": 1102, "profit_factor": 0.77,
-                             "t_stat": -2.15, "note": "4h variant neutral (PF 1.00, t 0.44); with-trend on 4h: 13 trades only"}}
+                # Updated 2026-09-04 with the out-of-sample run (LTC, DOGE, LINK, AVAX, DOT, ATOM):
+                # the hypothesis the first study singled out — hidden divergences — DIED there
+                # (PF 0.84, gross -13.3 bps, t -1.21 over 1,347 trades). Only 4h has a pulse.
+                "research": {"verdict": "UNPROVEN", "checks": "2/7", "trades": 1136, "profit_factor": 0.91,
+                             "t_stat": -0.08,
+                             "note": "1h dead out of sample (gross -1.2 bps); hidden divergences DIED out of sample "
+                                     "(t -1.21); only 4h has positive gross AND net out of sample (+50.4 / +34.4 bps, "
+                                     "t +1.09) and needs ~1,000 trades, i.e. more symbols, to settle"}}
     if st == StrategyType.MEAN_REVERSION:
         ref = next((s for s in settings.symbols if s.symbol in symbols), settings.symbols[0])
         params = {"zscore_entry": ref.mr_zscore_entry, "zscore_exit": ref.mr_zscore_exit,

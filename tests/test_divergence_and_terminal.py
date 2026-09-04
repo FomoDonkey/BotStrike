@@ -247,8 +247,11 @@ def test_terminal_endpoints(st):
     assert 0 < mk["funding_countdown_sec"] <= 8 * 3600
     strategies = client.get("/api/strategies").json()["strategies"]
     div = next(x for x in strategies if x["type"] == "DIVERGENCE")
-    assert div["enabled"] is False and div["research"]["verdict"] == "NO-GO"
-    assert "NO-GO" in div["description"] and div["params"]["timeframe_min"] == 240
+    # UNPROVEN, not NO-GO: the 1h line is dead out of sample but 4h still has positive gross AND net
+    # there (t +1.09), which is a different verdict from "no signal" (2026-09-04).
+    assert div["enabled"] is False and div["research"]["verdict"] == "UNPROVEN"
+    assert "out of sample" in div["description"].lower() and div["params"]["timeframe_min"] == 240
+    assert "hidden divergences DIED" in div["research"]["note"]
 
 
 def _born_candidate():
