@@ -1633,3 +1633,22 @@ Edgar, con las dos terminales abiertas, tenía razón en las tres cosas:
       evidencia vale más que pedir que se confíe en un documento
 - [x] 304 tests, desplegado, verificado en el navegador: 2 estrategias en la página, línea de registro
       presente
+
+## Ruta de ejecución de cortos, completa (2026-09-04, ronda 8)
+- [x] **Ejecutor reescrito en nocional CON SIGNO**, un solo camino para ambas direcciones. Tres casos
+      distintos: la exposición crece (entrada, promediada), se reduce hacia cero (cierre, realizando
+      PnL de la parte cerrada) o **cambia de signo** — este último se ejecuta como DOS operaciones,
+      porque meterlo en un solo delta corrompe el precio medio de entrada y el PnL realizado
+- [x] Los fills siguen a la ORDEN: una compra ejecuta más caro, una venta más barato, así que cerrar
+      un corto recompra pagando el deslizamiento
+- [x] Test que fija el camino largo a su aritmética exacta anterior, incluido el residuo de calcular
+      la cantidad al precio de referencia — para que los números vivos no se muevan
+- [x] `size` con signo, `notional` como magnitud, `side` al lado; escalera de salida reflejada
+      (stops arriba, el más cercano primero); MAE/MFE intercambian papeles; `pnl_pct` y `roe_pct`
+      reflejados una sola vez
+- [x] **El signo del funding sale de la posición**: un corto COBRA en vez de que se le cargue al revés
+      en cada liquidación horaria
+- [x] Tarjeta de la escalera en la UI: "vs entry" reflejado y etiqueta "short"
+- [x] 310 tests. Interruptor sigue APAGADO
+- [x] Verificado en producción: el run de las 00:05 UTC se ejecutó con el ejecutor nuevo (4 entradas,
+      estado ok) y el promediado de entrada cuadra al dígito descontando el redondeo de la API
