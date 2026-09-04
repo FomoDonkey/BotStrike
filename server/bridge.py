@@ -2387,8 +2387,13 @@ async def get_strategies():
         if trend is not None and getattr(trend, "killed", False):
             killed.setdefault(StrategyType.TREND_DAILY.value, "edge monitor")
     edge = (getattr(engine, "edge_stats", None) or {}).get("strategies", {}) if engine else {}
-    order = [StrategyType.TREND_DAILY, StrategyType.DIVERGENCE, StrategyType.MEAN_REVERSION,
-             StrategyType.FIBONACCI_RETRACEMENT]
+    # Retired strategies are not offered. Greyed-out cards took space and suggested that one day
+    # someone would switch them on; they have no gross edge, so that day is not coming. The record
+    # travels in `retired` so the page can state the verdict once, in a line (Edgar, 2026-09-04).
+    from core.types import RETIRED_STRATEGIES
+    order = [st for st in (StrategyType.TREND_DAILY, StrategyType.DIVERGENCE,
+                           StrategyType.MEAN_REVERSION, StrategyType.FIBONACCI_RETRACEMENT)
+             if st.value not in RETIRED_STRATEGIES]
     strategies = []
     for st in order:
         alloc = strategy_allocation(settings.trading, st)
@@ -2409,7 +2414,10 @@ async def get_strategies():
             "edge": edge.get(st.value),
             "research": view.get("research"),
         })
-    return {"strategies": strategies}
+    return {"strategies": strategies,
+            "retired": [{"type": k, "name": _STRATEGY_NAMES.get(StrategyType(k), k), "reason": v}
+                        for k, v in RETIRED_STRATEGIES.items()
+                        if k in (StrategyType.MEAN_REVERSION.value, StrategyType.FIBONACCI_RETRACEMENT.value)]}
 
 
 def _iso_utc(ts: float) -> str:

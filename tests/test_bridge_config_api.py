@@ -56,19 +56,19 @@ def test_put_config_validates_persists_and_applies_live(st, client, tmp_path):
     assert r.status_code == 400 and "<= 0.5" in r.json()["detail"]
     r = client.put("/api/config", json={"trading": {"max_drawdown_pct": 0.03, "max_daily_loss_pct": 0.05}})
     assert r.status_code == 400 and "ladder" in r.json()["detail"]
-    r = client.put("/api/config", json={"trading": {"allocation_mean_reversion": 0.5, "microstructure_enabled": True},
+    r = client.put("/api/config", json={"trading": {"allocation_divergence": 0.5, "microstructure_enabled": True},
                                         "symbols": {"ETH-USD": {"mr_zscore_entry": 2.5}}})
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "ok" and body["restart_required"] is False
-    assert set(body["applied"]) == {"trading.allocation_mean_reversion", "trading.microstructure_enabled",
+    assert set(body["applied"]) == {"trading.allocation_divergence", "trading.microstructure_enabled",
                                     "symbols.ETH-USD.mr_zscore_entry"}
     # applied LIVE to the engine's settings object and mirrored in the portfolio weights
-    assert eng.settings.trading.allocation_mean_reversion == 0.5
+    assert eng.settings.trading.allocation_divergence == 0.5
     assert eng.settings.get_symbol_config("ETH-USD").mr_zscore_entry == 2.5
-    assert eng.portfolio_manager._current_weights[StrategyType.MEAN_REVERSION] == 0.5
+    assert eng.portfolio_manager._current_weights[StrategyType.DIVERGENCE] == 0.5
     # persisted for the next start
-    assert ov.load_overrides()["trading"]["allocation_mean_reversion"] == 0.5
+    assert ov.load_overrides()["trading"]["allocation_divergence"] == 0.5
     assert body["config"]["overrides"]["symbols"]["ETH-USD"]["mr_zscore_entry"] == 2.5
     # restart-only field is flagged
     r = client.put("/api/config", json={"trading": {"initial_capital": 300}})
@@ -100,25 +100,21 @@ def test_reset_clears_overrides(st, client):
     assert client.get("/api/config").json()["trading"]["max_leverage"] == 5
 
 
-def test_strategies_view_is_generated_from_config(st, client):
+def test_strategies_view_offers_only_the_live_ones(st, client):
+    """Retired strategies stopped being offered on 2026-09-04: greyed-out cards suggested that one
+    day someone would enable them, and with no gross edge that day is not coming. The verdict still
+    travels, once, in `retired`."""
     r = client.get("/api/strategies").json()
-    types = [s["type"] for s in r["strategies"]]
-    assert types == ["TREND_DAILY", "DIVERGENCE", "MEAN_REVERSION", "FIBONACCI_RETRACEMENT"]
+    types = [s_["type"] for s_ in r["strategies"]]
+    assert types == ["TREND_DAILY", "DIVERGENCE"]
     trend = r["strategies"][0]
     assert trend["enabled"] is True and trend["active"] is False        # engine not running
     assert "Donchian" in trend["description"] and trend["params"]["lookbacks"] == "5,10,20,30,60,90"
-    mr = next(x for x in r["strategies"] if x["type"] == "MEAN_REVERSION")
-    assert mr["enabled"] is False and mr["symbols"] == ["ETH-USD", "SOL-USD", "ADA-USD"]
-    assert "RANGING" in mr["description"]
-    eng = _fake_engine()
-    eng.portfolio_manager.killed[StrategyType.MEAN_REVERSION] = "t-stat -3"
-    eng.settings.trading.allocation_mean_reversion = 0.5
-    eng.edge_stats = {"strategies": {"MEAN_REVERSION": {"n": 120, "verdict": "kill"}}}
-    st.engine, st.running = eng, True
-    mr = next(x for x in client.get("/api/strategies").json()["strategies"] if x["type"] == "MEAN_REVERSION")
-    assert mr["killed"] is True and mr["active"] is False and mr["kill_reason"] == "t-stat -3"
-    assert mr["edge"]["verdict"] == "kill"
 
+    retired = {x["type"]: x for x in r["retired"]}
+    assert set(retired) == {"MEAN_REVERSION", "FIBONACCI_RETRACEMENT"}
+    assert "gross edge" in retired["MEAN_REVERSION"]["reason"]
+    assert "tasks/" in retired["FIBONACCI_RETRACEMENT"]["reason"]       # the evidence, not an opinion
 
 def test_risk_and_trend_without_engine(st, client):
     r = client.get("/api/risk").json()
@@ -152,3 +148,23 @@ def test_health_reports_new_flags(st, client):
     h = client.get("/api/health").json()
     assert h["version"] == "2.16.0"
     assert "telegram_failures" in h and h["trend_daily_enabled"] is False
+
+
+def test_a_retired_strategy_cannot_be_given_capital(st, tmp_path, monkeypatch):
+    """Mean Reversion and Fibonacci have no GROSS edge, which no parameter can fix. Leaving them
+    greyed out invited someone to turn them on one day; the config now refuses (Edgar, 2026-09-04)."""
+    from core.types import RETIRED_STRATEGIES
+    eng = _fake_engine()
+    st.engine, st.running = eng, True
+    client = TestClient(bridge.app)
+
+    for key in ("allocation_mean_reversion", "allocation_fibonacci_retracement"):
+        r = client.put("/api/config", json={"trading": {key: 0.25}})
+        assert r.status_code == 400, key
+        detail = r.json()["detail"]
+        assert "retired" in detail.lower()
+        assert "tasks/" in detail          # the refusal cites the evidence, not just an opinion
+
+    # a strategy that is merely disabled is still configurable
+    assert client.put("/api/config", json={"trading": {"allocation_divergence": 0.1}}).status_code == 200
+    assert "MEAN_REVERSION" in RETIRED_STRATEGIES and "DIVERGENCE" not in RETIRED_STRATEGIES

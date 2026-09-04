@@ -413,6 +413,12 @@ class Settings:
             v = getattr(t, name)
             if not (0.0 <= v <= 1.0):
                 raise ValueError(f"Config incoherence: {name}={v} must be within [0, 1]")
+        # A retired strategy has no gross edge; funding it is not a preference, it is a mistake.
+        from core.types import RETIRED_STRATEGIES
+        for key, reason in RETIRED_STRATEGIES.items():
+            attr = f"allocation_{key.lower()}"
+            if float(getattr(t, attr, 0.0) or 0.0) > 0:
+                raise ValueError(f"{key} was retired by the research and cannot be allocated capital. {reason}")
         try:
             lbs = [int(x) for x in str(t.trend_lookbacks).split(",") if x.strip()]
         except ValueError:

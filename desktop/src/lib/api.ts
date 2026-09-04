@@ -243,6 +243,8 @@ export interface StrategyResearch {
 
 export interface StrategiesResponse {
   strategies?: StrategyInfo[];
+  /** Retired by the research: no gross edge, so they are no longer offered — only recorded. */
+  retired?: { type: string; name: string; reason: string }[];
 }
 
 export interface TrendPosition {

@@ -12,12 +12,12 @@ import { getBridgeUrl, useBridgeConfig } from "@/lib/config";
 import { useExchangeStore } from "@/stores/exchangeStore";
 import { INPUT_CLS } from "@/components/settings/FieldInput";
 
-// Both runnable strategies were FROZEN by the research (MR: no gross edge over 2,284 trades,
-// t -5 to -8.7; Fibonacci: no evidence). The dropdown said nothing, so the page invited a run of a
-// strategy the bot will never trade — say the verdict here as the Strategies page does.
+// These engines are RETIRED: they have no gross edge and the bot can no longer allocate capital to
+// them (core.types.RETIRED_STRATEGIES refuses it). They stay runnable HERE on purpose — being able to
+// reproduce the evidence beats being asked to trust a document (Edgar, 2026-09-04).
 const AVAILABLE_STRATEGIES = [
-  { value: "MEAN_REVERSION", label: "Mean Reversion (research: no edge)", active: true },
-  { value: "FIBONACCI_RETRACEMENT", label: "Fibonacci Retracement (research: frozen)", active: true },
+  { value: "MEAN_REVERSION", label: "Mean Reversion — retired, verify only", active: true },
+  { value: "FIBONACCI_RETRACEMENT", label: "Fibonacci Retracement — retired, verify only", active: true },
   { value: "ORDER_FLOW_MOMENTUM", label: "Order Flow Momentum (archived)", active: false },
   { value: "TREND_FOLLOWING", label: "Trend Following (archived)", active: false },
   { value: "MARKET_MAKING", label: "Market Making (archived)", active: false },
@@ -93,7 +93,7 @@ export function BacktestPage() {
 
         <Panel className="lg:col-span-2 flex flex-col">
           <PanelHeader title="Results" />
-          {!result && !running && <EmptyState sub="Runs the strategy over the local 1m history of the symbol. The daily trend book is validated in the research, not here.">Configure and run a backtest to see results</EmptyState>}
+          {!result && !running && <EmptyState sub="Reproduces a RETIRED engine over the local 1m history: it verifies the verdict, it does not enable anything. The daily trend book is validated in the research, and Divergence with scripts/divergence_research.py.">Configure and run a backtest to see results</EmptyState>}
           {running && <EmptyState sub={`${elapsed}s`}>Running backtest…</EmptyState>}
           {result && (
             <div className="p-3 space-y-3">

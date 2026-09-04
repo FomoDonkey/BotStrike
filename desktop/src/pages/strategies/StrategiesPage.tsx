@@ -160,6 +160,20 @@ export function StrategiesPage() {
           ))}
         </div>
       )}
+      {/* The record, in one line. These used to occupy two greyed-out cards, which read as "not yet"
+          rather than "never": they have no gross edge, and that is not a parameter away. */}
+      {(strategiesEp.data?.retired?.length ?? 0) > 0 && (
+        <div className="text-[12px] font-medium text-text-2 leading-snug">
+          <span className="text-text font-semibold">Retired by the research:</span>{" "}
+          {strategiesEp.data!.retired!.map((r, i) => (
+            <span key={r.type}>
+              {i > 0 && " · "}
+              <span className="text-text" title={r.reason}>{r.name}</span>
+            </span>
+          ))}
+          . No gross edge, so no parameter brings them back — hover for the evidence.
+        </div>
+      )}
       {expanded === "TREND_DAILY" && strategies.some((s) => s.type === "TREND_DAILY") && <TrendDailyPanel />}
       {strategiesEp.loaded && strategiesEp.error && strategies.length > 0 && (
         <p className="text-[12.5px] font-medium text-amber">Last refresh failed: {strategiesEp.error}</p>

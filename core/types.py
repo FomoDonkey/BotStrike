@@ -52,6 +52,25 @@ class StrategyType(Enum):
     DIVERGENCE = "DIVERGENCE"
 
 
+# Strategies the research RETIRED: they have no gross edge, which is not something a parameter can
+# fix, so the product stops offering them instead of leaving them greyed out (Edgar, 2026-09-04).
+# The code and the studies stay — they are the evidence — but these can no longer be enabled.
+RETIRED_STRATEGIES: dict = {
+    StrategyType.MEAN_REVERSION.value:
+        "No gross edge over 2,284 trades (-0.90/-0.63/-2.05/+0.45 bps, standard errors 1.2-2.6). "
+        "Random entries perform the same and INVERTING every signal does not help, which is the "
+        "control that separates a broken design from an absent one. tasks/audit/r2_batch1_report.md",
+    StrategyType.FIBONACCI_RETRACEMENT.value:
+        "t = -2.6 with PSR(0) = 0.005 and a bootstrap PnL entirely negative. "
+        "tasks/audit/04_backtest_quant_evidence.md",
+    StrategyType.TREND_FOLLOWING.value: "Superseded by TREND_DAILY, which is the validated version.",
+    StrategyType.MARKET_MAKING.value: "Archived: never validated, and it needs maker fills the venue does not give us.",
+    StrategyType.ORDER_FLOW_MOMENTUM.value:
+        "Archived: the microstructure study answered NO (IC <= 0.012, VPIN is an inverse vol proxy). "
+        "tasks/audit/r2_batch1_report.md",
+}
+
+
 @dataclass
 class OHLCV:
     """Candlestick con volumen."""
