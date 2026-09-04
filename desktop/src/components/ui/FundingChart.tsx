@@ -12,7 +12,24 @@ const RANGE_SEC: Record<Range, number> = { "24h": 24 * 3600, "1w": 7 * 86400, "1
 const POLL_MS = 60_000;
 
 function pct(v: number, d = 4): string {
-  return `${(v * 100).toFixed(d)}%`;
+  // -0.00 % is not a thing. A funding rate that rounds to zero is zero, whichever side it came from.
+  const n = v * 100;
+  return `${(Object.is(n, -0) || Math.abs(n) < Math.pow(10, -d) / 2 ? 0 : n).toFixed(d)}%`;
+}
+
+/** Decimals an axis needs to tell its own ticks apart.
+ *
+ *  The cumulative axis was fixed at 2 and its whole range was 0.001 % to -0.01 %, so every tick read
+ *  "0.00 %", "-0.00 %" or "-0.01 %" — five labels, three of them the same and one of them nonsense
+ *  (audit 2026-09-04). Funding on Strike is hourly and tiny; the precision has to follow the data. */
+function decimalsFor(values: number[], min = 2, max = 5): number {
+  const finite = values.filter((v) => Number.isFinite(v));
+  if (!finite.length) return min;
+  const span = (Math.max(...finite) - Math.min(...finite)) * 100;
+  if (!(span > 0)) return min;
+  // enough digits that a quarter of the span is still visible in the last place
+  const d = Math.ceil(-Math.log10(span / 4));
+  return Math.min(max, Math.max(min, Number.isFinite(d) ? d : min));
 }
 
 /**
@@ -58,6 +75,8 @@ export function FundingChart({ symbol }: { symbol: string }) {
   }, [fh.data, range]);
 
   const hasCum = data.some((r) => r.cum !== null);
+  const rateDecimals = decimalsFor(data.map((r) => r.rate), 3);
+  const cumDecimals = decimalsFor(data.map((r) => r.cum ?? NaN), 2);
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -89,14 +108,14 @@ export function FundingChart({ symbol }: { symbol: string }) {
               <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
                 <CartesianGrid stroke={CHART_GRID} vertical={false} />
                 <XAxis dataKey="label" tick={{ fill: CHART_TEXT, fontSize: 11 }} axisLine={{ stroke: "rgba(255,255,255,0.18)" }} tickLine={false} minTickGap={32} />
-                <YAxis yAxisId="rate" tick={{ fill: CHART_TEXT, fontSize: 11 }} axisLine={false} tickLine={false} width={64} tickFormatter={(v) => pct(Number(v), 3)} />
-                {hasCum && <YAxis yAxisId="cum" orientation="right" tick={{ fill: CHART_TEXT, fontSize: 11 }} axisLine={false} tickLine={false} width={64} tickFormatter={(v) => pct(Number(v), 2)} />}
+                <YAxis yAxisId="rate" tick={{ fill: CHART_TEXT, fontSize: 11 }} axisLine={false} tickLine={false} width={64} tickFormatter={(v) => pct(Number(v), rateDecimals)} />
+                {hasCum && <YAxis yAxisId="cum" orientation="right" tick={{ fill: CHART_TEXT, fontSize: 11 }} axisLine={false} tickLine={false} width={72} tickFormatter={(v) => pct(Number(v), cumDecimals)} />}
                 <Tooltip
                   contentStyle={CHART_TOOLTIP_STYLE}
                   labelStyle={CHART_TOOLTIP_LABEL}
                   itemStyle={CHART_TOOLTIP_ITEM}
                   cursor={{ fill: "rgba(255,255,255,0.06)" }}
-                  formatter={(v: unknown, name: unknown) => [pct(Number(v), name === "cum" ? 3 : 4), name === "cum" ? "Cumulative" : "Funding rate"]}
+                  formatter={(v: unknown, name: unknown) => [pct(Number(v), name === "cum" ? Math.max(cumDecimals, 3) : Math.max(rateDecimals, 4)), name === "cum" ? "Cumulative" : "Funding rate"]}
                 />
                 <Bar yAxisId="rate" dataKey="rate" isAnimationActive={false} maxBarSize={18} radius={[2, 2, 0, 0]}>
                   {data.map((r) => <Cell key={r.ts} fill={r.rate > 0 ? COLOR_UP : COLOR_DOWN} fillOpacity={0.75} />)}
