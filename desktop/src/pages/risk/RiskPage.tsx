@@ -14,6 +14,8 @@ import { HINTS } from "@/lib/hints";
 import { cn, formatMoney, formatPct, formatSignedMoney } from "@/lib/utils";
 import { positionNotional } from "@/lib/market";
 import { RiskProfileCards } from "./RiskProfileCards";
+import { useEndpoint } from "@/hooks/useEndpoint";
+import { api } from "@/lib/api";
 
 const RISK_POLL_MS = 5_000;
 
@@ -96,6 +98,12 @@ export function RiskPage() {
     ? equity * maxExposurePct * maxLeverage : null;
   const exposureUsed = exposureCapUsd && exposureCapUsd > 0 ? totalExposure / exposureCapUsd : null;
   const killed = Object.entries(risk.killed_strategies ?? {});
+  // /api/regime covers the engine's symbols AND every market the trend book trades or holds
+  // (classified from the venue's own bars); the socket only carries the engine's four.
+  const regimeEp = useEndpoint(() => api.regime(), 30_000);
+  const regimeRows: { symbol: string; regime: string; source: string; tf: number }[] = regimeEp.data
+    ? Object.entries(regimeEp.data.symbols).map(([symbol, r]) => ({ symbol, regime: r.regime ?? "UNKNOWN", source: r.source ?? "engine", tf: r.timeframe_min ?? 15 }))
+    : Object.entries(risk.regimes).map(([symbol, regime]) => ({ symbol, regime, source: "engine", tf: 15 }));
 
   return (
     <div className="flex flex-col gap-3 p-3 sm:p-4 min-w-0">
@@ -198,8 +206,8 @@ export function RiskPage() {
               {exposureCapUsd !== null && <span className="text-text-2 font-medium"> · {formatMoney(exposureCapUsd)}</span>}
             </ListRow>
             <ListRow label="Open positions">{positions.length}</ListRow>
-            <ListRow label="Regimes">
-              <span className="inline-flex flex-wrap gap-1 justify-end">{Object.entries(risk.regimes).map(([s, r]) => <RegimeChip key={s} regime={r} size="xs" suffix={<span className="ml-1 text-text">{s.split("-")[0]}</span>} />)}</span>
+            <ListRow label="Regimes" hint="Intraday classifier (15-minute bars) for the engine's symbols and for every market the trend book trades or holds, the latter from the venue's own bars. Informational: the trend book does not read it.">
+              <span className="inline-flex flex-wrap gap-1 justify-end">{regimeRows.map((r) => <span key={r.symbol} title={`${r.source} · ${r.tf}m bars`}><RegimeChip regime={r.regime} size="xs" suffix={<span className="ml-1 text-text">{r.symbol.split("-")[0]}</span>} /></span>)}</span>
             </ListRow>
           </ListSection>
         </Panel>

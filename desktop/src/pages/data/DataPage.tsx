@@ -13,6 +13,7 @@ import { Chip, StatusChip } from "@/components/ui/Chip";
 import { ListRow } from "@/components/ui/ListRow";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { PulsingDot } from "@/components/shared/PulsingDot";
+import { useVenueMarkets } from "@/hooks/useVenueMarkets";
 
 /** Data (spec §3.6): live feeds, stream status, local catalog — restyle only. */
 export function DataPage() {
@@ -22,6 +23,8 @@ export function DataPage() {
   const candles = useMarketStore(useShallow((s) => s.candles));
   const lastTickAt = useMarketStore((s) => s.lastTickAt);
   const catalog = useEndpoint(() => api.dataCatalog(), 60_000);
+  const venue = useVenueMarkets();
+  const quoting = venue.list.filter((v) => (v.price ?? 0) > 0).length;
   const rows = useMemo<DatasetInfo[]>(() => {
     const d = catalog.data?.datasets;
     if (!d) return [];
@@ -41,7 +44,7 @@ export function DataPage() {
       <h1 className="text-[18px] font-semibold text-text flex items-center gap-2"><Database className="w-5 h-5 text-mint" /> Data</h1>
 
       <Panel>
-        <PanelHeader title="Live feeds" right={<span className="text-[12px] font-medium text-text-2">last tick <span className="num text-text font-semibold">{formatAge(age)}</span> ago</span>} />
+        <PanelHeader title="Intraday engine feeds · the four 1 m symbols the engine streams" right={<span className="text-[12px] font-medium text-text-2">last tick <span className="num text-text font-semibold">{formatAge(age)}</span> ago{venue.list.length > 0 ? <> · venue <span className="num text-text font-semibold">{quoting}/{venue.list.length}</span> markets quoting</> : null}</span>} />
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2 p-3">
           {SYMBOLS.map((sym) => {
             const price = prices[sym] || 0;

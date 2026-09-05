@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useEndpoint } from "@/hooks/useEndpoint";
 import { FlaskConical, Play } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Panel, PanelHeader, EmptyState } from "@/components/ui/Panel";
@@ -26,6 +27,8 @@ const AVAILABLE_STRATEGIES = [
 /** Backtest (spec §3.5): restyle only — no logic changes. */
 export function BacktestPage() {
   const [symbol, setSymbol] = useState("BTC-USD");
+  const local = useEndpoint(() => api.backtestSymbols(), 60_000);
+  const symbols: readonly string[] = local.data?.symbols?.length ? local.data.symbols : SYMBOLS;
   const [strategy, setStrategy] = useState("MEAN_REVERSION");   // the only 1m engine the backtester runs
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<BacktestResult | null>(null);
@@ -89,11 +92,11 @@ export function BacktestPage() {
           <div className="px-4 py-3 space-y-3">
             <label className="block">
               <span className="text-[12.5px] font-medium text-text-2 block mb-1"
-                    title="Only the symbols with a local 1-minute history: the bot supports 31 markets on the venue, but this replay reads data/binance/klines and only these four are downloaded.">
+                    title="Only the markets with a local 1-minute history: the venue lists 31, but this intraday replay reads data/binance/klines and only the markets listed here are downloaded.">
                 Symbol <span className="text-text-3">· local 1m history only</span>
               </span>
               <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className={cn(INPUT_CLS, "bs-select")}>
-                {SYMBOLS.map((s) => <option key={s} value={s}>{s}</option>)}
+                {symbols.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </label>
             <label className="block">

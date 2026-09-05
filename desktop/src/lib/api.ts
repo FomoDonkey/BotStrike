@@ -628,6 +628,8 @@ export interface MarketInfoResponse {
   regime_since?: number;
   regime_candidate?: string;
   regime_timeframe_min?: number;
+  regime_source?: string;
+  regime_bars?: number | null;
   data_age_sec?: number;
   /** Bridge ≥ 2.16 (spec §5.6) */
   symbol_config?: SymbolConfigInfo;
@@ -800,9 +802,15 @@ export interface OpsResponse {
 /** GET /api/regime */
 export interface RegimeStatus {
   regime?: string;
+  raw?: string;
   candidate?: string;
   confirmed_since?: number;
   timeframe_min?: number;
+  /** "engine" for the symbols the engine streams, "venue" for any other market (its own 15 m bars) */
+  source?: string;
+  /** bars the venue-side classification saw (UNKNOWN below the detector's minimum) */
+  bars?: number;
+  inputs?: Record<string, number>;
   [k: string]: unknown;
 }
 
@@ -1095,6 +1103,8 @@ export const api = {
   /** Bridge ≥ 2.16 — ops monitor state (`available:false` until the monitor ran). */
   ops: () => request<OpsResponse>("/api/ops"),
   regime: () => request<RegimeResponse>("/api/regime"),
+  /** markets with a local one-minute history: the only ones the intraday replay can read */
+  backtestSymbols: () => request<{ symbols: string[] }>("/api/backtest/symbols"),
   backtestRun: (body: BacktestRequest) =>
     authed<BacktestResult>("/api/backtest/run", {
       method: "POST",

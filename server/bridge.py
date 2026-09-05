@@ -2200,8 +2200,7 @@ async def get_market(symbol: str):
         return {"symbol": symbol, "engine": False}
     snap = engine.market_data.get_snapshot(symbol)
     stats = engine.market_data.get_24h_stats(symbol) if hasattr(engine.market_data, "get_24h_stats") else {}
-    det = engine.regime_detector
-    rs = det.status(symbol) if hasattr(det, "status") else {}
+    rs = await _venue_regime(symbol)
     ob = snap.orderbook if snap else None
     # THIS HEADER DESCRIBES A STRIKE MARKET, SO EVERY FIGURE IN IT IS STRIKE'S (audit 2026-09-04).
     # The engine's intraday feed is Binance (exchange_venue="binance"), a price reference for the
@@ -2272,6 +2271,7 @@ async def get_market(symbol: str):
         **(v_stats or stats),
         "regime": rs.get("regime", "UNKNOWN"), "regime_since": rs.get("confirmed_since", 0.0),
         "regime_candidate": rs.get("candidate", ""), "regime_timeframe_min": rs.get("timeframe_min", 1),
+        "regime_source": rs.get("source", "engine"), "regime_bars": rs.get("bars"),
         # age of what this header is actually showing — the venue quote — not of the reference feed
         "data_age_sec": round(time.time() - float(md["ts"]), 1) if md.get("ts") else None,
         "symbol_config": _symbol_config_view(engine, symbol),
@@ -2464,6 +2464,88 @@ async def get_market_klines(symbol: str, interval: str = "1m", limit: int = 500)
         logger.debug("venue_klines_error", symbol=sym, interval=iv, error=str(e)[:160])
     _VENUE_MD["klines"][key] = (time.time(), out)
     return out
+
+
+_VENUE_REGIME: Dict[str, dict] = {}
+VENUE_REGIME_TTL_SEC = 60.0
+VENUE_REGIME_BARS = 400
+_INTERVAL_MIN = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440}
+
+
+def _engine_tracks(sym: str) -> bool:
+    engine = state.engine
+    return engine is not None and sym.upper() in {s.symbol for s in engine.settings.symbols}
+
+
+async def _venue_regime(sym: str) -> dict:
+    """The intraday regime of ANY venue market, from the venue's own bars.
+
+    The engine classifies only the symbols it streams (four crypto), so the header read UNKNOWN on
+    the other 27 markets and the Risk page listed four chips while the book held six markets
+    (Edgar, 2026-09-05). Same detector, same thresholds and dwell as the engine, fed the venue's
+    15-minute klines - or the coarser bar the klines endpoint falls back to where a market is too
+    thin to print them - refreshed once a minute per market and only for the bars that are new.
+    Informational: the trend book does not read it."""
+    sym = sym.upper()
+    engine = state.engine
+    if engine is not None and _engine_tracks(sym):
+        det = engine.regime_detector
+        rs = det.status(sym) if hasattr(det, "status") else {}
+        return {**rs, "source": "engine"}
+    now = time.time()
+    ent = _VENUE_REGIME.get(sym)
+    if ent and now - ent["ts"] < VENUE_REGIME_TTL_SEC:
+        return ent["status"]
+    settings = engine.settings if engine is not None else _config_settings()
+    dwell = int(getattr(settings.trading, "regime_min_dwell_min", 30) or 0)
+    ref = settings.symbols[0]
+    status: dict = {"regime": "UNKNOWN", "raw": "UNKNOWN", "candidate": "", "candidate_since": 0.0,
+                    "confirmed_since": 0.0, "timeframe_min": 15, "min_dwell_min": dwell, "inputs": {},
+                    "source": "venue", "bars": 0}
+    det = (ent or {}).get("det")
+    last_bar = float((ent or {}).get("last_bar") or 0.0)
+    tf_prev = (ent or {}).get("tf")
+    try:
+        from core.indicators import Indicators
+        from core.regime_detector import RegimeDetector
+        import pandas as pd
+        kl = await get_market_klines(sym, "15m", VENUE_REGIME_BARS)
+        candles = list(kl.get("candles") or [])
+        tf_min = _INTERVAL_MIN.get(str(kl.get("interval") or "15m"), 15)
+        status["timeframe_min"], status["bars"] = tf_min, len(candles)
+        if len(candles) >= max(int(ref.regime_vol_lookback), 50):
+            if det is None or tf_prev != tf_min:
+                det, last_bar = RegimeDetector(None, timeframe_min=1, min_dwell_min=dwell), 0.0
+
+            def _classify() -> float:
+                df = pd.DataFrame(candles)
+                df = Indicators.compute_all(df, {"ema_fast": ref.tf_ema_fast, "ema_slow": ref.tf_ema_slow})
+                ts = df["timestamp"].astype(float).values
+                if last_bar <= 0.0:
+                    start = max(0, len(df) - 120)          # first build: replay so the dwell has a history
+                else:
+                    start = int((ts > last_bar).argmax()) if (ts > last_bar).any() else len(df)
+                for i in range(start, len(df)):
+                    det.detect(df.iloc[:i + 1], sym, ref)
+                return float(ts[-1])
+
+            last_bar = await asyncio.to_thread(_classify)
+            status.update({**det.status(sym), "timeframe_min": tf_min, "source": "venue", "bars": len(candles)})
+    except Exception as e:  # noqa: BLE001 - an UNKNOWN chip beats a 500
+        logger.debug("venue_regime_error", symbol=sym, error=str(e)[:160])
+    _VENUE_REGIME[sym] = {"ts": now, "det": det, "last_bar": last_bar, "tf": status["timeframe_min"], "status": status}
+    return status
+
+
+@app.get("/api/backtest/symbols")
+async def get_backtest_symbols():
+    """The markets with a local one-minute history - the only ones the intraday replay can read."""
+    root = _APP_ROOT / "data" / "binance" / "klines"
+    try:
+        syms = sorted(d.name for d in root.iterdir() if (d / "1m.parquet").exists())
+    except OSError:
+        syms = []
+    return {"symbols": syms}
 
 
 @app.get("/api/market/{symbol}/book")
@@ -2898,8 +2980,24 @@ async def get_regime():
     if not engine:
         return {"symbols": {}}
     det = engine.regime_detector
-    return {"symbols": {sym: det.status(sym) for sym in engine.settings.symbol_names},
-            "timeframe_min": det.params()[0], "min_dwell_min": det.params()[1]}
+    syms = list(engine.settings.symbol_names)
+    # the markets the live book trades or holds, classified from the venue's own bars
+    trend = getattr(engine, "trend_engine", None)
+    if trend is not None:
+        try:
+            from strategies.trend_daily import to_ui_symbol
+            extra = [to_ui_symbol(x) for x in list(trend.pool())] + [to_ui_symbol(x) for x in trend.state.positions]
+            syms += [x for x in extra if x not in syms]
+        except Exception as e:  # noqa: BLE001
+            logger.debug("regime_pool_error", error=str(e)[:120])
+    seen: list = []
+    for x in syms:
+        if x not in seen:
+            seen.append(x)
+    results = await asyncio.gather(*(_venue_regime(x) for x in seen), return_exceptions=True)
+    out = {x: (r if isinstance(r, dict) else {"regime": "UNKNOWN", "source": "venue", "inputs": {}})
+           for x, r in zip(seen, results)}
+    return {"symbols": out, "timeframe_min": det.params()[0], "min_dwell_min": det.params()[1]}
 
 
 @app.get("/api/risk")

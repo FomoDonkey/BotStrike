@@ -43,6 +43,15 @@ export function BottomPanel({ symbol, positions, trades, closed, signals, loadin
   const activity = useActivity(100, activityEnabled);
 
   const marketFilter = scope === "market" ? symbol : market;
+  // every market with a position or a trade, not the four intraday symbols: the book held six
+  // markets and the menu could name only four of them (2026-09-05)
+  const markets = useMemo(() => {
+    const set = new Set<string>(SYMBOLS);
+    for (const p of positions) if (p.symbol) set.add(p.symbol);
+    for (const t of trades) if (t.symbol) set.add(t.symbol);
+    for (const t of closed) if (t.symbol) set.add(t.symbol);
+    return [...set].sort();
+  }, [positions, trades, closed]);
   const strategies = useMemo(() => {
     const set = new Set<string>();
     for (const p of positions) if (p.strategy) set.add(p.strategy);
@@ -81,7 +90,7 @@ export function BottomPanel({ symbol, positions, trades, closed, signals, loadin
         {(close) => (
           <>
             <MenuItem active={market === "all"} onClick={() => { setMarket("all"); setScope("all"); close(); }}>All markets</MenuItem>
-            {SYMBOLS.map((s) => <MenuItem key={s} active={market === s} onClick={() => { setMarket(s); setScope("all"); close(); }}>{s}</MenuItem>)}
+            {markets.map((s) => <MenuItem key={s} active={market === s} onClick={() => { setMarket(s); setScope("all"); close(); }}>{s}</MenuItem>)}
           </>
         )}
       </Popover>

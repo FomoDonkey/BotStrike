@@ -45,7 +45,7 @@ export function SignalsFeed({ signals, symbol, limit = 100, filter }: SignalsFee
   }, [signals, symbol, limit, filter]);
 
   if (rows.length === 0) {
-    return <EmptyState sub="Strategy signals arrive live over the trading channel">No signals yet{symbol ? ` for ${symbol}` : ""}</EmptyState>;
+    return <EmptyState sub="Intraday strategy signals cover the engine's configured symbols (BTC, ETH, SOL, ADA). The trend book's daily decisions are in the Bot column and the Activity tab.">No signals yet{symbol ? ` for ${symbol}` : ""}</EmptyState>;
   }
 
   return (
