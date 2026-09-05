@@ -189,7 +189,10 @@ export function RiskPage() {
           <ListSection first>
             <ListRow label="Compounding" hint="ON: sizing uses all-time equity; OFF: the fixed initial capital">{risk.compounding_enabled === null ? "---" : risk.compounding_enabled ? "ON" : "OFF"}</ListRow>
             <ListRow label="Equity basis" hint="Capital the risk manager sizes against right now">{risk.equity_basis > 0 ? formatMoney(risk.equity_basis) : "---"}</ListRow>
-            <ListRow label="Max leverage">{risk.account?.max_leverage ? `${risk.account.max_leverage}x` : "---"}</ListRow>
+            <ListRow label="Max leverage" hint="The risk manager's cap on any position; the trend book sizes by volatility under its own, lower ceiling">
+              {risk.account?.max_leverage ? `${risk.account.max_leverage}x` : "---"}
+              {risk.account?.trend_leverage_cap ? <span className="text-text-2 font-medium"> · trend book ≤{risk.account.trend_leverage_cap}x</span> : null}
+            </ListRow>
             <ListRow label="Max total exposure" hint="Cap on the sum of open notionals: equity x this share x max leverage">
               {maxExposurePct !== null ? formatPct(maxExposurePct, 0) : "---"}
               {exposureCapUsd !== null && <span className="text-text-2 font-medium"> · {formatMoney(exposureCapUsd)}</span>}

@@ -994,6 +994,10 @@ def _merged_performance() -> Optional[Dict]:
         out["sortino_ratio"] = None
     if float(cum.get("profit_factor") or 0.0) >= 9999:
         out["profit_factor"] = None
+    # The realised chain's worst drawdown ignores open positions: the Risk page read "All-time
+    # max 0.00 %" under a live 0.37 % (2026-09-05). The all-time figure is at least today's.
+    live_dd = (peak - equity) / peak if peak > 0 else 0.0
+    out["max_drawdown"] = round(max(float(cum.get("max_drawdown") or 0.0), live_dd), 6)
     out.update({
         "equity": round(equity, 4),
         "pnl": round(cum["pnl"] + unrealized, 4),
@@ -1736,6 +1740,7 @@ def _account_overview(engine) -> dict:
         "daily_pnl_realised": round(float(rm.daily_pnl), 4), "weekly_pnl_realised": round(float(rm.weekly_pnl), 4),
         "peak_equity": round(float(rm.equity_peak), 4), "drawdown_pct": round(float(rm.current_drawdown_pct), 6),
         "max_leverage": int(tc.max_leverage), "max_total_exposure_pct": float(tc.max_total_exposure_pct),
+        "trend_leverage_cap": float(getattr(tc, "trend_leverage_cap", 0.0) or 0.0),
     }
 
 

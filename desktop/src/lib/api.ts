@@ -478,6 +478,8 @@ export interface AccountResponse {
   drawdown_pct: number;
   max_leverage?: number;
   max_total_exposure_pct?: number;
+  /** Cap on the trend book's vol scalar (the "leverage ceiling" on the risk-level cards) */
+  trend_leverage_cap?: number;
   /** Bridge ≥ 2.16 — cumulative perpetual funding on the book (negative = paid) */
   funding_paid?: number;
   /** false → engine not running: only mode / initial_capital are present */
