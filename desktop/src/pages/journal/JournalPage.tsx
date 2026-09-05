@@ -117,7 +117,7 @@ export function JournalPage() {
   const [chosen, setSymbol] = useState<string>("");
   const symbol = chosen || markets[0]?.symbol || "";
   const [timeframe, setTimeframe] = useState<Timeframe>("4h");
-  const [range, setRange] = useState<Range>("90d");
+  const [range, setRange] = useState<Range>("30d");
   const [show, setShow] = useState({ fills: true, paths: true, ladder: true });
   // a click's zoom and the selected trade belong to the market + timeframe they were made on:
   // switching either falls back to the range window without an effect
