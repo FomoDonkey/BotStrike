@@ -114,7 +114,7 @@ def test_profile_description_is_honest_about_the_trade_off():
     # old figures (152 / 113 on 1,000) understated the book, which the Risk page was quoting as fact.
     # 439 / 298 on 1,000: aggressive at 0.80 target vol, per-asset annualisation (2026-09-05)
     assert d["expected_year_usd"] == pytest.approx(439.0) and d["expected_worst_drawdown_usd"] == pytest.approx(298.0)
-    assert c["expected_year_usd"] == pytest.approx(56.0)
+    assert c["expected_year_usd"] == pytest.approx(63.0)         # conservative, re-measured 2026-09-05
     assert rp.describe("custom")["validated"] is False
     assert [p["profile"] for p in rp.catalog()] == ["conservative", "balanced", "aggressive"]
 
