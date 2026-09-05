@@ -34,8 +34,8 @@ export const HINTS = {
   exposure: "Position value / equity.",
   levEff: "Effective leverage — total position value / equity.",
   drawdown: "Distance from the all-time equity peak.",
-  dailyPnl: "Realised PnL since 00:00 UTC (the daily loss limit resets then).",
-  weeklyPnl: "Realised PnL since Monday 00:00 UTC.",
+  dailyPnl: "PnL since 00:00 UTC, mark-to-market: closed trades and funding plus how the open positions moved. The daily loss limit is measured on this.",
+  weeklyPnl: "PnL since Monday 00:00 UTC, mark-to-market (closed trades, funding and the open positions' move).",
   feesToday: "Trading fees paid since 00:00 UTC.",
   strength: "Signal strength 0–1 as reported by the strategy (confidence / score).",
 } as const;

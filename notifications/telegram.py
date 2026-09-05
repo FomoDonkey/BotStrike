@@ -304,18 +304,46 @@ class TelegramNotifier:
         strat_nombre = {
             "MEAN_REVERSION": "Mean Reversion",
             "TREND_FOLLOWING": "Trend Following",
+            "TREND_DAILY": "Trend daily (Donchian)",
+            "DIVERGENCE": "Divergence",
+            "FIBONACCI_RETRACEMENT": "Fibonacci",
             "MARKET_MAKING": "Market Making",
             "ORDER_FLOW_MOMENTUM": "Order Flow Momentum",
         }.get(strat_str, _esc(strat_str))
 
         pnl_emoji = "✅" if pnl > 0 else ("❌" if pnl < 0 else "➖")
 
+        # WHAT this fill is, not only that it happened. Six "Compra" messages at 02:05 with no
+        # context read as the bot buying out of nowhere, when it was the daily rebalance scaling
+        # the book to the aggressive profile (Edgar, 2026-09-05).
+        sf = getattr(trade, "signal_features", None) or {}
+        action = str(sf.get("action") or "")
+        titulo = accion
+        contexto = ""
+        if action == "entry_trend":
+            titulo = "Rebalance diario · " + ("añade a la posición" if sf.get("adds_to_position") else "abre posición")
+            contexto = "🧭 Motivo: la señal Donchian y el objetivo de volatilidad piden más peso\n"
+        elif action == "exit_trend_rebalance":
+            titulo = "Rebalance diario · reduce la posición"
+            contexto = "🧭 Motivo: el objetivo de peso ha bajado\n"
+        elif action == "exit_trend":
+            razon = str(sf.get("exit_reason") or "")
+            titulo = "Cierra posición" + (" · giro de tendencia" if razon == "TREND_FLIP" else " · salida de tendencia")
+        tw = sf.get("target_weight")
+        after = sf.get("position_size_after")
+        base = str(symbol).split("-")[0]
+        if isinstance(tw, (int, float)) and after is not None:
+            contexto += f"📦 Posición ahora: {float(after):,.6g} {_esc(base)} · {float(tw) * 100:.1f} % del equity\n"
+        elif isinstance(tw, (int, float)):
+            contexto += f"🎯 Peso objetivo: {float(tw) * 100:.1f} % del equity\n"
+
         text = (
-            f"{emoji} <b>{accion} — {_esc(symbol)}</b>\n"
+            f"{emoji} <b>{_esc(titulo)} — {_esc(symbol)}</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"💲 Precio: <b>${price:,.4f}</b>\n"
             f"💰 Nocional: ${nocional:,.2f}\n"
             f"🧠 Estrategia: {strat_nombre}\n"
+            f"{contexto}"
             f"💸 Comision: ${fee:,.4f}\n"
             f"{pnl_emoji} Resultado: <b>${pnl:+,.4f}</b>\n"
         )

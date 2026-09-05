@@ -476,6 +476,14 @@ class TrendDailyEngine:
                     if len(closes):
                         opens[sym] = float(closes.iloc[-1])
                         fills_at[sym] = opens[sym]
+            # The fill is what the VENUE would fill, not the daily source's open. Gold's Yahoo open
+            # (the CME session, hours earlier) put a paper fill at 4,477 when Strike's book was at
+            # 4,435; the position opened 1 % under water on paper alone (2026-09-05). The model's
+            # signal still reads the daily bars; only the execution price moves to the venue.
+            for sym in list(fills_at):
+                vm = self._venue_mark_of(sym)
+                if vm:
+                    fills_at[sym] = vm
             if late:
                 logger.warning("trend_late_run_fills_at_current_price", lag_hours=round((now - sched) / 3600, 1))
             st.last_run_late = late
@@ -579,6 +587,7 @@ class TrendDailyEngine:
             st.weights[sym] = float(st.weights.get(sym, 0.0)) if pos else 0.0
             return
         size = qty * (1 if buying else -1)                          # signed
+        adds = pos is not None
         if pos:
             total = pos.size + size
             pos.entry_price = (pos.entry_price * abs(pos.size) + fill * abs(size)) / abs(total)
@@ -599,7 +608,8 @@ class TrendDailyEngine:
             actual_slippage_bps=abs(fill - price) / price * 1e4,
             signal_features={"action": "entry_trend", "target_weight": target_w,
                              "equity_basis": equity, "open_price": price, "pool_symbol": sym,
-                             "direction": "short" if size < 0 else "long"},
+                             "direction": "short" if size < 0 else "long",
+                             "adds_to_position": adds, "position_size_after": abs(pos.size)},
         )
         await self._on_fill(trade)
         logger.info("trend_entry_fill", symbol=sym, size=round(size, 6), price=round(fill, 4),
@@ -646,7 +656,8 @@ class TrendDailyEngine:
                              "pnl_bps": ((fill / pos.entry_price - 1.0) * (1 if long_pos else -1) * 1e4
                                          if pos.entry_price else 0.0),
                              "open_price": price, "pool_symbol": sym,
-                             "direction": "long" if long_pos else "short"},
+                             "direction": "long" if long_pos else "short",
+                             "position_size_after": 0.0 if full_exit else abs(pos.size - signed_qty)},
         )
         if full_exit:
             st.positions.pop(sym, None)
@@ -816,6 +827,12 @@ class TrendDailyEngine:
                 mark = float(df["close"].iloc[-1])
             pos.mark_price = float(mark)
             self.last_marks[sym] = pos.mark_price
+
+    def _venue_mark_of(self, sym: str) -> Optional[float]:
+        """The venue's latest mark for a pool or UI symbol, or None when it does not quote it."""
+        venue = getattr(self, "venue_marks", None) or {}
+        v = venue.get(to_ui_symbol(sym).upper()) or venue.get(str(sym).upper())
+        return float(v) if v and v > 0 else None
 
     def set_venue_mark(self, ui_symbol: str, mark: float) -> None:
         """A fresh venue mark for one market, straight from the feed's premiumIndex poll (5 s).

@@ -987,6 +987,13 @@ def _merged_performance() -> Optional[Dict]:
     # (1,009.64 next to 1,010.30 at the same instant, audit 2026-09-05).
     rm_peak = float(getattr(engine.risk_manager, "equity_peak", 0.0) or 0.0)
     peak = max(float(cum.get("peak_equity", cum["initial_capital"])), rm_peak, equity)
+    # A Sharpe of 175 off three trades and a profit factor of 9999.99 are sentinels, not
+    # statistics: they travel as null until the sample is one (the UI already hides them).
+    if not cum.get("sharpe_valid", False):
+        out["sharpe_ratio"] = None
+        out["sortino_ratio"] = None
+    if float(cum.get("profit_factor") or 0.0) >= 9999:
+        out["profit_factor"] = None
     out.update({
         "equity": round(equity, 4),
         "pnl": round(cum["pnl"] + unrealized, 4),
@@ -1017,7 +1024,7 @@ async def metrics_broadcast_loop():
                         "pnl": p["pnl"],
                         "total_trades": p["total_trades"],
                         "win_rate": p["win_rate"],
-                        "sharpe_ratio": p["sharpe_ratio"],
+                        "sharpe_ratio": p["sharpe_ratio"] if p.get("sharpe_ratio") is not None else 0.0,
                         "max_drawdown": p["max_drawdown"],
                         "total_fees": p["total_fees"],
                         "unrealized_pnl": p["unrealized_pnl"],
@@ -1723,7 +1730,9 @@ def _account_overview(engine) -> dict:
         "exposure_pct": round(position_value / equity, 6) if equity > 0 else 0.0,
         "leverage_effective": round(position_value / equity, 4) if equity > 0 else 0.0,
         "open_positions": len(rows), "fees_today": round(fees_today, 4),
-        "daily_pnl": round(float(rm.daily_pnl), 4), "weekly_pnl": round(float(rm.weekly_pnl), 4),
+        "daily_pnl": round(float(getattr(rm, "daily_pnl_mtm", rm.daily_pnl)), 4),
+        "weekly_pnl": round(float(getattr(rm, "weekly_pnl_mtm", rm.weekly_pnl)), 4),
+        "daily_pnl_realised": round(float(rm.daily_pnl), 4), "weekly_pnl_realised": round(float(rm.weekly_pnl), 4),
         "peak_equity": round(float(rm.equity_peak), 4), "drawdown_pct": round(float(rm.current_drawdown_pct), 6),
         "max_leverage": int(tc.max_leverage), "max_total_exposure_pct": float(tc.max_total_exposure_pct),
     }

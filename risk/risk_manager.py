@@ -51,6 +51,11 @@ class RiskManager:
         # fed it fills only — so a book 20 % under water would not have tripped the 36 %
         # drawdown halt until it closed (audit 2026-09-05).
         self._unrealized: float = 0.0
+        # Open PnL at the start of the day / the week: the period limits are measured
+        # mark-to-market (realised since the reset + how the open book moved since then).
+        self._day_start_unrealized: float = 0.0
+        self._week_start_unrealized: float = 0.0
+        self._unrealized_seeded: bool = False
         self._positions: Dict[str, Position] = {}
         self._daily_pnl: float = 0.0
         self._weekly_pnl: float = 0.0
@@ -275,17 +280,17 @@ class RiskManager:
 
         # 1a. Verificar daily loss limit (escalera de drawdown, nivel 1)
         max_daily_loss = self._mtm() * self.config.max_daily_loss_pct
-        if self._daily_pnl < 0 and abs(self._daily_pnl) >= max_daily_loss:
+        if self.daily_pnl_mtm < 0 and abs(self.daily_pnl_mtm) >= max_daily_loss:
             logger.warning("daily_loss_limit_reached",
-                           daily_pnl=round(self._daily_pnl, 2),
+                           daily_pnl=round(self.daily_pnl_mtm, 2), realised=round(self._daily_pnl, 2),
                            limit=round(-max_daily_loss, 2))
             return None
 
         # 1a'. Verificar weekly loss limit (nivel 2; restaurado desde la DB al arrancar)
         max_weekly_loss = self._mtm() * getattr(self.config, "max_weekly_loss_pct", 1.0)
-        if self._weekly_pnl < 0 and abs(self._weekly_pnl) >= max_weekly_loss:
+        if self.weekly_pnl_mtm < 0 and abs(self.weekly_pnl_mtm) >= max_weekly_loss:
             logger.warning("weekly_loss_limit_reached",
-                           weekly_pnl=round(self._weekly_pnl, 2),
+                           weekly_pnl=round(self.weekly_pnl_mtm, 2), realised=round(self._weekly_pnl, 2),
                            limit=round(-max_weekly_loss, 2))
             return None
 
@@ -454,9 +459,23 @@ class RiskManager:
         if u != u:                                   # NaN
             return
         self._unrealized = u
+        if not self._unrealized_seeded:
+            self._unrealized_seeded = True
+            self._day_start_unrealized = u
+            self._week_start_unrealized = u
         if self._mtm() > self._equity_peak:
             self._equity_peak = self._mtm()
         self._arm_circuit_breaker_if_severe()
+
+    def raise_peak(self, peak: float) -> None:
+        """A mark-to-market peak remembered across restarts (data/risk_peak.json): the trade chain
+        only knows the realised peak, so a restart used to measure the drawdown from a lower high."""
+        try:
+            v = float(peak)
+        except (TypeError, ValueError):
+            return
+        if v == v and v > self._equity_peak:
+            self._equity_peak = v
 
     async def update_unrealized_safe(self, unrealized: float) -> None:
         async with self._state_lock:
@@ -530,6 +549,22 @@ class RiskManager:
             model.record_trade(pnl)
             model.compute(self._mtm())
 
+    def record_cash_flow(self, amount: float) -> None:
+        """A settlement that is not a trade: funding, a rebate, a transfer.
+
+        It moves the day, the week and the total like a closed trade does, and nothing else — the
+        hourly funding of six long positions used to be fed through record_trade_result, so four
+        negative settlements in a row read as four losing TRADES and armed the consecutive-loss
+        pause (Activity feed, 2026-09-04 17:00Z), while the risk-of-ruin model counted them as trades.
+        """
+        self._daily_pnl += amount
+        self._weekly_pnl += amount
+        self._total_pnl += amount
+
+    async def record_cash_flow_safe(self, amount: float) -> None:
+        async with self._state_lock:
+            self.record_cash_flow(amount)
+
     async def record_trade_result_safe(self, pnl: float, strategy: Optional[StrategyType] = None) -> None:
         """Async-safe version of record_trade_result — acquires lock."""
         async with self._state_lock:
@@ -600,6 +635,7 @@ class RiskManager:
         if self._last_daily_reset_date != today_utc:
             old_pnl = self._daily_pnl
             self.reset_daily()
+            self._day_start_unrealized = self._unrealized
             self._last_daily_reset_date = today_utc
             logger.info("daily_pnl_auto_reset",
                         previous_daily_pnl=round(old_pnl, 2),
@@ -608,6 +644,7 @@ class RiskManager:
         if self._last_weekly_reset_key and self._last_weekly_reset_key != week_key:
             old_w = self._weekly_pnl
             self._weekly_pnl = 0.0
+            self._week_start_unrealized = self._unrealized
             logger.info("weekly_pnl_auto_reset", previous_weekly_pnl=round(old_w, 2),
                         new_week=f"{week_key[0]}-W{week_key[1]:02d}")
         self._last_weekly_reset_key = week_key
@@ -634,6 +671,15 @@ class RiskManager:
     @property
     def weekly_pnl(self) -> float:
         return self._weekly_pnl
+
+    @property
+    def daily_pnl_mtm(self) -> float:
+        """Today's PnL as a venue shows it: realised since 00:00 UTC plus how the open book moved."""
+        return self._daily_pnl + (self._unrealized - self._day_start_unrealized)
+
+    @property
+    def weekly_pnl_mtm(self) -> float:
+        return self._weekly_pnl + (self._unrealized - self._week_start_unrealized)
 
     @property
     def equity_peak(self) -> float:
@@ -705,9 +751,11 @@ class RiskManager:
             "equity_peak": self._equity_peak,
             "drawdown_pct": round(self.current_drawdown_pct, 4),
             "total_exposure": self.total_exposure,
-            "daily_pnl": self._daily_pnl,
+            "daily_pnl": self.daily_pnl_mtm,
+            "daily_pnl_realised": self._daily_pnl,
             "max_daily_loss": round(self._mtm() * self.config.max_daily_loss_pct, 2),
-            "weekly_pnl": self._weekly_pnl,
+            "weekly_pnl": self.weekly_pnl_mtm,
+            "weekly_pnl_realised": self._weekly_pnl,
             "max_weekly_loss": round(
                 self._mtm() * getattr(self.config, "max_weekly_loss_pct", 1.0), 2),
             "drawdown_halted": self._drawdown_halted,

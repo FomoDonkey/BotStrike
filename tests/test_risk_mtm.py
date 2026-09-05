@@ -7,6 +7,8 @@ until it closed. `update_unrealized` closes that gap; a fill still lands on the 
 """
 import asyncio
 
+import pytest
+
 from config.settings import Settings
 from risk.risk_manager import RiskManager
 
@@ -69,3 +71,42 @@ def test_safe_variant_takes_the_lock():
     rm = _rm()
     asyncio.run(rm.update_unrealized_safe(-10.0))
     assert rm.current_equity == 990.0
+
+
+def test_funding_is_a_cash_flow_not_a_losing_trade():
+    """Four hourly negative settlements armed the consecutive-loss pause (2026-09-04 17:00Z)."""
+    rm = _rm()
+    for _ in range(6):
+        rm.record_cash_flow(-0.01)
+    assert rm.daily_pnl == pytest.approx(-0.06) and rm.weekly_pnl == pytest.approx(-0.06)
+    assert rm._consecutive_losses == 0 and not rm._consecutive_loss_pause
+    rm.record_trade_result(-1.0)                   # a real loss still counts
+    assert rm._consecutive_losses == 1
+
+
+def test_daily_and_weekly_limits_are_mark_to_market():
+    """A day that opens flat and sees the book fall 12 % must trip the 11 % daily limit before
+    anything closes — the realised-only measure said 0 all day."""
+    rm = _rm()
+    rm.update_unrealized(0.0)                      # first mark anchors the day and the week
+    rm.record_cash_flow(-1.0)                      # funding paid today
+    rm.update_unrealized(-40.0)                    # the open book moved against us
+    assert rm.daily_pnl == -1.0                    # realised, as before
+    assert rm.daily_pnl_mtm == pytest.approx(-41.0) and rm.weekly_pnl_mtm == pytest.approx(-41.0)
+    s = rm.get_risk_summary()
+    assert s["daily_pnl"] == pytest.approx(-41.0) and s["daily_pnl_realised"] == -1.0
+    rm.check_daily_reset()                         # a new day anchors on today's open PnL
+    rm._last_daily_reset_date = "1970-01-01"
+    rm.check_daily_reset()
+    assert rm.daily_pnl_mtm == 0.0
+    rm.update_unrealized(-45.0)
+    assert rm.daily_pnl_mtm == -5.0
+
+
+def test_raise_peak_only_raises():
+    rm = _rm()
+    rm.raise_peak(1_050.0)
+    assert rm.equity_peak == 1_050.0
+    rm.raise_peak(900.0)
+    rm.raise_peak(float("nan"))
+    assert rm.equity_peak == 1_050.0

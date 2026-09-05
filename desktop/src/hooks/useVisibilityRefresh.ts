@@ -13,7 +13,7 @@ export async function refreshPerformanceIntoStore(): Promise<void> {
       pnl: p.pnl,
       total_trades: p.total_trades,
       win_rate: p.win_rate,
-      sharpe_ratio: p.sharpe_ratio,
+      sharpe_ratio: p.sharpe_ratio ?? 0,
       max_drawdown: p.max_drawdown,
       total_fees: p.total_fees,
     });

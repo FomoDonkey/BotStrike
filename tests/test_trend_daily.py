@@ -569,3 +569,23 @@ def test_state_load_keeps_one_tracking_row_per_day():
     ]})
     assert [r["date"] for r in st.tracking] == ["2026-09-02", "2026-09-03", "2026-09-04"]
     assert st.tracking[1]["turnover"] == 0.3548          # the run that completed the day
+
+
+def test_fills_at_the_venues_mark_when_it_quotes_the_market(tmp_path):
+    """Gold's Yahoo open put a paper fill at 4,477 while Strike's book was at 4,435 (2026-09-05).
+    The signal reads the daily bars; the fill is the venue's price at execution."""
+    frames = {"UPUSDT": _frame("up", today_open=250.0), "DOWNUSDT": _frame("down", seed=2),
+              "FLATUSDT": _frame("flat", seed=3)}
+    eng, fills, s = _engine(tmp_path, frames, equity=1000.0)
+    eng.venue_marks = {"UP-USD": 260.0}                  # the venue is 4 % above the daily open
+    asyncio.run(eng.run_once())
+    t = next(t for t in fills.trades if t.symbol == "UP-USD" and t.side == Side.BUY)
+    assert t.price == pytest.approx(260.0 * (1 + s.trading.slippage_bps / 1e4))
+    assert t.expected_price == pytest.approx(260.0)
+    assert t.signal_features["open_price"] == pytest.approx(260.0)
+    assert t.signal_features["adds_to_position"] is False
+    assert t.signal_features["position_size_after"] == pytest.approx(t.quantity)
+    # a market the venue does not quote still fills at its daily open
+    others = [x for x in fills.trades if x.symbol != "UP-USD" and x.side == Side.BUY]
+    for x in others:
+        assert x.signal_features["open_price"] != 260.0

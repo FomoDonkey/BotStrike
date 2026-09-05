@@ -52,9 +52,13 @@ export function BotColumn({ market, positions, className, tab: forcedTab, showAc
   const mode = useSystemStore((s) => s.mode);
   const active = forcedTab ?? (showAccount ? tab : "bot");
   const lev = market.rest?.symbol_config?.leverage;
+  // The open position's leverage when there is one — the trend book runs 1x while the symbol's
+  // configured ceiling is 2x, and "2x" beside a 1x position read as a contradiction (2026-09-05).
+  const held = positions.find((p) => p.symbol === market.symbol);
+  const levLabel = held ? `${held.leverage ?? 1}x` : typeof lev === "number" ? `≤${lev}x` : "—";
   const header = [
     { id: "mode", label: capitalize(mode.replace("_", " ")), title: "Execution mode" },
-    { id: "lev", label: `${typeof lev === "number" ? lev : "—"}x`, title: "Leverage configured for this symbol" },
+    { id: "lev", label: levLabel, title: held ? "Leverage of the open position on this symbol" : "Maximum leverage configured for this symbol (no open position)" },
     { id: "dir", label: "Long-only", title: "Trend daily is long-only; MR / divergence may short when enabled" },
   ];
 

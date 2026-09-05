@@ -2192,4 +2192,8 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
       (antes 0–1) frente a 6 de la cabecera; frames `positions` solo al cambiar (WTI 5/40 s, antes 22);
       pico y drawdown iguales en risk/account/performance; `/api/trades` 14 fills + 94 carry en su ventana;
       tracking 3 filas (una por día); 0 errores en el journal
-- [ ] Decidir: Daily/Weekly PnL realizados vs MTM; "2x" en la cabecera del bot vs posiciones 1x
+- [x] Daily/Weekly PnL y límites mark-to-market; cabecera del bot con el leverage real; Sharpe/PF sin centinelas;
+      pico MTM persistido (segunda ronda, ver audit)
+- [x] Notificaciones "Compra" sin contexto = rebalance diario: fills del trend ahora pasan por el hook (Activity,
+      toast, socket), Telegram explica el fill, fills TradFi a la marca del venue, funding no es una pérdida
+- [ ] Comisión de entrada al fill en vez de al cierre (toca DB/analytics/UI)

@@ -156,12 +156,12 @@ export interface PerformanceResponse {
   pnl: number;
   total_trades: number;
   win_rate: number;
-  sharpe_ratio: number;
+  sharpe_ratio: number | null;
   max_drawdown: number;
   total_fees: number;
   avg_win: number;
   avg_loss: number;
-  profit_factor: number;
+  profit_factor: number | null;
   equity_curve: number[];
   /** Bridge ≥ 2.13.1 — merged all-time (trade DB) + live view */
   initial_capital?: number;
@@ -169,7 +169,7 @@ export interface PerformanceResponse {
   unrealized_pnl?: number;
   session_pnl?: number;
   session_trades?: number;
-  sortino_ratio?: number;
+  sortino_ratio?: number | null;
   expectancy?: number;
   /** [epoch_seconds, equity] pairs for a real time axis */
   equity_curve_ts?: [number, number][];

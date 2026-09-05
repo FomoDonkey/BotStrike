@@ -174,8 +174,12 @@ class BotStrike:
         # other paper fill; its sizing uses _sizing_equity (compounding-aware).
         self.trend_engine: Optional[TrendDailyEngine] = None
         if self.paper:
+            # Looked up at call time, not bound here: the bridge wraps `_process_paper_fill` after
+            # construction (activity feed, socket "trade" frame, recent fills), and a bound method
+            # captured now would skip that wrapper — the daily rebalance's six fills never reached
+            # the Activity feed or the toasts (Edgar, 2026-09-05).
             self.trend_engine = TrendDailyEngine(
-                settings, on_fill=self._process_paper_fill, equity_provider=self._sizing_equity)
+                settings, on_fill=lambda t: self._process_paper_fill(t), equity_provider=self._sizing_equity)
 
         # Edge monitor state (analytics/edge.py) — refreshed by _metrics_loop
         self.edge_stats: Dict = {}
@@ -1096,7 +1100,7 @@ class BotStrike:
                 new_equity = equity_before + total
                 await self.risk_manager.update_equity_safe(new_equity, unrealized=self._unrealized_total())
                 self.metrics.update_equity(new_equity)
-                await self.risk_manager.record_trade_result_safe(total, strategy=None)
+                await self.risk_manager.record_cash_flow_safe(total)      # a settlement, not a trade
                 for p in payments:
                     self.trade_db.on_funding(symbol=p.symbol, amount=p.amount, rate=p.rate, notional=p.notional,
                                              mark_price=p.mark_price, strategy=p.strategy, periods=p.periods,
@@ -1186,6 +1190,8 @@ class BotStrike:
         # Live: the wallet (ACCOUNT_UPDATE) is the equity truth → restore the ladder only.
         compounding = bool(tc.compounding_enabled) and self.paper
         restore_risk_state(self.risk_manager, hist, compounding=compounding)
+        if compounding:
+            self.risk_manager.raise_peak(self._load_risk_peak())
         self.metrics.update_equity(self.risk_manager.current_equity)
 
     def _unrealized_total(self) -> float:
@@ -1216,12 +1222,49 @@ class BotStrike:
         on every bar; the live engine fed it fills only, so the drawdown halt and the circuit
         breaker could not see a book that was under water until it closed (audit 2026-09-05).
         """
+        saved_peak = 0.0
         while self._running:
             try:
                 await self.risk_manager.update_unrealized_safe(self._unrealized_total())
+                peak = float(self.risk_manager.equity_peak)
+                if peak > saved_peak + 1e-6:
+                    saved_peak = peak
+                    self._save_risk_peak(peak)
             except Exception as e:  # noqa: BLE001 - a marking error must not stop the loop
                 logger.debug("risk_mark_error", error=str(e)[:160])
             await asyncio.sleep(poll_sec)
+
+    def _risk_peak_path(self) -> str:
+        import os as _os
+        return _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "data", "risk_peak.json")
+
+    def _save_risk_peak(self, peak: float) -> None:
+        """The mark-to-market high-water mark, so a restart does not measure the drawdown from
+        the (lower) realised peak the trade chain reconstructs."""
+        import json as _json
+        import os as _os
+        import time as _time
+        try:
+            path = self._risk_peak_path()
+            _os.makedirs(_os.path.dirname(path), exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                _json.dump({"peak": round(float(peak), 6), "ts": _time.time(),
+                            "source": "paper" if self.paper else "live"}, f)
+            _os.replace(tmp, path)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("risk_peak_save_error", error=str(e)[:120])
+
+    def _load_risk_peak(self) -> float:
+        import json as _json
+        try:
+            with open(self._risk_peak_path(), "r", encoding="utf-8") as f:
+                d = _json.load(f)
+            if d.get("source") == ("paper" if self.paper else "live"):
+                return float(d.get("peak") or 0.0)
+        except (OSError, ValueError, TypeError):
+            pass
+        return 0.0
 
     # ── Edge monitor (analytics/edge.py) ──────────────────────────────
     async def _edge_monitor_tick(self, force: bool = False) -> None:
@@ -1292,10 +1335,12 @@ class BotStrike:
             "peak_equity": round(float(rm.equity_peak), 4),
             "drawdown_pct": round(float(rm.current_drawdown_pct), 6),
             "max_drawdown_pct": float(tc.max_drawdown_pct),
-            "daily_pnl": round(float(rm.daily_pnl), 4),
+            "daily_pnl": round(float(rm.daily_pnl_mtm), 4),
+            "daily_pnl_realised": round(float(rm.daily_pnl), 4),
             "daily_limit": round(eq * float(tc.max_daily_loss_pct), 4),
             "max_daily_loss_pct": float(tc.max_daily_loss_pct),
-            "weekly_pnl": round(float(rm.weekly_pnl), 4),
+            "weekly_pnl": round(float(rm.weekly_pnl_mtm), 4),
+            "weekly_pnl_realised": round(float(rm.weekly_pnl), 4),
             "weekly_limit": round(eq * float(tc.max_weekly_loss_pct), 4),
             "max_weekly_loss_pct": float(tc.max_weekly_loss_pct),
             "circuit_breaker": bool(rm.is_circuit_breaker_active),
