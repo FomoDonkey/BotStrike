@@ -13,7 +13,7 @@ export const HINTS = {
   hold: "Time since the position was opened (live clock).",
   sl: "Stop-loss level and its distance from mark. Empty when the strategy manages exits itself (trend daily).",
   tp: "Take-profit level and its distance from mark.",
-  fees: "Trading fees paid so far on this position (entry fee). Funding has its own column.",
+  fees: "Entry fee of this position, debited at the fill (a position opened before 5 Sep 2026 pays it at the close). Funding has its own column.",
   fundingPaid: "Perpetual funding accrued on this position since it opened. Negative = the book paid; positive = it was received.",
   fundingTotal: "Every funding settlement the account has paid or received since the bot started, across all markets. Already included in realised PNL.",
   exitLadder: "This position exits in steps. Each Donchian lookback has its own trailing stop that never falls; when price closes below one, that share leaves. There is no take profit: trend returns come from letting winners run.",

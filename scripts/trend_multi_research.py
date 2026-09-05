@@ -154,7 +154,9 @@ def asset_weight(close: pd.Series, lookbacks: List[int], target_vol: float, vol_
     """Target weight of one asset. `pos_fn(df, n, symbol) -> Series` overrides the position rule so a
     study can test a different one without duplicating the vol targeting or the ensemble average."""
     ret = close.pct_change(fill_method=None)
-    sigma = ret.rolling(vol_window).std() * math.sqrt(ANNUALIZATION)
+    # each series by its own calendar (365 crypto, 252 TradFi) — strategies/trend_daily_model.periods_per_year
+    from strategies.trend_daily_model import periods_per_year
+    sigma = ret.rolling(vol_window).std() * math.sqrt(periods_per_year(symbol) if symbol else ANNUALIZATION)
     scalar = (target_vol / sigma).clip(upper=LEVERAGE_CAP).replace([np.inf, -np.inf], np.nan)
     if pos_fn is not None:
         frame = df if df is not None else close.to_frame("close")

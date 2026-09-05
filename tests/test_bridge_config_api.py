@@ -42,7 +42,7 @@ def test_config_is_available_before_the_engine_starts(st, client):
     assert body["engine_running"] is False
     assert body["trading"]["allocation_trend_daily"] == 1.0
     # 0.10: the shipped default tracks the balanced profile, which moved to 0.45 target vol
-    assert body["trading"]["max_weekly_loss_pct"] == 0.10
+    assert body["trading"]["max_weekly_loss_pct"] == 0.11          # the balanced ladder, re-measured 2026-09-05
     assert body["symbols"][0]["strategies"] == "FIBONACCI_RETRACEMENT,DIVERGENCE"
     assert body["overrides"] == {} and body["restart_required"] is False
     sch = client.get("/api/config/schema").json()
@@ -123,7 +123,7 @@ def test_strategies_view_offers_only_the_live_ones(st, client):
 
 def test_risk_and_trend_without_engine(st, client):
     r = client.get("/api/risk").json()
-    assert r["engine"] is False and r["max_weekly_loss_pct"] == 0.10 and r["compounding_enabled"] is True
+    assert r["engine"] is False and r["max_weekly_loss_pct"] == 0.11 and r["compounding_enabled"] is True
     t = client.get("/api/trend").json()
     assert t["engine"] is False and t["enabled"] is True and t["positions"] == []
 

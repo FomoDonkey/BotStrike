@@ -668,3 +668,46 @@ def test_default_execution_hour_is_after_midnight_new_york(tmp_path):
     assert not eng.is_due()
     eng._clock = lambda: datetime(2026, 9, 2, 4, 6, tzinfo=timezone.utc).timestamp()
     assert eng.is_due()
+
+
+# ── a kept weight is re-aligned only when the drift is worth a trade ────────────────────────
+def test_kept_weight_is_not_realigned_for_small_drift(tmp_path):
+    frames = {"UPUSDT": _frame("up")}                             # today opens where the trend left it
+    eng, fills, s = _engine(tmp_path, frames, trend_n_assets=1)
+    asyncio.run(eng.run_once())
+    held = eng.state.positions["UPUSDT"].size
+    hi = float(frames["UPUSDT"]["close"].max()) * 1.001          # the signal is unchanged
+    for d in (0, 1):
+        frames["UPUSDT"].loc[TODAY + pd.Timedelta(days=d)] = [hi, hi, hi, hi, 0, 0]
+    eng._clock = lambda: NOW + 86400
+    eng._equity_provider = lambda: 1000.0 * 1.10                   # equity +10 %: inside the 20 % band
+    fills.trades.clear()
+    asyncio.run(eng.run_once())
+    assert fills.trades == [] and eng.state.positions["UPUSDT"].size == held
+    frames["UPUSDT"].loc[TODAY + pd.Timedelta(days=2)] = [hi, hi, hi, hi, 0, 0]
+    eng._clock = lambda: NOW + 2 * 86400
+    eng._equity_provider = lambda: 1000.0 * 1.35                   # +35 %: past the band, re-align
+    fills.trades.clear()
+    asyncio.run(eng.run_once())
+    assert [t for t in fills.trades if t.side == Side.BUY] and eng.state.positions["UPUSDT"].size > held
+
+
+def test_warm_cache_loads_the_pool(tmp_path):
+    frames = {"UPUSDT": _frame("up"), "DOWNUSDT": _frame("down", seed=2)}
+    eng, _, _ = _engine(tmp_path, frames)
+    assert asyncio.run(eng.warm_cache()) == 2
+
+
+# ── each series is annualised by its own calendar ───────────────────────────────────────────
+def test_tradfi_series_are_annualised_on_252_days():
+    from strategies.trend_daily_model import periods_per_year, asset_weight
+    assert periods_per_year("BTCUSDT") == 365 and periods_per_year("XAU-USD") == 252
+    assert periods_per_year("SP500-USD") == 252 and periods_per_year("WTI-USD") == 252
+    close = _frame("up")["close"]
+    p = TrendParams(target_vol=0.2, vol_window=90, leverage_cap=10.0)        # cap high: see the ratio
+    w_crypto = float(asset_weight(close, p, 365).iloc[-1])
+    w_tradfi = float(asset_weight(close, p, 252).iloc[-1])
+    assert w_tradfi / w_crypto == pytest.approx((365 / 252) ** 0.5, rel=1e-9)
+    frames = {"XAU-USD": _frame("up"), "XAUUSDT": _frame("up")}
+    w = target_weights(frames, ["XAU-USD", "XAUUSDT"], TODAY - pd.Timedelta(days=1), p)
+    assert w["XAU-USD"] / w["XAUUSDT"] == pytest.approx((365 / 252) ** 0.5, rel=1e-9)

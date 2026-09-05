@@ -111,6 +111,16 @@ function BotTab({ market, positions }: { market: MarketView; positions: Position
   const slip = trading ? trading.slippage_bps : null;
   const estLiqLong = estEntry > 0 && leverage > 1 ? estEntry * (1 - 1 / leverage + PAPER_MAINTENANCE_MARGIN) : null;
   const marginNext = riskUsd !== null && trading ? Math.min(riskUsd * 10, trading.max_total_exposure_pct * eq) / leverage : null;
+  // a book whose only strategy on this market is the daily trend: the estimate is the next rebalance
+  const trendOnly = onSymbol.length > 0 && onSymbol.every((s) => s.type === "TREND_DAILY");
+  const rebalDrift = useMemo(() => {
+    const held = pos ? positionNotional(pos) : 0;
+    const delta = typeof target === "number" ? target * eq - held : 0;
+    const minOrder = Number(trading?.trend_min_order_usd ?? 10) || 10;
+    const threshold = Number(trading?.trend_rebalance_threshold ?? 0.2) || 0.2;
+    const band = Math.max(minOrder, threshold * held);
+    return { delta, trades: Math.abs(delta) >= band };
+  }, [pos, target, eq, trading]);
 
   return (
     <div className="flex flex-col min-h-0 overflow-y-auto">
@@ -158,6 +168,26 @@ function BotTab({ market, positions }: { market: MarketView; positions: Position
           )}
       </ListSection>
 
+      {trendOnly ? (
+        // The book is the daily trend strategy: what the next run would do on this market is the
+        // estimate that matters, not an intraday order at the symbol's configured leverage
+        // (2026-09-05). Same arithmetic as the engine: target weight × equity against what is held,
+        // executed only past the rebalance band or the venue minimum.
+        <ListSection title="Next rebalance (estimate)">
+          <ListRow label="Runs" hint="The daily run: 04:05 UTC, after the TradFi daily bars settle (midnight New York)">{Number.isFinite(nextRunMs) ? `in ${formatDurationShort((nextRunMs - now) / 1000)}` : "---"}</ListRow>
+          <ListRow label="Target weight" hint="The model's weight for this market at the last run, as a share of equity">{typeof target === "number" ? formatPct(target, 1) : "none"}</ListRow>
+          <ListRow label="Target notional" hint="Target weight × current equity">{typeof target === "number" ? formatMoney(target * eq) : "---"}</ListRow>
+          <ListRow label="Held" hint={HINTS.notional}>{pos ? formatMoney(positionNotional(pos)) : formatMoney(0)}</ListRow>
+          <ListRow label="Drift" hint="Target notional minus what is held. A kept weight only trades past the rebalance band (20 % of the position) or the venue minimum; a changed weight always trades">
+            {typeof target === "number" ? (
+              <span className={cn(rebalDrift.trades ? "" : "text-text-2")}>
+                {formatSignedMoney(rebalDrift.delta)}{rebalDrift.trades ? "" : " · inside band"}
+              </span>
+            ) : "---"}
+          </ListRow>
+          <ListRow label="Fee if traded" hint="Taker fee on the traded notional, charged at the fill">{typeof target === "number" && taker !== null ? formatMoney(Math.abs(rebalDrift.delta) * taker) : "---"}</ListRow>
+        </ListSection>
+      ) : (
       <ListSection title="Next order (estimate)">
         <ListRow label="Est. entry" hint={HINTS.mark}>{estEntry > 0 ? formatPrice(estEntry) : "---"}</ListRow>
         <ListRow label="Slippage model" hint="Paper fills are moved against you by this many bps of the mark">{slip !== null ? `${slip} bps` : "---"}</ListRow>
@@ -166,6 +196,7 @@ function BotTab({ market, positions }: { market: MarketView; positions: Position
         <ListRow label="Order size" hint="Risk manager sizing: risk_per_trade_pct × equity is the loss at the stop; the notional depends on the stop distance">{riskUsd !== null ? `${formatMoney(riskUsd)} at risk` : "---"}</ListRow>
         <ListRow label="Fees" hint="Taker fee on the entry (paper)">{taker !== null && estEntry > 0 && marginNext !== null ? `${formatPct(taker, 2)} · ${formatMoney(marginNext * leverage * taker)}` : taker !== null ? formatPct(taker, 2) : "---"}</ListRow>
       </ListSection>
+      )}
     </div>
   );
 }
@@ -199,7 +230,7 @@ function PositionCard({ p, now }: { p: PositionData; now: number }) {
               <ListRow label="SL" hint={HINTS.sl}>{p.stop_loss && p.stop_loss > 0 ? formatPrice(p.stop_loss) : "---"}</ListRow>
               <ListRow label="TP" hint={HINTS.tp}>{p.take_profit && p.take_profit > 0 ? formatPrice(p.take_profit) : "---"}</ListRow>
             </>}
-        <ListRow label="Liq." hint={HINTS.liq}>{liq.price ? formatPrice(liq.price) : "---"}</ListRow>
+        <ListRow label="Liq." hint={HINTS.liq}>{liq.price ? formatPrice(liq.price) : <span title="Leverage 1 — the position is fully funded, so no price liquidates it">none · 1x</span>}</ListRow>
         <ListRow label="Margin" hint={HINTS.margin}>{formatMoney(positionMargin(p))}</ListRow>
         <ListRow label="Hold" hint={HINTS.hold}><HoldTime seconds={positionHoldSec(p, now)} /></ListRow>
         <ListRow label="Side">{long ? "Long" : "Short"} · {STRATEGY_LABELS[p.strategy ?? ""] ? "" : ""}{p.leverage ?? 1}x</ListRow>

@@ -15,6 +15,16 @@ import numpy as np
 import pandas as pd
 
 ANNUALIZATION = 365
+# A series is annualised by ITS OWN calendar: crypto prints 365 bars a year, a futures or index
+# series ~252. With one factor for all, a TradFi vol came out sqrt(365/252) = 1.20x too high and
+# its position ~17 % smaller than the vol target asked for (audit 2026-09-05). Re-validated with
+# scripts/validate_profile.py at the change.
+TRADING_DAYS = {"crypto": 365}
+DEFAULT_TRADING_DAYS = 252
+
+
+def periods_per_year(symbol: str) -> int:
+    return TRADING_DAYS.get(asset_class(symbol), DEFAULT_TRADING_DAYS)
 
 
 @dataclass
@@ -112,10 +122,11 @@ def sub_strategy_positions(close: pd.Series, n: int, allow_shorts: bool = False,
     return pd.Series(pos, index=close.index), pd.Series(stop, index=close.index)
 
 
-def asset_weight(close: pd.Series, p: TrendParams) -> pd.Series:
-    """Target weight of one asset: mean over lookbacks of (vol scalar × position)."""
+def asset_weight(close: pd.Series, p: TrendParams, periods: int = ANNUALIZATION) -> pd.Series:
+    """Target weight of one asset: mean over lookbacks of (vol scalar × position).
+    `periods` is the series' own bars per year (periods_per_year)."""
     ret = close.pct_change(fill_method=None)
-    sigma = ret.rolling(p.vol_window).std() * np.sqrt(ANNUALIZATION)
+    sigma = ret.rolling(p.vol_window).std() * np.sqrt(periods)
     vol_scalar = (p.target_vol / sigma).clip(upper=p.leverage_cap)
     vol_scalar = vol_scalar.replace([np.inf, -np.inf], np.nan)
     weights = []
@@ -255,7 +266,7 @@ def target_weights(data: Dict[str, pd.DataFrame], universe: List[str], as_of: pd
         if len(close) < p.min_history_days:
             out[sym] = 0.0
             continue
-        w = asset_weight(close, p)
+        w = asset_weight(close, p, periods_per_year(sym))
         # The clamp is what makes the book long-only; with the short side enabled a negative weight
         # is a short of that size (execution path still to be reviewed — see the research note).
         val = float(w.iloc[-1])

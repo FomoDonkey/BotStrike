@@ -21,7 +21,7 @@ export const RISK_LEVEL_COPY =
 
 const PROFILE_BLURB: Record<string, string> = {
   conservative: "The smallest position sizes. Slow, shallow drawdowns.",
-  balanced: "The sizing the paper book runs today.",
+  balanced: "The middle rung: what a fresh install starts on. The card marked CURRENT is what runs today.",
   aggressive: "Put through the same eleven gates as the other two and passed all of them. Validated does not mean comfortable: the worst day and the time below peak above are what this level costs.",
 };
 

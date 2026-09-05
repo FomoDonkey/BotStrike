@@ -139,11 +139,13 @@ export function PositionsTable({ positions, symbol, compact, emptyText = "No ope
   );
   if (!compact) {
     columns.push(
-      { id: "liq", label: "Liq. Price", hint: HINTS.liq, render: (p) => { const liq = positionLiquidation(p); return liq.price ? <span className="num" title={liq.estimated ? "Estimated from the paper formula (bridge did not report it)" : undefined}>{formatPrice(liq.price)}{liq.estimated && <span className="text-[11px] ml-0.5 text-text-2">est</span>}</span> : <span className="text-text-3" title="Leverage 1 — spot-like, no liquidation">---</span>; } },
+      { id: "liq", label: "Liq. Price", hint: HINTS.liq, render: (p) => { const liq = positionLiquidation(p); return liq.price ? <span className="num" title={liq.estimated ? "Estimated from the paper formula (bridge did not report it)" : undefined}>{formatPrice(liq.price)}{liq.estimated && <span className="text-[11px] ml-0.5 text-text-2">est</span>}</span> : <span className="text-text-2 font-medium" title="Leverage 1 — the position is fully funded, so no price liquidates it">none · 1x</span>; } },
       { id: "margin", label: "Margin", hint: HINTS.margin, sortValue: positionMargin, render: (p) => <span className="num">{formatUSD(positionMargin(p))}</span> },
       { id: "lev", label: "Lev", sortValue: positionLeverage, render: (p) => <span className="num">{positionLeverage(p)}x</span> },
-      { id: "trigger", label: "Trigger", align: "l", hint: HINTS.trigger, render: (p) => p.trigger ? <span className="font-medium">{p.trigger}</span> : <span className="text-text-3">---</span> },
-      { id: "regime", label: "Regime", align: "l", hint: "Market regime when the position was opened", render: (p) => p.regime_at_entry ? <span className="font-medium">{p.regime_at_entry.replace(/_/g, " ")}</span> : <span className="text-text-3">---</span> },
+      { id: "trigger", label: "Trigger", align: "l", hint: HINTS.trigger, render: (p) => p.trigger ? <span className="font-medium">{p.trigger.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase())}</span> : <span className="text-text-3">---</span> },
+      // the daily book decides on daily bars: the 15 m regime is not an input, so a dash here read as
+      // missing data (Edgar, 2026-09-05)
+      { id: "regime", label: "Regime", align: "l", hint: "Market regime when the position was opened (intraday strategies). The daily trend book does not use the 15 m regime.", render: (p) => p.regime_at_entry ? <span className="font-medium">{p.regime_at_entry.replace(/_/g, " ")}</span> : p.strategy === "TREND_DAILY" ? <span className="text-text-2 font-medium" title="Decided on daily bars — the 15 m regime is not an input of this strategy">daily · n/a</span> : <span className="text-text-3">---</span> },
       { id: "fees", label: "Fees", hint: HINTS.fees, sortValue: (p) => p.fees_paid ?? 0, render: (p) => typeof p.fees_paid === "number" ? <span className="num">{formatUSD(p.fees_paid, 4)}</span> : <span className="text-text-3">---</span> },
     );
   }

@@ -2204,5 +2204,7 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
 - [x] S1 velas Yahoo contaminadas → fechado por bolsa, sin vela del día, relectura 5 días, ejecución 04:05 UTC
 - [x] S2 freno de riesgo sobre el libro trend (`can_add_exposure` → sin adds bajo límite; salidas siempre)
 - [x] Pesos de hoy reproducidos de forma independiente; fills vs reglas del venue; Σ cash DB = ledger
-- [ ] Tras el despliegue: borrar caché Yahoo del CT, comprobar `next_run_utc` 04:05 y que el rebalance del 06 baje XAG
-- [ ] Decidir: anualización 365 vs 252 para TradFi (revalidar si se cambia)
+- [x] Caché Yahoo del CT sustituida por una limpia; `next_run_utc` 2026-09-06T04:05Z confirmado
+- [ ] Observar el rebalance del 06 (04:05 UTC): XAG debe bajar de 0,079 a ~0,040
+- [x] Anualización por activo (365/252), revalidada 11/11 en los tres perfiles; escaleras y expectativas re-medidas
+- [x] Banda muerta en el re-alineado; caché precalentada; UI sin "---" en posiciones (Liq/Regime/Trigger) y bloque de rebalance

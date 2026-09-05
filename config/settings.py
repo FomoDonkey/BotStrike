@@ -109,9 +109,9 @@ class TradingConfig:
     # The shipped default IS the balanced profile (config/risk_profiles.py). Keep the two in step:
     # if they drift, a fresh install boots into "custom" and the Risk page can offer no expectation
     # for what it is running (caught 2026-09-04 when balanced moved to 0.45).
-    max_drawdown_pct: float = 0.22      # 22% from the all-time peak → halt + flatten
-    max_daily_loss_pct: float = 0.07    # 7% of equity per UTC day → no new entries
-    max_weekly_loss_pct: float = 0.10   # 10% of equity per ISO week → no new entries
+    max_drawdown_pct: float = 0.23      # 22% from the all-time peak → halt + flatten
+    max_daily_loss_pct: float = 0.08    # 7% of equity per UTC day → no new entries
+    max_weekly_loss_pct: float = 0.11   # 10% of equity per ISO week → no new entries
     max_leverage: int = 5               # Safer for micro account (was 20)
     max_total_exposure_pct: float = 0.6  # 60% max exposure (was 0.8)
     max_open_positions: int = 4          # Max concurrent positions (one per symbol)

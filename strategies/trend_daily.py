@@ -376,10 +376,25 @@ class TrendDailyEngine:
                          microsecond=0) + timedelta(minutes=int(self.config.trend_execution_delay_min))
         return now >= run.timestamp()
 
+    async def warm_cache(self) -> int:
+        """Fetch the daily bars of the whole pool once, so every reader of cached frames (exit
+        ladders, MAE/MFE, the daily-open fallback) has them from the first request — a fresh CT or
+        a deleted cache file left every TradFi row of the positions table at "---" (2026-09-05)."""
+        try:
+            params = TrendParams.from_config(self.config)
+            data = await asyncio.to_thread(self.store.load, self.pool(), self._today(), True,
+                                           params.min_history_days)
+            logger.info("trend_cache_warmed", markets=len(data))
+            return len(data)
+        except Exception as e:  # noqa: BLE001 - the daily run refreshes again in any case
+            logger.warning("trend_cache_warm_failed", error=str(e)[:160])
+            return 0
+
     async def run_loop(self, poll_sec: float = 60.0) -> None:
         self._running = True
         logger.info("trend_daily_engine_started", enabled=self.enabled,
                     next_run=datetime.fromtimestamp(self.next_run_ts(), timezone.utc).isoformat())
+        await self.warm_cache()
         while self._running:
             try:
                 if self.enabled and self.is_due():
@@ -526,8 +541,10 @@ class TrendDailyEngine:
                 if not price:
                     logger.warning("trend_no_price_skipped", symbol=sym)
                     continue
-                turnover += abs(w - float(st.weights.get(sym, 0.0)))
-                await self._execute_symbol(sym, w, price, equity, today_key, now, allow_add=may_add)
+                prev_w = float(st.weights.get(sym, 0.0))
+                turnover += abs(w - prev_w)
+                await self._execute_symbol(sym, w, price, equity, today_key, now, allow_add=may_add,
+                                           weight_changed=abs(w - prev_w) > 1e-12)
             st.targets = {s: round(w, 6) for s, w in targets.items() if s in st.universe or w > 0}
             self._record_tracking(today_key, opens, turnover, equity, prev_basis)
             st.opens_prev = opens
@@ -564,7 +581,8 @@ class TrendDailyEngine:
         return max(base, half) if half is not None else base
 
     async def _execute_symbol(self, sym: str, target_w: float, price: float, equity: float,
-                              today_key: str, now: float, allow_add: bool = True) -> None:
+                              today_key: str, now: float, allow_add: bool = True,
+                              weight_changed: bool = True) -> None:
         """Move one market from what we hold to what the model wants, in SIGNED notional.
 
         Everything here is expressed as signed exposure (positive long, negative short) so one path
@@ -594,7 +612,14 @@ class TrendDailyEngine:
 
         delta = target - current
         closing = pos is not None and abs(target) < abs(current) - 1e-12
-        if abs(delta) < min_order and not (pos and target == 0.0):
+        # A weight the model KEPT is re-aligned to equity only when the drift is worth a trade: the
+        # same band the rebalance threshold applies to weights, applied here to the dollar drift.
+        # The research charges turnover on weight changes only; realigning every ≥ 10 $ of drift
+        # was fees the validation never saw, growing with the account (2026-09-05).
+        band = min_order
+        if pos is not None and not weight_changed and target != 0.0:
+            band = max(min_order, float(p.rebalance_threshold) * abs(current))
+        if abs(delta) < band and not (pos and target == 0.0):
             st.weights[sym] = float(st.weights.get(sym, 0.0)) if pos else 0.0
             return
 

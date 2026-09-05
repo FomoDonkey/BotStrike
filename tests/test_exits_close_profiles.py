@@ -77,8 +77,9 @@ def test_risk_profiles_scale_target_vol_and_the_ladder_together():
     # The loss ladder comes from the measured tail at this size (worst day -8.28 %, worst week
     # -11.46 %, worst drawdown -27.51 %), not from a ratio copied off a calmer profile: a breaker
     # tuned for a 3 % day would halt the bot on an ordinary one here.
-    assert s.trading.trend_target_vol == 0.80 and s.trading.max_drawdown_pct == 0.36
-    assert s.trading.max_daily_loss_pct == 0.11 and s.trading.max_weekly_loss_pct == 0.14
+    # Re-measured 2026-09-05 with per-asset annualisation: worst day -9.08 %, week -12.38 %, DD 29.8 %.
+    assert s.trading.trend_target_vol == 0.80 and s.trading.max_drawdown_pct == 0.39
+    assert s.trading.max_daily_loss_pct == 0.12 and s.trading.max_weekly_loss_pct == 0.15
     # aggressive also raises the vol-scalar ceiling to 3x (Edgar, 2026-09-04). Measured on the
     # validated 14-market panel: +0.5 pts of CAGR for no extra drawdown, because the cap only bound
     # on the quietest 5.6 % of asset-days to begin with (scripts/leverage_cap_study.py).
@@ -108,11 +109,11 @@ def test_profile_description_is_honest_about_the_trade_off():
     # (scripts/validate_aggressive.py, 2026-09-04) — the range was not widened to make room for it.
     assert d["beyond_validated_range"] is False and c["beyond_validated_range"] is False
     assert d["gates_passed"] == 11 and d["gates_total"] == 11 and d["dsr"] >= 0.95
-    assert d["longest_underwater_days"] == 620      # validated does not mean comfortable
+    assert d["longest_underwater_days"] == 721      # validated does not mean comfortable (re-measured 2026-09-05)
     # Re-measured 2026-09-04 with funding taken from Strike instead of guessed per asset class: the
     # old figures (152 / 113 on 1,000) understated the book, which the Risk page was quoting as fact.
-    # 415 / 275 on 1,000: aggressive at 0.80 target vol (aggressive_080_study, 2026-09-04)
-    assert d["expected_year_usd"] == pytest.approx(415.0) and d["expected_worst_drawdown_usd"] == pytest.approx(275.0)
+    # 439 / 298 on 1,000: aggressive at 0.80 target vol, per-asset annualisation (2026-09-05)
+    assert d["expected_year_usd"] == pytest.approx(439.0) and d["expected_worst_drawdown_usd"] == pytest.approx(298.0)
     assert c["expected_year_usd"] == pytest.approx(56.0)
     assert rp.describe("custom")["validated"] is False
     assert [p["profile"] for p in rp.catalog()] == ["conservative", "balanced", "aggressive"]

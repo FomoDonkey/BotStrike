@@ -77,13 +77,17 @@ from typing import Any, Dict, List
 # The ladder is set so a normal drawdown for that risk level does NOT trip the breaker:
 # max_drawdown_pct is ~1.3x the historical maxDD, weekly ~0.6x, daily ~0.25x.
 PROFILES: Dict[str, Dict[str, float]] = {
+    # Re-measured 2026-09-05 with each series annualised on its own calendar (TradFi 252 days):
+    # worst day -1.45 %, worst week -2.00 %, maxDD 4.16 % -> daily 2 %, weekly 3 %, drawdown 6 %.
+    # The old 1 % daily limit sat BELOW the worst day the validated strategy had seen (1.24 %).
     "conservative": {"trend_target_vol": 0.10, "max_drawdown_pct": 0.06,
-                     "max_daily_loss_pct": 0.010, "max_weekly_loss_pct": 0.030,
+                     "max_daily_loss_pct": 0.020, "max_weekly_loss_pct": 0.030,
                      "trend_leverage_cap": 2.0},
     # Balanced moved from 0.20 to 0.45 on 2026-09-04, Edgar's choice from the same measured menu.
-    # Ladder from the measured tail at THIS size: worst day -5.60 %, worst week -7.76 %, maxDD 16.5 %.
-    "balanced":     {"trend_target_vol": 0.45, "max_drawdown_pct": 0.22,
-                     "max_daily_loss_pct": 0.070, "max_weekly_loss_pct": 0.100,
+    # Ladder from the measured tail at THIS size (2026-09-05, per-asset annualisation): worst day
+    # -6.13 %, worst week -8.50 %, maxDD 17.6 % -> daily 8 %, weekly 11 %, drawdown 23 %.
+    "balanced":     {"trend_target_vol": 0.45, "max_drawdown_pct": 0.23,
+                     "max_daily_loss_pct": 0.080, "max_weekly_loss_pct": 0.110,
                      "trend_leverage_cap": 3.0},
     # AGGRESSIVE IS DELIBERATELY BEYOND THE VALIDATED RANGE (Edgar, 2026-09-04). He was shown the
     # measured menu in dollars on his own book and chose the top row. 0.80 target volatility with the
@@ -92,23 +96,26 @@ PROFILES: Dict[str, Dict[str, float]] = {
     #
     # The loss ladder below is NOT the usual ratio copied off a calmer profile: it is set from the
     # measured tail at THIS size, because a breaker tuned for a 3 % day would halt the bot on an
-    # ordinary one here. Worst day seen -8.28 %, worst week -11.46 %, worst drawdown -27.51 %.
-    "aggressive":   {"trend_target_vol": 0.80, "max_drawdown_pct": 0.36,
-                     "max_daily_loss_pct": 0.110, "max_weekly_loss_pct": 0.140,
+    # ordinary one here. Re-measured 2026-09-05 with per-asset annualisation (TradFi on 252 days,
+    # which sizes gold/silver/oil/the index ~20 % closer to the vol target): worst day -9.08 %,
+    # worst week -12.38 %, worst drawdown -29.8 % -> daily 12 %, weekly 15 %, drawdown 39 %
+    # (x1.25 / x1.20 / x1.30 over the tail, scripts/aggressive_080_study.py). 11/11 gates.
+    "aggressive":   {"trend_target_vol": 0.80, "max_drawdown_pct": 0.39,
+                     "max_daily_loss_pct": 0.120, "max_weekly_loss_pct": 0.150,
                      "trend_leverage_cap": 3.0},
 }
 
 # What the research measured for each profile, so the UI never has to guess.
 EXPECTED: Dict[str, Dict[str, float]] = {
-    "conservative": {"sharpe": 1.93, "cagr": 0.056, "vol": 0.028, "max_dd": 0.039,
-                     "worst_day": 0.0124, "worst_week": 0.0172, "longest_underwater_days": 592,
+    "conservative": {"sharpe": 1.93, "cagr": 0.063, "vol": 0.032, "max_dd": 0.042,
+                     "worst_day": 0.0145, "worst_week": 0.0200, "longest_underwater_days": 599,
                      "gates_passed": 11, "gates_total": 11, "dsr": 1.00},
-    "balanced":     {"sharpe": 1.92, "cagr": 0.258, "vol": 0.124, "max_dd": 0.165,
-                     "worst_day": 0.0560, "worst_week": 0.0776, "longest_underwater_days": 594,
+    "balanced":     {"sharpe": 1.89, "cagr": 0.279, "vol": 0.135, "max_dd": 0.176,
+                     "worst_day": 0.0613, "worst_week": 0.0850, "longest_underwater_days": 613,
                      "gates_passed": 11, "gates_total": 11, "dsr": 1.00},
-    # measured at target vol 0.80 with the 3x cap (aggressive_080_study, 2026-09-04)
-    "aggressive":   {"sharpe": 1.84, "cagr": 0.415, "vol": 0.200, "max_dd": 0.275,
-                     "worst_day": 0.0828, "worst_week": 0.1146, "longest_underwater_days": 620,
+    # measured at target vol 0.80 with the 3x cap, per-asset annualisation (2026-09-05)
+    "aggressive":   {"sharpe": 1.84, "cagr": 0.439, "vol": 0.210, "max_dd": 0.298,
+                     "worst_day": 0.0908, "worst_week": 0.1238, "longest_underwater_days": 721,
                      "gates_passed": 11, "gates_total": 11, "dsr": 1.00},
 }
 
