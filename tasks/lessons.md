@@ -1543,3 +1543,7 @@ vela del día en curso de la bolsa nunca es "completa" por muy anterior que sea 
 Daily/weekly/breaker vivían en `check_signal`, que solo llaman las estrategias intradía — todas
 retiradas. El único libro vivo nunca preguntaba. Cuando se retira una estrategia hay que comprobar
 qué controles la usaban como único punto de paso.
+
+## 2026-09-05 — "---" y "Loading…" en una pestaña en segundo plano no es el bridge
+- `usePolling` saltaba TAMBIÉN la primera petición si `document.visibilityState === "hidden"`: una pestaña abierta en segundo plano (o una automatizada) se quedaba en "---"/"Loading strategies…" aunque `/api/*` respondiera en 10 ms. Antes de culpar al servidor: `fetch` desde la propia página + `document.visibilityState`.
+- Fix: la primera petición sale siempre; solo los ticks periódicos esperan a que la pestaña sea visible (a6e2ada).

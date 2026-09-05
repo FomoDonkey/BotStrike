@@ -2208,3 +2208,5 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
 - [ ] Observar el rebalance del 06 (04:05 UTC): XAG debe bajar de 0,079 a ~0,040
 - [x] Anualización por activo (365/252), revalidada 11/11 en los tres perfiles; escaleras y expectativas re-medidas
 - [x] Banda muerta en el re-alineado; caché precalentada; UI sin "---" en posiciones (Liq/Regime/Trigger) y bloque de rebalance
+
+- [x] 2026-09-05 primer fetch de cada poll sale aunque la pestaña esté oculta (a6e2ada, desplegado PASS)
