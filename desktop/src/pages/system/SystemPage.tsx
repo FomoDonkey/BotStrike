@@ -143,7 +143,7 @@ export function SystemPage() {
             <ListRow label="WS channels">{system.openChannels.length}/5 <span className="text-text-2 font-medium">· {system.openChannels.join(", ") || "none"}</span></ListRow>
             <ListRow label={`${EXCHANGE_LABELS[exchange] ?? exchange} feed`}><StatusChip status={system.wsConnected || (feedAge !== null && feedAge < 30) ? "online" : "offline"} size="xs" /></ListRow>
             <ListRow label="Last tick">{formatAge(feedAge)}{feedAge !== null ? " ago" : ""}</ListRow>
-            <ListRow label="Endpoint">{exchange === "hyperliquid" ? "api.hyperliquid.xyz" : "fstream.binance.com"}</ListRow>
+            <ListRow label="Endpoint">{exchange === "hyperliquid" ? "api.hyperliquid.xyz" : exchange === "strike" ? "api.strikefinance.org/ws/price" : "fstream.binance.com"}</ListRow>
             <ListRow label="Framework">Tauri v2 · React 19</ListRow>
           </ListSection>
         </Panel>
@@ -153,7 +153,7 @@ export function SystemPage() {
         <PanelHeader title="Recent log lines" right={<Button variant="ghost" size="xs" icon={<Trash2 className="w-3.5 h-3.5" />} onClick={() => useSystemStore.setState({ logs: [] })}>Clear</Button>} />
         <div ref={logBoxRef} className="flex-1 overflow-auto p-3 font-mono text-[12px] leading-5">
           {logs.length === 0 ? (
-            <p className="text-[12.5px] font-medium text-text font-sans">Waiting for log output…</p>
+            <p className="text-[12.5px] font-medium text-text font-sans">No log frames yet. The bridge streams its data-update messages here; runs, fills, regime changes and risk events are in Activity, and everything else is in the journal on the host.</p>
           ) : (
             logs.map((log, i) => (
               <div key={i} className="flex gap-2">
