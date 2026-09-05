@@ -1561,3 +1561,12 @@ qué controles la usaban como único punto de paso.
   daba 56-60 % RANGING, no 100 %. El bug estaba en el arranque, no en la lógica.
 - Los heredocs de bash con apóstrofos dentro fallan en esta herramienta ("unexpected EOF"): escribir el
   script o el texto a un archivo con Write y ejecutarlo/anexarlo desde bash.
+
+## 2026-09-05 — auditar COBERTURA, no solo lógica
+- Un bot con capas de distinto universo (venue 31 / libro 12 / motor intradía 4) parece incompleto en
+  cuanto una capa estrecha se muestra como global (chip de régimen UNKNOWN en 27 mercados, filtro de
+  mercados con 4 entradas, cuatro chips de régimen con seis posiciones). Regla: para cada dato de la
+  UI, preguntar "¿de qué lista sale?" y compararla con el universo que el usuario ve. Grep de
+  `settings.symbols` / `SYMBOLS` es el mapa.
+- Las auditorías anteriores miraban lógica y contabilidad (correctas); esta dimensión (cobertura por
+  universo) es distinta y hay que recorrerla explícitamente.

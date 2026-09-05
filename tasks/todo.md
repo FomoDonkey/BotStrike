@@ -2215,3 +2215,6 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
 - [ ] Observar la ejecución del 2026-09-06 04:05 UTC (primera con caché Yahoo limpia): XAG debería pasar de peso 0.079 a ~0.040
 - [x] 2026-09-05 régimen: umbrales sin calentamiento + acotados, semilla 33 h paginada, monitor de base Strike/referencia (bf3a875, verificado en CT)
 - [ ] Decidir si merece la pena la UI del monitor de base (hoy solo API + journal)
+- [x] 2026-09-05 cobertura: régimen para cualquier mercado (bridge, velas del venue), listas dinámicas en la UI (bac0e4e, verificado en CT)
+- [ ] Pool del libro trend: 12 de 31 mercados (decisión pendiente de Edgar: incluir acciones sueltas — AAOI, COIN, CRCL, GOOGL, MU, HYPE — ya investigadas)
+- [ ] Mercados finos: valorar marcar el régimen como "baja confianza" cuando las velas del venue son irregulares (ADX 90+)
