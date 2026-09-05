@@ -300,10 +300,14 @@ class TrendDailyEngine:
                  data_store: Optional[DailyDataStore] = None,
                  state_path: str = DEFAULT_STATE_PATH,
                  clock: Callable[[], float] = time.time,
-                 risk_gate: Optional[Callable[[], Any]] = None) -> None:
+                 risk_gate: Optional[Callable[[], Any]] = None,
+                 fill_fn: Optional[Callable[..., Awaitable[Any]]] = None) -> None:
         self.settings = settings
         self.config = settings.trading
         self._on_fill = on_fill
+        # Live execution seam: fill_fn(ui_symbol, side, qty, ref_price, reduce_only) -> FillResult
+        # (strategies/trend_live_executor.py). None = paper fill at the mark ± measured half-spread.
+        self._fill_fn = fill_fn
         self._equity_provider = equity_provider
         # () -> (may_add: bool, reason: str). The risk manager's loss limits, circuit breaker and
         # drawdown halt hold this book's ADDS; exits and reductions always go through (2026-09-05).
@@ -744,15 +748,28 @@ class TrendDailyEngine:
                         wanted_usd=round(abs(delta), 2), rules=self._venue_rules(sym))
             st.weights[sym] = float(st.weights.get(sym, 0.0)) if pos else 0.0
             return
+        fee_rate = taker
+        fill_fn = getattr(self, "_fill_fn", None)      # tests build the engine without __init__
+        if fill_fn is not None:
+            # the venue fills it: the price, the quantity and the fee are whatever it reports
+            res = await fill_fn(to_ui_symbol(sym), Side.BUY if buying else Side.SELL, qty, price, False)
+            got = float(getattr(res, "qty", 0.0) or 0.0)
+            if got <= 0:
+                logger.warning("trend_live_entry_unfilled", symbol=sym, wanted=round(qty, 8),
+                               note=str(getattr(res, "note", ""))[:160])
+                st.weights[sym] = float(st.weights.get(sym, 0.0)) if pos else 0.0
+                return
+            qty, fill = got, float(res.price)
+            fee_rate = float(res.fee) / (fill * qty) if fill * qty > 0 else taker
         size = qty * (1 if buying else -1)                          # signed
         adds = pos is not None
         if pos:
             total = pos.size + size
             pos.entry_price = (pos.entry_price * abs(pos.size) + fill * abs(size)) / abs(total)
-            pos.entry_fee_rate = (pos.entry_fee_rate * abs(pos.size) + taker * abs(size)) / abs(total)
+            pos.entry_fee_rate = (pos.entry_fee_rate * abs(pos.size) + fee_rate * abs(size)) / abs(total)
             pos.size = total
         else:
-            pos = BookPosition(symbol=sym, size=size, entry_price=fill, entry_fee_rate=taker,
+            pos = BookPosition(symbol=sym, size=size, entry_price=fill, entry_fee_rate=fee_rate,
                                weight=target_w, opened=today_key, opened_ts=now, mark_price=fill)
             st.positions[sym] = pos
         pos.weight = target_w
@@ -762,7 +779,7 @@ class TrendDailyEngine:
         # together with the exit leg, which left the balance ~0.05 % of notional too high for as
         # long as the position lived (audit 2026-09-05). `entry_fee_rate` on the position is what
         # the close later reports as already paid (`entry_fee_charged`).
-        entry_fee = fill * abs(size) * taker
+        entry_fee = fill * abs(size) * fee_rate
         pos.entry_fee_paid = float(getattr(pos, "entry_fee_paid", 0.0) or 0.0) + entry_fee
         trade = Trade(
             symbol=to_ui_symbol(sym), side=Side.BUY if buying else Side.SELL, price=fill,
@@ -771,6 +788,7 @@ class TrendDailyEngine:
             timestamp=now, pnl=0.0, expected_price=price,
             actual_slippage_bps=abs(fill - price) / price * 1e4,
             signal_features={"action": "entry_trend", "target_weight": target_w,
+                             "execution": "venue" if getattr(self, "_fill_fn", None) is not None else "paper",
                              "equity_basis": equity, "open_price": price, "pool_symbol": sym,
                              "direction": "short" if size < 0 else "long",
                              "adds_to_position": adds, "position_size_after": abs(pos.size)},
@@ -800,10 +818,21 @@ class TrendDailyEngine:
         if leftover > 0 and min_notional > 0 and leftover * fill < min_notional:
             rounded = abs(pos.size)
         qty = min(rounded, abs(pos.size))
+        exit_fee_rate = taker
+        fill_fn = getattr(self, "_fill_fn", None)
+        if fill_fn is not None:
+            res = await fill_fn(to_ui_symbol(sym), Side.SELL if long_pos else Side.BUY, qty, price, True)
+            got = float(getattr(res, "qty", 0.0) or 0.0)
+            if got <= 0:
+                logger.warning("trend_live_exit_unfilled", symbol=sym, wanted=round(qty, 8),
+                               note=str(getattr(res, "note", ""))[:160])
+                return
+            qty, fill = min(got, abs(pos.size)), float(res.price)
+            exit_fee_rate = float(res.fee) / (fill * qty) if fill * qty > 0 else taker
         signed_qty = qty if long_pos else -qty
         gross = (fill - pos.entry_price) * signed_qty          # sign carries the direction
         entry_share = pos.entry_price * qty * pos.entry_fee_rate          # the entry leg of this quantity
-        fees = entry_share + fill * qty * taker
+        fees = entry_share + fill * qty * exit_fee_rate
         pnl = gross - fees                                     # round-trip net: what the statistics read
         # what of that entry leg was ALREADY debited at the entry fill (pro rata on a partial close):
         # the close credits it back to the balance so it is not paid twice
@@ -818,6 +847,7 @@ class TrendDailyEngine:
             strategy=StrategyType.TREND_DAILY, timestamp=now, pnl=pnl, expected_price=pos.entry_price,
             actual_slippage_bps=abs(fill - price) / price * 1e4,
             signal_features={"action": "exit_trend" if full_exit else "exit_trend_rebalance",
+                             "execution": "venue" if getattr(self, "_fill_fn", None) is not None else "paper",
                              "exit_reason": ("TREND_FLIP" if reason == "flip" else
                                              "TREND_EXIT" if full_exit else "REBALANCE"),
                              "entry_price": pos.entry_price, "exit_price": fill,

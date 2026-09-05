@@ -548,8 +548,8 @@ def _install_hooks(engine):
     if hasattr(engine, '_process_paper_fill'):
         original_paper_fill = engine._process_paper_fill
 
-        async def patched_paper_fill(trade):
-            await original_paper_fill(trade)
+        async def patched_paper_fill(trade, *args, **kwargs):
+            await original_paper_fill(trade, *args, **kwargs)
             try:
                 serialized = serialize_trade(trade)
                 state.recent_trades.append(serialized)

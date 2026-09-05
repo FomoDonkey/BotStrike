@@ -181,6 +181,19 @@ class BotStrike:
             self.trend_engine = TrendDailyEngine(
                 settings, on_fill=lambda t: self._process_paper_fill(t), equity_provider=self._sizing_equity,
                 risk_gate=self.risk_manager.can_add_exposure)
+        elif (self._venue == ExchangeVenue.STRIKE and not self.dry_run
+              and bool(getattr(settings.trading, "trend_live_enabled", False))):
+            # The daily book on the REAL account (2026-09-05): passive-then-aggressive execution on
+            # Strike (strategies/trend_live_executor.py). Its fills are recorded like any other,
+            # but the equity is the wallet's (ACCOUNT_UPDATE), never a cash chain of our own.
+            from strategies.trend_live_executor import TrendLiveExecutor
+            executor = TrendLiveExecutor(self.client, settings)
+            self.trend_engine = TrendDailyEngine(
+                settings, on_fill=lambda t: self._process_paper_fill(t, adjust_equity=False),
+                equity_provider=self._sizing_equity, risk_gate=self.risk_manager.can_add_exposure,
+                fill_fn=executor.fill)
+            logger.warning("trend_live_enabled", note="the daily book will send orders to the venue",
+                           passive_timeout_sec=settings.trading.trend_live_passive_timeout_sec)
 
         # Edge monitor state (analytics/edge.py) — refreshed by _metrics_loop
         self.edge_stats: Dict = {}
@@ -761,8 +774,12 @@ class BotStrike:
                             strategy=sig.strategy.value, side=sig.side.value,
                             price=sig.entry_price, size=sig.size_usd)
 
-    async def _process_paper_fill(self, trade: "Trade") -> None:
-        """Procesa un fill simulado por el paper trading, identico al pipeline live."""
+    async def _process_paper_fill(self, trade: "Trade", adjust_equity: bool = True) -> None:
+        """Procesa un fill simulado por el paper trading, identico al pipeline live.
+
+        `adjust_equity=False` for a fill the VENUE executed (the live trend book): the row, the
+        statistics, the period PnL and the notifications are the same, but the balance is the
+        wallet's and arrives on the user stream - chaining our own cash on top would count it twice."""
         self.trading_logger.log_trade(trade)
         self.metrics.add_trade(trade)
         asyncio.ensure_future(self.notifier.notify_trade(trade))
@@ -786,8 +803,9 @@ class BotStrike:
         # mark-to-market and already carries this position's open PnL
         equity_before = self.risk_manager.realized_equity
         new_equity = equity_before + cash
-        await self.risk_manager.update_equity_safe(new_equity, unrealized=self._unrealized_total())
-        self.metrics.update_equity(new_equity)
+        if adjust_equity:
+            await self.risk_manager.update_equity_safe(new_equity, unrealized=self._unrealized_total())
+            self.metrics.update_equity(new_equity)
         if is_exit_fill and trade.pnl != 0:
             await self.risk_manager.record_trade_result_safe(trade.pnl, strategy=trade.strategy)
         elif not is_exit_fill and cash != 0:

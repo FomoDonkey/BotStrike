@@ -190,6 +190,14 @@ class TradingConfig:
     trend_execution_hour_utc: int = 4
     trend_execution_delay_min: int = 5           # ...plus this delay (candle must exist)
     trend_min_order_usd: float = 10.0            # skip rebalances smaller than this notional
+    # ── The daily book on the REAL account (mode=live + BOTSTRIKE_ALLOW_LIVE + this flag) ──
+    # Passive-then-aggressive execution (strategies/trend_live_executor.py): rest post-only at the
+    # touch for the maker rebate, follow the touch a few times, then cross the book for the rest.
+    trend_live_enabled: bool = False
+    trend_live_passive_timeout_sec: int = 600
+    trend_live_poll_sec: float = 5.0
+    trend_live_max_repegs: int = 5
+    trend_live_fallback_market: bool = True
     trend_min_listing_days: int = 365
     trend_liq_enter_usd: float = 2_000_000.0     # 30d median dollar volume to enter the universe
     trend_liq_exit_usd: float = 1_000_000.0      # ... and to stay
