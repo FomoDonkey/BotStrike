@@ -1551,3 +1551,13 @@ qué controles la usaban como único punto de paso.
 ## 2026-09-05 — un reinicio re-basaba el PnL diario/semanal mark-to-market
 - El baseline de PnL abierto (`_day_start_unrealized`) se sembraba en la primera marca de CADA proceso: tras un redeploy el diario pasó de +$0,29 a −$0,003 con el libro igual, y una pérdida abierta anterior al reinicio dejaba de contar contra el límite diario. Cualquier métrica "desde las 00:00" tiene que persistir su baseline con la clave del periodo (`data/risk_peak.json`: day / ISO week) y restaurarse solo si el periodo sigue vivo (5c6c34a).
 - Regla: después de cada redeploy comparar las cifras de periodo (daily/weekly) antes y después; si cambian sin que cambie el libro, hay un baseline que no sobrevive.
+
+## 2026-09-05 — "siempre RANGING" era el calentamiento del ADX tras cada reinicio
+- Umbrales adaptativos por percentil sobre la ventana viva son autorreferentes y, con una ventana corta, se
+  calculan sobre el calentamiento del indicador (el ADX de Wilder arranca en 60+): percentil 60 = 61 →
+  nada es tendencia. Regla: saltar el calentamiento, acotar a bandas de manual y sembrar la ventana
+  completa al reiniciar. Comprobar `/api/regime.inputs.thr_*` tras cada despliegue.
+- Antes de cambiar un clasificador "porque siempre dice X", medirlo sobre datos asentados: en 30 días
+  daba 56-60 % RANGING, no 100 %. El bug estaba en el arranque, no en la lógica.
+- Los heredocs de bash con apóstrofos dentro fallan en esta herramienta ("unexpected EOF"): escribir el
+  script o el texto a un archivo con Write y ejecutarlo/anexarlo desde bash.

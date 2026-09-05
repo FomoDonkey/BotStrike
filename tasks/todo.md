@@ -2213,3 +2213,5 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
 - [x] 2026-09-05 Risk page: all-time max DD ≥ live DD; fila "Max leverage 5x · trend book ≤3x" (3587b9c, verificado en Chrome)
 - [x] 2026-09-05 baselines diario/semanal MTM persistidos en data/risk_peak.json (5c6c34a) — verificar con reinicio controlado en el CT
 - [ ] Observar la ejecución del 2026-09-06 04:05 UTC (primera con caché Yahoo limpia): XAG debería pasar de peso 0.079 a ~0.040
+- [x] 2026-09-05 régimen: umbrales sin calentamiento + acotados, semilla 33 h paginada, monitor de base Strike/referencia (bf3a875, verificado en CT)
+- [ ] Decidir si merece la pena la UI del monitor de base (hoy solo API + journal)
