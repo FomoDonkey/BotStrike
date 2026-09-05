@@ -15,6 +15,9 @@ export interface TradeData {
   strategy: string | null;
   timestamp: number;
   pnl: number;
+  /** SL / TP / REBALANCE / TREND_EXIT / … — a rebalance trim is not a round-trip exit */
+  exit_reason?: string;
+  order_id?: string;
   actual_slippage_bps?: number;
   signal_features?: {
     mae_bps?: number;

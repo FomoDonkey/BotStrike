@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { CandlestickChart, PieChart, Brain, Shield, FlaskConical, Database, Monitor, Settings } from "lucide-react";
+import { CandlestickChart, History, PieChart, Brain, Shield, FlaskConical, Database, Monitor, Settings } from "lucide-react";
 
 export interface NavItem {
   path: string;
@@ -11,6 +11,7 @@ export interface NavItem {
 /** Top navigation (spec §2): Trade · Portfolio · Strategies · Risk · Backtest · Data · System. */
 export const NAV_ITEMS: readonly NavItem[] = [
   { path: "/trading", label: "Trade", icon: CandlestickChart, shortcut: "1" },
+  { path: "/journal", label: "Journal", icon: History, shortcut: "8" },
   { path: "/portfolio", label: "Portfolio", icon: PieChart, shortcut: "2" },
   { path: "/strategies", label: "Strategies", icon: Brain, shortcut: "3" },
   { path: "/risk", label: "Risk", icon: Shield, shortcut: "4" },

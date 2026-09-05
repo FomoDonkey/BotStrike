@@ -6,6 +6,7 @@ import { chartInputs, readChartCandles } from "@/lib/chartData";
 import { COLOR_DOWN, COLOR_UP } from "@/lib/constants";
 import { formatPrice } from "@/lib/utils";
 import { applyOverlays, applyPriceLines, type DivergenceOverlay, type OverlayRefs, type PriceLineSpec } from "./chartOverlays";
+import { isTrim } from "@/lib/tradeEpisodes";
 import type { AutoscaleInfo } from "lightweight-charts";
 import { CHART_THEME, TF_SECONDS, type Timeframe } from "./chartConfig";
 import { formatIndicatorValue, type IndicatorDef, type SeriesSpec } from "./chartIndicators";
@@ -36,10 +37,23 @@ interface OverlayLayer {
   series: ISeriesApi<"Line">[];
 }
 
+/** A polyline drawn on the price: the path of one trade (entry → trims → exit). */
+export interface PathSpec {
+  id: string;
+  color: string;
+  width?: number;
+  style?: "solid" | "dotted" | "dashed";
+  points: { time: number; price: number }[];
+}
+
 interface CandlestickChartProps {
   symbol: string;
   className?: string;
   trades?: TradeData[];
+  /** Trade paths (journal): one line series each, kept out of the autoscale */
+  paths?: PathSpec[];
+  /** Zoom the visible range to this window (epoch seconds) whenever it changes */
+  focus?: { from: number; to: number } | null;
   timeframe?: Timeframe;
   /** Live levels of open positions (entry / SL / TP / liq) */
   priceLines?: PriceLineSpec[];
@@ -61,12 +75,13 @@ interface CandlestickChartProps {
   legendRows?: number;
 }
 
-export function CandlestickChart({ symbol, className, trades, timeframe = "1m", priceLines, overlays, overlayDefs, onChart, upColor = COLOR_UP, downColor = COLOR_DOWN, legendRef, overlayLegendRef, legendRows = 1 }: CandlestickChartProps) {
+export function CandlestickChart({ symbol, className, trades, paths, focus, timeframe = "1m", priceLines, overlays, overlayDefs, onChart, upColor = COLOR_UP, downColor = COLOR_DOWN, legendRef, overlayLegendRef, legendRows = 1 }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const priceLineRefs = useRef<Map<string, IPriceLine>>(new Map());
+  const pathRefs = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
   const overlayRefs = useRef<OverlayRefs>({ series: [] });
   const layersRef = useRef<OverlayLayer[]>([]);
   const firstTimeRef = useRef(0);
@@ -494,20 +509,34 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
             position: isBuy ? "belowBar" : "aboveBar",
             color: isBuy ? colorsRef.current.up : colorsRef.current.down,
             shape: isBuy ? "arrowUp" : "arrowDown",
-            text: `${isBuy ? "L" : "S"} $${t.price.toFixed(0)}`,
+            size: 1.2,
+            text: `${isBuy ? "LONG" : "SHORT"} ${formatPrice(t.price)}`,
           });
         } else {
           const isWin = t.pnl > 0;
-          const pnlStr = t.pnl >= 0 ? `+${t.pnl.toFixed(2)}` : t.pnl.toFixed(2);
+          const pnlStr = `${t.pnl >= 0 ? "+" : "−"}$${Math.abs(t.pnl).toFixed(2)}`;
           // serialize_trade sends the POSITION side on exits (BUY = closed long)
           const wasLong = t.side === "BUY";
-          markers.push({
-            time,
-            position: wasLong ? "aboveBar" : "belowBar",
-            color: isWin ? colorsRef.current.up : colorsRef.current.down,
-            shape: "circle",
-            text: `$${pnlStr}`,
-          });
+          if (isTrim(t)) {
+            // a rebalance trim: part of the position re-aligned to its weight, not a decision to leave
+            markers.push({
+              time,
+              position: wasLong ? "aboveBar" : "belowBar",
+              color: "#F5B942",
+              shape: "square",
+              size: 0.7,
+              text: `trim ${pnlStr}`,
+            });
+          } else {
+            markers.push({
+              time,
+              position: wasLong ? "aboveBar" : "belowBar",
+              color: isWin ? colorsRef.current.up : colorsRef.current.down,
+              shape: "circle",
+              size: 1.3,
+              text: `EXIT ${pnlStr}`,
+            });
+          }
         }
       }
 
@@ -517,6 +546,60 @@ export function CandlestickChart({ symbol, className, trades, timeframe = "1m", 
       console.error("[Chart] markers error:", e);
     }
   }, [trades, chartReady, timeframe, tfSeconds, historyStart, upColor, downColor]);
+
+  // Step 3b: trade paths (journal) — one line series per episode, never part of the autoscale
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chartReady || !chart) return;
+    const refs = pathRefs.current;
+    const wanted = new Map((paths ?? []).map((p) => [p.id, p]));
+    for (const [id, series] of [...refs.entries()]) {
+      if (!wanted.has(id)) {
+        try { chart.removeSeries(series); } catch { /* already gone */ }
+        refs.delete(id);
+      }
+    }
+    for (const p of wanted.values()) {
+      const pts = [...p.points]
+        .filter((q) => q.time > 0 && q.price > 0)
+        .sort((a, b) => a.time - b.time);
+      // lightweight-charts wants strictly increasing times: two fills in one bar are nudged apart
+      const data: { time: UTCTimestamp; value: number }[] = [];
+      let last = -Infinity;
+      for (const q of pts) {
+        let t = Math.floor(q.time / tfSeconds) * tfSeconds;
+        if (t <= last) t = last + 1;
+        last = t;
+        data.push({ time: t as UTCTimestamp, value: q.price });
+      }
+      if (data.length < 2) {
+        const stale = refs.get(p.id);
+        if (stale) { try { chart.removeSeries(stale); } catch { /* ignore */ } refs.delete(p.id); }
+        continue;
+      }
+      let series = refs.get(p.id);
+      if (!series) {
+        series = chart.addLineSeries({
+          color: p.color, lineWidth: (p.width ?? 2) as 1 | 2 | 3 | 4, lineStyle: LINE_STYLE[p.style ?? "solid"],
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+          autoscaleInfoProvider: () => null,
+        });
+        refs.set(p.id, series);
+      } else {
+        series.applyOptions({ color: p.color, lineWidth: (p.width ?? 2) as 1 | 2 | 3 | 4, lineStyle: LINE_STYLE[p.style ?? "solid"] });
+      }
+      try { series.setData(data); } catch (e) { console.error("[Chart] path error:", e); }
+    }
+  }, [paths, chartReady, tfSeconds]);
+
+  // Step 3c: focus — zoom the time scale to one trade
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chartReady || !chart || !focus || !(focus.to > focus.from)) return;
+    try {
+      chart.timeScale().setVisibleRange({ from: focus.from as UTCTimestamp, to: focus.to as UTCTimestamp });
+    } catch { /* range outside the loaded history */ }
+  }, [focus, chartReady, symbol, timeframe]);
 
   // Step 4: live price lines (entry / SL / TP / liq of open positions)
   useEffect(() => {

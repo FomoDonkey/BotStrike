@@ -4,6 +4,7 @@ import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "@/app/Layout";
 import { TradingPage } from "@/pages/trading/TradingPage";
 import { PortfolioPage } from "@/pages/portfolio/PortfolioPage";
+import { JournalPage } from "@/pages/journal/JournalPage";
 import { StrategiesPage } from "@/pages/strategies/StrategiesPage";
 import { RiskPage } from "@/pages/risk/RiskPage";
 import { BacktestPage } from "@/pages/backtest/BacktestPage";
@@ -31,6 +32,7 @@ if (root) {
           <Route element={<Layout />}>
             <Route path="/" element={<Navigate to="/trading" replace />} />
             <Route path="/trading" element={<TradingPage />} />
+            <Route path="/journal" element={<JournalPage />} />
             <Route path="/portfolio" element={<PortfolioPage />} />
             {/* v2.15 routes → Portfolio replaces Dashboard + Performance; Order Flow lives in Trade → Details */}
             <Route path="/dashboard" element={<Navigate to="/portfolio" replace />} />
