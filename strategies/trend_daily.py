@@ -41,7 +41,7 @@ import structlog
 
 from core.types import Position, Side, StrategyType, Trade
 from strategies.trend_daily_model import (
-    TrendParams, apply_rebalance_threshold, exit_ladder, model_daily_return, select_universe,
+    TrendParams, apply_rebalance_threshold, exit_ladder, model_daily_return, select_universe, venue_floors, asset_class,
     target_weights,
 )
 
@@ -264,6 +264,7 @@ class TrendState:
     opens_prev: Dict[str, float] = field(default_factory=dict)   # opens used at the last execution
     tracking: List[Dict[str, Any]] = field(default_factory=list)
     last_adds_blocked: str = ""          # why the last run held its adds (risk gate), else ""
+    liquidity_note: str = ""             # why the universe was not (re)picked this run, else ""
     candidates: int = 0
 
     def to_json(self) -> Dict[str, Any]:
@@ -278,7 +279,7 @@ class TrendState:
             st.positions[k] = BookPosition(**{f: v.get(f, 0.0) for f in BookPosition.__dataclass_fields__})
         for k in ("weights", "universe", "universe_month", "universe_key", "targets", "last_run_date", "last_run_ts",
                   "last_run_status", "last_error", "equity_basis", "opens_prev", "tracking", "candidates",
-                  "last_run_late", "last_adds_blocked"):
+                  "last_run_late", "last_adds_blocked", "liquidity_note"):
             if k in d:
                 setattr(st, k, d[k])
         # One tracking row per day. Files written before 2026-09-05 hold a row per RUN — a restart
@@ -408,6 +409,21 @@ class TrendDailyEngine:
                 logger.warning("trend_basis_wide", limit=BASIS_WARN, **wide)
         return out
 
+    def _liquidity_view(self, data: Dict[str, pd.DataFrame], venue_vol: Dict[str, float],
+                        enter_floor: float, exit_floor: float, universe: List[str]) -> Dict[str, Any]:
+        """What the liquidity floors see, per pool market, for /api/trend and the journal."""
+        markets: Dict[str, Dict[str, Any]] = {}
+        for sym in data:
+            v = venue_vol.get(sym) if venue_vol else None
+            markets[to_ui_symbol(sym)] = {
+                "venue_24h": round(float(v), 2) if v is not None else None,
+                "member": sym in universe,
+                "ok_enter": bool(v is not None and float(v) >= enter_floor),
+                "ok_exit": bool(v is not None and float(v) >= exit_floor),
+            }
+        return {"enter_floor": round(enter_floor, 2), "exit_floor": round(exit_floor, 2),
+                "available": bool(venue_vol), "markets": markets}
+
     async def _refresh_basis(self) -> None:
         try:
             params = TrendParams.from_config(self.config)
@@ -427,6 +443,16 @@ class TrendDailyEngine:
                                            params.min_history_days)
             logger.info("trend_cache_warmed", markets=len(data))
             self._basis_snapshot(data)
+            try:
+                if len({asset_class(x) for x in data}) > 1:
+                    eq_now = float(self._equity_provider() or 0.0)
+                    params.position_notional = eq_now * float(params.leverage_cap) / max(int(params.n_assets), 1)
+                    enter_floor, exit_floor = venue_floors(params)
+                    venue_vol = await asyncio.to_thread(self._venue_volumes, list(data))
+                    self.last_liquidity = self._liquidity_view(data, venue_vol, enter_floor, exit_floor,
+                                                               self.state.universe)
+            except Exception as e:  # noqa: BLE001 - the daily run computes it again
+                logger.debug("trend_liquidity_warm_failed", error=str(e)[:120])
             return len(data)
         except Exception as e:  # noqa: BLE001 - the daily run refreshes again in any case
             logger.warning("trend_cache_warm_failed", error=str(e)[:160])
@@ -510,19 +536,46 @@ class TrendDailyEngine:
             # assets changes: a config change must take effect at the next daily run, not four
             # weeks later (found on the CT 2026-09-03 switching to the multi-asset pool).
             universe_key = f"{','.join(self.pool())}|{params.n_assets}"
-            if st.universe_month != month_key or not st.universe or st.universe_key != universe_key:
-                # what one position would be worth, so the liquidity floor scales with the account
-                try:
-                    eq_now = float(self._equity_provider() or 0.0)
-                except Exception:  # noqa: BLE001
-                    eq_now = 0.0
-                params.position_notional = (eq_now * float(params.leverage_cap)
-                                            / max(int(params.n_assets), 1))
-                st.universe = select_universe(data, decision, params, current=st.universe,
-                                              venue_volume=self._venue_volumes(list(data)))
-                st.universe_month = month_key
-                st.universe_key = universe_key
-                logger.info("trend_universe_selected", month=month_key, universe=st.universe)
+            # what one position would be worth, so the liquidity floors scale with the account
+            try:
+                eq_now = float(self._equity_provider() or 0.0)
+            except Exception:  # noqa: BLE001
+                eq_now = 0.0
+            params.position_notional = (eq_now * float(params.leverage_cap)
+                                        / max(int(params.n_assets), 1))
+            mixed = len({asset_class(x) for x in data}) > 1
+            venue_vol = self._venue_volumes(list(data)) if mixed else {}
+            enter_floor, exit_floor = venue_floors(params)
+            repick = st.universe_month != month_key or not st.universe or st.universe_key != universe_key
+            # A member that stopped trading at the venue leaves the SAME day, not at the month's
+            # re-pick: the S&P perp printed 788 $ of volume in 24 h while the book held 416 $ of
+            # it - 53 % of the venue's day - because the pick had run without volumes (2026-09-05).
+            if venue_vol and st.universe:
+                illiquid = [x for x in st.universe if float(venue_vol.get(x, 0.0)) < exit_floor]
+                if illiquid:
+                    logger.warning("trend_universe_illiquid", dropped=[to_ui_symbol(x) for x in illiquid],
+                                   exit_floor=round(exit_floor),
+                                   volumes={to_ui_symbol(x): round(float(venue_vol.get(x, 0.0))) for x in illiquid})
+                    st.universe = [x for x in st.universe if x not in illiquid]
+                    repick = True
+            if repick:
+                if venue_vol or not mixed:
+                    st.universe = select_universe(data, decision, params, current=st.universe,
+                                                  venue_volume=venue_vol or None)
+                    st.universe_month = month_key
+                    st.universe_key = universe_key
+                    st.liquidity_note = ""
+                    logger.info("trend_universe_selected", month=month_key,
+                                universe=[to_ui_symbol(x) for x in st.universe],
+                                enter_floor=round(enter_floor), exit_floor=round(exit_floor))
+                else:
+                    # Fail closed. The first pick on 2026-09-03 ran with no venue volumes and let in
+                    # two markets the floor would have refused. Keep what is held, say so, retry
+                    # tomorrow: a day without new members costs less than a market we cannot exit.
+                    st.liquidity_note = "venue volumes unavailable: universe unchanged this run"
+                    logger.warning("trend_universe_pick_skipped", reason="venue_volume_unavailable",
+                                   universe=[to_ui_symbol(x) for x in st.universe])
+            self.last_liquidity = self._liquidity_view(data, venue_vol, enter_floor, exit_floor, st.universe)
             raw_targets = target_weights(data, st.universe, decision, params)
             alloc = 0.0 if self.killed else float(self.config.allocation_trend_daily)
             targets = {s: w * alloc for s, w in raw_targets.items()}
@@ -1101,6 +1154,8 @@ class TrendDailyEngine:
         return {
             "enabled": self.enabled, "killed": self.killed,
             "last_adds_blocked": getattr(self.state, "last_adds_blocked", ""),
+            "liquidity": dict(getattr(self, "last_liquidity", {}) or {}),
+            "liquidity_note": getattr(st, "liquidity_note", ""),
             "basis": {to_ui_symbol(k): v for k, v in dict(getattr(self, "last_basis", {}) or {}).items()},
             "basis_ts": float(getattr(self, "last_basis_ts", 0.0) or 0.0),
             "basis_warn": BASIS_WARN,

@@ -124,7 +124,8 @@ def test_universe_is_repicked_when_the_pool_changes(tmp_path, monkeypatch):
 
     eng = TrendDailyEngine(s, on_fill, lambda: 1000.0, data_store=FakeStore(),
                            state_path=str(tmp_path / "state.json"))
-    monkeypatch.setattr(eng, "_venue_volumes", lambda syms: {})
+    # the venue answers volumes for every market (a mixed pool is not re-picked without them)
+    monkeypatch.setattr(eng, "_venue_volumes", lambda syms: {x: 1e9 for x in syms})
     asyncio.run(eng.run_once(now=AS_OF.timestamp()))
     assert eng.state.universe == ["BTCUSDT", "ETHUSDT"] and eng.state.universe_key.endswith("|2")
 

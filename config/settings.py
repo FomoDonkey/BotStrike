@@ -200,6 +200,9 @@ class TradingConfig:
     trend_corr_cap: float = 0.85
     trend_liq_venue_usd: float = 5_000.0        # hard minimum 24 h volume at the venue
     trend_liq_venue_multiple: float = 50.0      # and >= 50x the notional of one position
+    # A member LEAVES when its 24 h venue volume falls under this multiple of one position (checked
+    # every run, not only at the monthly re-pick). Lower than the entry multiple on purpose: hysteresis.
+    trend_liq_venue_exit_multiple: float = 10.0
     # Short side of the daily book. OFF by default and that is a measured decision, not caution:
     # tasks/research_shorts_and_speed_2026-09-04.md — at half size it holds the Sharpe (1.92) and cuts
     # the drawdown in all ten stress scenarios (7.6 % -> 5.6 %), and it is the only natural hedge the

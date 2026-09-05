@@ -43,6 +43,7 @@ class TrendParams:
     corr_cap: float = 0.85
     liq_exit_usd_venue: float = 5_000.0      # hard minimum 24 h volume at the venue
     liq_venue_multiple: float = 50.0         # ... and at least 50x one position's notional
+    liq_venue_exit_multiple: float = 10.0    # a member leaves under 10x (hysteresis against 50x)
     position_notional: float = 0.0           # set per run from equity/leverage/n_assets
     # Short side. OFF by default: measured 2026-09-04 (tasks/research_shorts_and_speed_2026-09-04.md)
     # it holds the Sharpe (1.92) and cuts the drawdown in all ten stress scenarios (7.6 % -> 5.6 %),
@@ -69,6 +70,7 @@ class TrendParams:
             corr_cap=float(getattr(tc, "trend_corr_cap", 0.85) or 0.85),
             liq_exit_usd_venue=float(getattr(tc, "trend_liq_venue_usd", 5_000.0) or 0.0),
             liq_venue_multiple=float(getattr(tc, "trend_liq_venue_multiple", 50.0) or 0.0),
+            liq_venue_exit_multiple=float(getattr(tc, "trend_liq_venue_exit_multiple", 10.0) or 0.0),
             allow_shorts=bool(getattr(tc, "trend_allow_shorts", False)),
             short_size=float(getattr(tc, "trend_short_size", 0.5) or 0.5),
         )
@@ -152,6 +154,19 @@ def asset_class(symbol: str) -> str:
     return ASSET_CLASS.get(symbol.upper(), "crypto")
 
 
+def venue_floors(p: TrendParams) -> Tuple[float, float]:
+    """(enter, exit) floors on the venue's 24 h volume for one position of `p.position_notional`.
+
+    Enter: at least `liq_venue_multiple` times one position (50x by default) and never under the
+    hard minimum. Exit: `liq_venue_exit_multiple` times (10x), so a market has to fade well below
+    what admitted it before it is dropped - and it can never exceed the entry floor."""
+    per = float(getattr(p, "position_notional", 0.0) or 0.0)
+    hard = float(getattr(p, "liq_exit_usd_venue", 0.0) or 0.0)
+    enter = max(hard, float(getattr(p, "liq_venue_multiple", 0.0) or 0.0) * per)
+    exit_ = max(hard, float(getattr(p, "liq_venue_exit_multiple", 0.0) or 0.0) * per)
+    return enter, min(exit_, enter)
+
+
 def select_universe(data: Dict[str, pd.DataFrame], as_of: pd.Timestamp, p: TrendParams,
                     current: Optional[List[str]] = None,
                     venue_volume: Optional[Dict[str, float]] = None) -> List[str]:
@@ -206,9 +221,7 @@ def select_universe(data: Dict[str, pd.DataFrame], as_of: pd.Timestamp, p: Trend
         # `liq_venue_multiple` times the notional of one position in 24 h. A 1 000 $ account can
         # use a market that a 100 000 $ account must skip, and thin markets drop out on their own
         # as the account grows. `liq_exit_usd_venue` is the hard minimum below which we never trade.
-        per_position = float(getattr(p, "position_notional", 0.0) or 0.0)
-        floor = max(float(getattr(p, "liq_exit_usd_venue", 0.0) or 0.0),
-                    float(getattr(p, "liq_venue_multiple", 0.0) or 0.0) * per_position)
+        floor = venue_floors(p)[0]
         eligible = [s for s in eligible if float(venue_volume.get(s, 0.0)) >= floor]
         if not eligible:
             return []
