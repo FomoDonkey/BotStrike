@@ -2230,3 +2230,5 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
 - [ ] Tras el canario: reconciliar fees estimadas con get_fill_history (hoy fee_estimated=True)
 - [x] 2026-09-05 pestaña Journal: chart grande con fills, trayectorias, escalera, lista de episodios con zoom y KPIs (3717b6e, 2b1afe0, verificado en Chrome)
 - [ ] Journal: cuando haya >1 estrategia por mercado, mostrar el filtro de estrategia; y exportar CSV de episodios
+- [x] 2026-09-05 revisión página a página: Journal (recortes, funding, fees), estrategia (funding, t-stat), margen/apalancamiento del libro, drawdown 30 d, System (c36d33c, 8bcdfc4)
+- [ ] Desplegar c36d33c + 8bcdfc4 en el CT (pendiente de la aprobación Tailscale) y verificar Journal / Portfolio / Strategies en Chrome

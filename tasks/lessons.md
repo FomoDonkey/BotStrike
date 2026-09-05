@@ -1598,3 +1598,10 @@ qué controles la usaban como único punto de paso.
   fila de cierre llevaba las dos patas). Con filas por fill, eso duplica entradas con el lado de la
   orden de cierre. Regla: cuando el esquema cambia (una fila por fill), revisar TODOS los lectores que
   reconstruían pares; y verificar en el navegador con datos reales, que es donde se vio (BTC "SHORT").
+
+## 2026-09-05 — "revisar la UI" es comparar cada número con la API, página a página
+- No basta con mirar que "se ve bien": volcar por API cada métrica y leer el texto de cada página en
+  el navegador real, y perseguir cada diferencia (Journal vs cuenta, estrategia vs cuenta, margen vs
+  equity). Cinco discrepancias reales salieron así en una pasada.
+- Un recorte de rebalanceo es dinero realizado pero no es una operación cerrada: las estadísticas
+  (win rate, t-stat, profit factor) lo excluyen; el PnL realizado lo incluye. Etiquetar las dos cosas.
