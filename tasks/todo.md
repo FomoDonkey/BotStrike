@@ -2228,3 +2228,5 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
 - [x] 2026-09-05 camino de ejecución en real para el libro trend (post-only → re-peg → market), OFF por defecto (11 tests)
 - [ ] Canario: depósito + mode=live + BOTSTRIKE_ALLOW_LIVE + trend_live_enabled=true; primera semana con trend_target_vol bajo y vigilar `trend_live_fill` en el journal (pasivo vs market, re-pegs, fees)
 - [ ] Tras el canario: reconciliar fees estimadas con get_fill_history (hoy fee_estimated=True)
+- [x] 2026-09-05 pestaña Journal: chart grande con fills, trayectorias, escalera, lista de episodios con zoom y KPIs (3717b6e, 2b1afe0, verificado en Chrome)
+- [ ] Journal: cuando haya >1 estrategia por mercado, mostrar el filtro de estrategia; y exportar CSV de episodios

@@ -1592,3 +1592,9 @@ qué controles la usaban como único punto de paso.
 - Lo decidible como experto se decide y se escribe (pool, cortos); lo que depende del dinero real se
   deja LISTO (ejecutor en real probado contra un venue falso) y se dice claramente qué queda sin
   verificar. Un 10/10 sin historial real no existe; lo honesto es puntuar el historial aparte.
+
+## 2026-09-05 — una fila de salida no es una entrada
+- El hook de historial creaba un marcador de entrada por cada fila de salida (herencia de cuando una
+  fila de cierre llevaba las dos patas). Con filas por fill, eso duplica entradas con el lado de la
+  orden de cierre. Regla: cuando el esquema cambia (una fila por fill), revisar TODOS los lectores que
+  reconstruían pares; y verificar en el navegador con datos reales, que es donde se vio (BTC "SHORT").
