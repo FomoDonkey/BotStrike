@@ -1203,6 +1203,8 @@ class BotStrike:
         restore_risk_state(self.risk_manager, hist, compounding=compounding)
         if compounding:
             self.risk_manager.raise_peak(self._load_risk_peak())
+        # the day/week open-PnL baselines survive a restart inside the same period
+        self.risk_manager.seed_period_baselines(self._load_risk_state())
         self.metrics.update_equity(self.risk_manager.current_equity)
 
     def _unrealized_total(self) -> float:
@@ -1233,13 +1235,14 @@ class BotStrike:
         on every bar; the live engine fed it fills only, so the drawdown halt and the circuit
         breaker could not see a book that was under water until it closed (audit 2026-09-05).
         """
-        saved_peak = 0.0
+        saved_peak, saved_baselines = 0.0, None
         while self._running:
             try:
                 await self.risk_manager.update_unrealized_safe(self._unrealized_total())
                 peak = float(self.risk_manager.equity_peak)
-                if peak > saved_peak + 1e-6:
-                    saved_peak = peak
+                baselines = self.risk_manager.period_baselines()
+                if peak > saved_peak + 1e-6 or baselines != saved_baselines:
+                    saved_peak, saved_baselines = peak, baselines
                     self._save_risk_peak(peak)
             except Exception as e:  # noqa: BLE001 - a marking error must not stop the loop
                 logger.debug("risk_mark_error", error=str(e)[:160])
@@ -1251,7 +1254,8 @@ class BotStrike:
 
     def _save_risk_peak(self, peak: float) -> None:
         """The mark-to-market high-water mark, so a restart does not measure the drawdown from
-        the (lower) realised peak the trade chain reconstructs."""
+        the (lower) realised peak the trade chain reconstructs — plus the day/week open-PnL
+        baselines, so a restart does not re-base today's PnL at the restart."""
         import json as _json
         import os as _os
         import time as _time
@@ -1261,21 +1265,28 @@ class BotStrike:
             tmp = path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 _json.dump({"peak": round(float(peak), 6), "ts": _time.time(),
-                            "source": "paper" if self.paper else "live"}, f)
+                            "source": "paper" if self.paper else "live",
+                            **self.risk_manager.period_baselines()}, f)
             _os.replace(tmp, path)
         except Exception as e:  # noqa: BLE001
             logger.debug("risk_peak_save_error", error=str(e)[:120])
 
-    def _load_risk_peak(self) -> float:
+    def _load_risk_state(self) -> dict:
         import json as _json
         try:
             with open(self._risk_peak_path(), "r", encoding="utf-8") as f:
                 d = _json.load(f)
-            if d.get("source") == ("paper" if self.paper else "live"):
-                return float(d.get("peak") or 0.0)
+            if isinstance(d, dict) and d.get("source") == ("paper" if self.paper else "live"):
+                return d
         except (OSError, ValueError, TypeError):
             pass
-        return 0.0
+        return {}
+
+    def _load_risk_peak(self) -> float:
+        try:
+            return float(self._load_risk_state().get("peak") or 0.0)
+        except (ValueError, TypeError):
+            return 0.0
 
     # ── Edge monitor (analytics/edge.py) ──────────────────────────────
     async def _edge_monitor_tick(self, force: bool = False) -> None:

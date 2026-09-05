@@ -55,7 +55,8 @@ class RiskManager:
         # mark-to-market (realised since the reset + how the open book moved since then).
         self._day_start_unrealized: float = 0.0
         self._week_start_unrealized: float = 0.0
-        self._unrealized_seeded: bool = False
+        self._day_baseline_set: bool = False
+        self._week_baseline_set: bool = False
         self._positions: Dict[str, Position] = {}
         self._daily_pnl: float = 0.0
         self._weekly_pnl: float = 0.0
@@ -459,9 +460,11 @@ class RiskManager:
         if u != u:                                   # NaN
             return
         self._unrealized = u
-        if not self._unrealized_seeded:
-            self._unrealized_seeded = True
+        if not self._day_baseline_set:
+            self._day_baseline_set = True
             self._day_start_unrealized = u
+        if not self._week_baseline_set:
+            self._week_baseline_set = True
             self._week_start_unrealized = u
         if self._mtm() > self._equity_peak:
             self._equity_peak = self._mtm()
@@ -683,6 +686,35 @@ class RiskManager:
         self._last_daily_reset_date = now.strftime("%Y-%m-%d")
         self._last_weekly_reset_key = tuple(now.isocalendar()[:2])
         self.vol_targeting.on_equity_update(self._current_equity, time.time())
+
+    def period_baselines(self) -> Dict[str, object]:
+        """The open-PnL baselines the period limits are measured from, keyed by their period, so
+        a restart inside the same day / ISO week can carry them over (main.py persists them)."""
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        wk = now.isocalendar()[:2]
+        return {"day": now.strftime("%Y-%m-%d"), "day_start_unrealized": round(self._day_start_unrealized, 6),
+                "week": f"{wk[0]}-W{wk[1]:02d}", "week_start_unrealized": round(self._week_start_unrealized, 6)}
+
+    def seed_period_baselines(self, saved: Optional[Dict[str, object]]) -> None:
+        """Restore the baselines an earlier run of the SAME day / ISO week saved.
+
+        Without this a restart re-based today's mark-to-market PnL at the moment of the restart:
+        +$0.29 read −$0.003 across a redeploy, and a loss the open book took before the restart
+        stopped counting against the daily limit (2026-09-05). A baseline from another period is
+        ignored: the first mark of the session seeds it, as before."""
+        if not saved:
+            return
+        cur = self.period_baselines()
+        try:
+            if saved.get("day") == cur["day"] and saved.get("day_start_unrealized") is not None:
+                self._day_start_unrealized = float(saved["day_start_unrealized"])  # type: ignore[arg-type]
+                self._day_baseline_set = True
+            if saved.get("week") == cur["week"] and saved.get("week_start_unrealized") is not None:
+                self._week_start_unrealized = float(saved["week_start_unrealized"])  # type: ignore[arg-type]
+                self._week_baseline_set = True
+        except (TypeError, ValueError):
+            return
 
     @property
     def daily_pnl(self) -> float:
