@@ -2225,3 +2225,6 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
 - [x] 2026-09-05 monitor de edge: los recortes de rebalanceo no cuentan como operaciones (ac986b5)
 - [ ] Decisiones de Edgar: canario con dinero real; pool (acciones sueltas); cortos a media posición (opción implementada, apagada)
 - [ ] Modo real: órdenes limit post-only con timeout y fallback a market (1-2 %/año medidos en fees)
+- [x] 2026-09-05 camino de ejecución en real para el libro trend (post-only → re-peg → market), OFF por defecto (11 tests)
+- [ ] Canario: depósito + mode=live + BOTSTRIKE_ALLOW_LIVE + trend_live_enabled=true; primera semana con trend_target_vol bajo y vigilar `trend_live_fill` en el journal (pasivo vs market, re-pegs, fees)
+- [ ] Tras el canario: reconciliar fees estimadas con get_fill_history (hoy fee_estimated=True)

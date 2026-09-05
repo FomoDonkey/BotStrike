@@ -1587,3 +1587,8 @@ qué controles la usaban como único punto de paso.
   caen todos dentro del ruido; solo lo extremo (anual, fijo, sin tope) es distinguible, y es peor.
 - "Adaptar al mercado" ya vive en la señal (peso 0 sin tendencia) y en el tamaño (vol targeting); ponerlo en
   la pertenencia al universo solo añade rotación (variante de evento: mismo Sharpe, doble de cambios).
+
+## 2026-09-05 — "decide tú" no convierte una decisión regulatoria en técnica
+- Lo decidible como experto se decide y se escribe (pool, cortos); lo que depende del dinero real se
+  deja LISTO (ejecutor en real probado contra un venue falso) y se dice claramente qué queda sin
+  verificar. Un 10/10 sin historial real no existe; lo honesto es puntuar el historial aparte.
