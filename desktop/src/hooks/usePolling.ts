@@ -15,8 +15,13 @@ export function usePolling(fn: () => void | Promise<unknown>, intervalMs: number
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
+    let first = true;
     const run = () => {
-      if (cancelled || document.visibilityState === "hidden") return;
+      // The first fetch always goes out, hidden or not: a page opened in a background tab used
+      // to sit on "---" and "Loading…" until it was brought to the front (2026-09-05). Only the
+      // periodic ticks wait for the tab to be visible.
+      if (cancelled || (!first && document.visibilityState === "hidden")) return;
+      first = false;
       void fnRef.current();
     };
     run();
