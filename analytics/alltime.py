@@ -26,16 +26,23 @@ def compute_alltime_performance(trade_repo, initial_capital: float,
     """All-time realized performance for `source` trades. Returns None on error."""
     try:
         initial = float(initial_capital)
+        from trade_database.models import cash_effect, fee_paid
         trades = trade_repo.get_trades(source=source)
         closes = [t for t in trades if t.trade_type and t.trade_type not in ("ENTRY", "FUNDING")]
         # Funding is a realized cash flow, not a trade: it moves equity but must not pollute
         # win rate / PF / Sharpe (roadmap P0.1).
         funding_total = sum(float(t.pnl or 0.0) for t in trades if t.trade_type == "FUNDING")
+        # The balance: every row's cash effect — an entry's fee leaves at the fill, an exit brings
+        # its round-trip net plus the entry share already paid, funding settles (2026-09-05).
+        rows = sorted(trades, key=lambda t: float(t.timestamp or 0.0))
+        realized_cash = sum(cash_effect(t) for t in rows)
+        fees_cash = sum(fee_paid(t) for t in rows)
         if not closes:
             return {
-                "initial_capital": initial, "total_trades": 0, "pnl": funding_total, "funding_paid": funding_total,
+                "initial_capital": initial, "total_trades": 0, "pnl": round(realized_cash, 4),
+                "funding_paid": funding_total, "trade_pnl": 0.0,
                 "win_rate": 0.0, "sharpe_ratio": 0.0, "sortino_ratio": 0.0,
-                "max_drawdown": 0.0, "total_fees": 0.0, "avg_win": 0.0,
+                "max_drawdown": 0.0, "total_fees": round(fees_cash, 4), "avg_win": 0.0,
                 "avg_loss": 0.0, "profit_factor": 0.0, "expectancy": 0.0,
                 "equity_curve_ts": [], "peak_equity": initial, "current_drawdown": 0.0,
                 "sample_days": 0.0, "sharpe_valid": False, "first_trade_ts": 0.0,
@@ -44,29 +51,22 @@ def compute_alltime_performance(trade_repo, initial_capital: float,
         closes = sorted(closes, key=lambda t: float(t.timestamp or 0.0))
         rep = PerformanceAnalyzer().analyze(
             closes, initial_equity=initial, use_equity_after=False)
-        # (timestamp, equity) pairs; first point = capital before first close
-        pts = [[float(closes[0].timestamp), initial]] + [
-            [float(t.timestamp), float(v)]
-            for t, v in zip(closes, rep.equity_curve[1:])
-        ]
-        # fold every funding settlement into the curve at its own timestamp, so the equity chart,
-        # the peak and the drawdown match what the account actually holds
-        fund_rows = sorted(((float(t.timestamp or 0.0), float(t.pnl or 0.0))
-                            for t in trades if t.trade_type == "FUNDING"), key=lambda x: x[0])
-        if fund_rows:
-            merged, fi, cum = [], 0, 0.0
-            for ts, eq in pts:
-                while fi < len(fund_rows) and fund_rows[fi][0] <= ts:
-                    cum += fund_rows[fi][1]
-                    fi += 1
-                merged.append([ts, eq + cum])
-            for ts, amt in fund_rows[fi:]:                 # settlements after the last close
-                cum += amt
-                merged.append([ts, merged[-1][1] + amt if merged else initial + cum])
-            pts = merged
+        # (timestamp, equity) pairs: the balance after every row, in order — entries (their fee),
+        # exits, settlements — so the chart, the peak and the drawdown are the account's own path
+        pts = [[float(rows[0].timestamp or 0.0), initial]]
+        eq = initial
+        for t in rows:
+            eq += cash_effect(t)
+            pts.append([float(t.timestamp or 0.0), round(eq, 6)])
         peak = max(v for _, v in pts)
         last = pts[-1][1]
         current_dd = (peak - last) / peak if peak > 0 else 0.0
+        # the worst peak-to-trough of that same path (rep.max_drawdown chains closes only)
+        max_dd_cash, run_peak = 0.0, pts[0][1]
+        for _, v in pts:
+            run_peak = max(run_peak, v)
+            if run_peak > 0:
+                max_dd_cash = max(max_dd_cash, (run_peak - v) / run_peak)
         first_ts = float(closes[0].timestamp)
         sample_days = max(0.0, (float(closes[-1].timestamp) - first_ts) / 86400.0)
         # A Sharpe annualized from a handful of daily returns is noise (audit
@@ -82,14 +82,14 @@ def compute_alltime_performance(trade_repo, initial_capital: float,
             # Funding is a realized cash flow: it belongs in the all-time PnL and in the equity
             # curve, but never in the trade statistics. Reporting `pnl` without it made
             # /api/performance disagree with /api/portfolio and with the account (2026-09-03).
-            "pnl": round(rep.total_pnl + funding_total, 4),
+            "pnl": round(realized_cash, 4),
             "trade_pnl": round(rep.total_pnl, 4),
             "funding_paid": round(funding_total, 6),
             "win_rate": round(rep.win_rate, 4),
             "sharpe_ratio": round(rep.sharpe_ratio, 2),
             "sortino_ratio": round(rep.sortino_ratio, 2),
-            "max_drawdown": round(rep.max_drawdown, 4),
-            "total_fees": round(rep.total_fees, 4),
+            "max_drawdown": round(max_dd_cash, 4),
+            "total_fees": round(fees_cash, 4),
             "avg_win": round(rep.avg_win, 4),
             "avg_loss": round(rep.avg_loss, 4),
             "profit_factor": round(rep.profit_factor, 2),

@@ -774,14 +774,23 @@ class BotStrike:
             for strategy in self.strategies:
                 if strategy.strategy_type == trade.strategy and hasattr(strategy, "notify_external_exit"):
                     strategy.notify_external_exit(trade.symbol, time.time())
+        # What this fill does to the balance — the same rule the trade DB chains and the
+        # analytics sum (trade_database.models.cash_effect): an entry pays its own fee now; an
+        # exit's `pnl` is the round-trip net, of which the entry share was already paid.
+        sf0 = trade.signal_features or {}
+        is_exit_fill = trade.pnl != 0 or str(sf0.get("action", "")).startswith("exit")
+        entry_fee_charged = float(sf0.get("entry_fee_charged", 0.0) or 0.0) if is_exit_fill else 0.0
+        cash = (trade.pnl + entry_fee_charged) if is_exit_fill else -float(trade.fee or 0.0)
         # Capturar equity ANTES de actualizar — the REALISED ledger: current_equity is now
         # mark-to-market and already carries this position's open PnL
         equity_before = self.risk_manager.realized_equity
-        new_equity = equity_before + trade.pnl
+        new_equity = equity_before + cash
         await self.risk_manager.update_equity_safe(new_equity, unrealized=self._unrealized_total())
         self.metrics.update_equity(new_equity)
-        if trade.pnl != 0:
+        if is_exit_fill and trade.pnl != 0:
             await self.risk_manager.record_trade_result_safe(trade.pnl, strategy=trade.strategy)
+        elif not is_exit_fill and cash != 0:
+            await self.risk_manager.record_cash_flow_safe(cash)          # a fee, not a trade result
         # Slippage tracking para paper fills
         if trade.expected_price > 0:
             self.risk_manager.slippage_tracker.record_fill(
@@ -795,8 +804,8 @@ class BotStrike:
         regime = self._last_regime.get(trade.symbol, MarketRegime.UNKNOWN)
         micro = (self.microstructure.get_snapshot(trade.symbol)
                  if getattr(self.settings.trading, "microstructure_enabled", True) else None)
-        sf = trade.signal_features or {}
-        is_exit = trade.pnl != 0 or sf.get("action", "").startswith("exit")
+        sf = sf0
+        is_exit = is_exit_fill
         self.trade_db.on_trade(
             trade,
             regime=regime,
@@ -818,6 +827,7 @@ class BotStrike:
             spread_bps=sf.get("spread_at_entry_bps", sf.get("spread_bps", 0)),
             atr=sf.get("atr_at_entry", sf.get("atr", 0)),
             pnl_pct=(trade.pnl / equity_before * 100) if equity_before > 0 else 0,
+            entry_fee_charged=entry_fee_charged,
         )
 
     # ── Loops auxiliares ──────────────────────────────────────────

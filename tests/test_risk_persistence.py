@@ -36,14 +36,14 @@ def test_history_chains_pnl_peak_daily_and_weekly():
         _close(-30.0, t - 8 * 86400),            # last week: 1020
         _close(-5.0, t - 2 * 86400),             # Monday this week: 1015
         _close(+2.0, t - 3600),                  # today: 1017
-        _close(0.0, t - 100, tt="ENTRY"),        # entries never count
+        _close(0.0, t - 100, tt="ENTRY"),        # an entry counts by the fee it paid at the fill (0.1)
     ]
     st = compute_historical_risk_state(Repo(trades), 1000.0, now=t)
-    assert st.equity == pytest.approx(1017.0)
+    assert st.equity == pytest.approx(1016.9)
     assert st.peak == pytest.approx(1050.0)
-    assert st.daily_pnl == pytest.approx(2.0)
-    assert st.weekly_pnl == pytest.approx(-3.0)
-    assert st.closes == 4
+    assert st.daily_pnl == pytest.approx(1.9)
+    assert st.weekly_pnl == pytest.approx(-3.1)
+    assert st.closes == 4                         # round trips, not rows
 
 
 def test_history_is_safe_when_the_db_fails():

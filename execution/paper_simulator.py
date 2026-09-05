@@ -64,6 +64,8 @@ class PaperPosition:
         # Execution metadata (set by paper_sim after routing)
         self.order_type: str = ""           # LIMIT or MARKET
         self.entry_fee_rate: float = 0.0    # Fee rate used at entry (taker or maker)
+        self.entry_fee_paid: float = 0.0    # charged at the entry fill (cash rules, 2026-09-05)
+        self.last_entry_fee: float = 0.0    # entry share of the last close, for entry_fee_charged
         self.expected_cost_bps: float = 0.0
         self.fill_probability: float = 0.0
         self.routing_reason: str = ""
@@ -111,6 +113,9 @@ class PaperPosition:
         entry_fee = self.entry_price * self.size * actual_entry_rate
         exit_fee = exit_price * self.size * fee_rate
         total_fee = entry_fee + exit_fee
+        # what the entry fill actually debited (0 for a position opened before the cash rules):
+        # the close reports it as already paid, never the recomputed leg
+        self.last_entry_fee = min(entry_fee, float(getattr(self, "entry_fee_paid", 0.0) or 0.0))
         return gross - total_fee, total_fee
 
     def check_sl_tp(self, price: float, high: float, low: float) -> Optional[str]:
@@ -162,6 +167,7 @@ def _build_exit_features(pos: PaperPosition, exit_price: float,
         "hold_time_sec": round(hold_time, 1),
         "action": action,
         "exit_reason": exit_reason,
+        "entry_fee_charged": float(getattr(pos, "last_entry_fee", 0.0) or 0.0),
         # MAE/MFE
         "mae_bps": round(mae_bps, 2),
         "mfe_bps": round(mfe_bps, 2),
@@ -651,19 +657,24 @@ class PaperTradingSimulator:
         # Slippage tracking: medir diferencia entre precio de senal y fill
         actual_slippage_bps = abs(fill_price - price) / price * 10_000 if price > 0 else 0.0
 
-        # Retornar Trade de entrada (pnl=0, fee=0 — round-trip fee se cobra al cerrar)
+        # The entry Trade pays its own fee at the fill, as the venue debits it (cash rules,
+        # 2026-09-05). The close later reports this share as `entry_fee_charged`.
+        entry_fee = fill_price * size * pos.entry_fee_rate
+        pos.entry_fee_paid = entry_fee
+        entry_features = signal.metadata.copy()
+        entry_features.setdefault("action", "entry")
         trade = Trade(
             symbol=signal.symbol,
             side=signal.side,
             price=fill_price,
             quantity=size,
-            fee=0.0,
+            fee=entry_fee,
             order_id=self._positions[pos_key].order_id,
             strategy=signal.strategy,
             pnl=0.0,  # entrada, sin PnL aun
             expected_price=price,
             actual_slippage_bps=actual_slippage_bps,
-            signal_features=signal.metadata.copy(),
+            signal_features=entry_features,
         )
 
         logger.info(

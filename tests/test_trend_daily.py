@@ -130,7 +130,8 @@ def test_run_once_enters_trending_assets_sized_on_equity(tmp_path):
     names = [t.symbol for t in entries]
     assert "UP-USD" in names and "DOWN-USD" not in names     # flat noise may or may not break out
     t = next(t for t in entries if t.symbol == "UP-USD")
-    assert t.strategy == StrategyType.TREND_DAILY and t.pnl == 0.0 and t.fee == 0.0
+    assert t.strategy == StrategyType.TREND_DAILY and t.pnl == 0.0
+    assert t.fee == pytest.approx(t.price * t.quantity * s.trading.taker_fee)   # the entry fee, at the fill
     w = eng.state.targets["UPUSDT"]
     assert w > 0
     assert t.quantity * t.price == pytest.approx(w * 1000.0, rel=1e-6)          # weight × equity
@@ -589,3 +590,34 @@ def test_fills_at_the_venues_mark_when_it_quotes_the_market(tmp_path):
     others = [x for x in fills.trades if x.symbol != "UP-USD" and x.side == Side.BUY]
     for x in others:
         assert x.signal_features["open_price"] != 260.0
+
+
+# ── the entry fee is paid at the fill; the close credits only what was actually paid ──────────
+def test_a_close_credits_only_what_the_entry_actually_paid(tmp_path):
+    """A position opened before the cash rules paid nothing at entry: its close must charge the entry
+    leg as before and report nothing as already paid. One opened after reports its own entry fee,
+    pro rata on a partial close."""
+    frames = {"UPUSDT": _frame("up", today_open=100.0)}
+    eng, fills, s = _engine(tmp_path, frames, trend_n_assets=1)
+    taker = s.trading.taker_fee
+    # legacy position: entry_fee_paid stays at its default
+    eng.state.positions["UPUSDT"] = BookPosition(symbol="UPUSDT", size=2.0, entry_price=90.0, entry_fee_rate=taker,
+                                                 weight=0.2, opened="2026-09-01", opened_ts=NOW - 86_400, mark_price=100.0)
+    asyncio.run(eng._close_part("UPUSDT", eng.state.positions["UPUSDT"], 2.0, 100.0, NOW, target_w=0.0, reason="exit"))
+    x = fills.trades[-1]
+    assert x.signal_features["entry_fee_charged"] == 0.0
+    assert x.fee == pytest.approx(90.0 * 2.0 * taker + x.price * 2.0 * taker)     # both legs, as before
+    # a position opened by the new code pays at entry and gets it credited on the way out
+    fills.trades.clear()
+    asyncio.run(eng.run_once())
+    entry = next(t for t in fills.trades if t.side == Side.BUY)
+    pos = eng.state.positions["UPUSDT"]
+    assert pos.entry_fee_paid == pytest.approx(entry.fee) and entry.fee > 0
+    half = abs(pos.size) / 2
+    asyncio.run(eng._close_part("UPUSDT", pos, half, 105.0, NOW + 60, target_w=0.1, reason="exit"))
+    part = fills.trades[-1]
+    assert part.signal_features["entry_fee_charged"] == pytest.approx(entry.fee / 2)
+    assert eng.state.positions["UPUSDT"].entry_fee_paid == pytest.approx(entry.fee / 2)
+    asyncio.run(eng._close_part("UPUSDT", eng.state.positions["UPUSDT"], half, 105.0, NOW + 120, target_w=0.0, reason="exit"))
+    assert fills.trades[-1].signal_features["entry_fee_charged"] == pytest.approx(entry.fee / 2, rel=1e-6)
+    assert "UPUSDT" not in eng.state.positions

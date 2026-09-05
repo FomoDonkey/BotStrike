@@ -41,7 +41,11 @@ def compute_historical_risk_state(trade_repo, initial_capital: float, source: st
         logger.warning("risk_history_unavailable", error=str(e), error_type=type(e).__name__)
         return HistoricalRiskState(initial, initial, 0.0, 0.0, 0)
     # FUNDING rows are cash flows: they count towards equity/day/week PnL exactly like a closed trade
-    closes = [t for t in trades if t.trade_type and t.trade_type != "ENTRY"]
+    # Every row moves the balance by its cash effect (trade_database.models.cash_effect): an ENTRY
+    # by its fee, an EXIT by its round-trip net plus the entry share already paid, FUNDING by
+    # the settlement. Rows without a type are legacy fills and chain as they always did.
+    from trade_database.models import cash_effect
+    closes = [t for t in trades if t.trade_type]
     closes.sort(key=lambda t: float(t.timestamp or 0.0))
     today = datetime.fromtimestamp(now, timezone.utc)
     day_key = today.strftime("%Y-%m-%d")
@@ -51,7 +55,7 @@ def compute_historical_risk_state(trade_repo, initial_capital: float, source: st
     daily = 0.0
     weekly = 0.0
     for t in closes:
-        pnl = float(t.pnl or 0.0)
+        pnl = cash_effect(t)
         equity += pnl
         peak = max(peak, equity)
         ts = datetime.fromtimestamp(float(t.timestamp or 0.0), timezone.utc)
@@ -61,7 +65,7 @@ def compute_historical_risk_state(trade_repo, initial_capital: float, source: st
             weekly += pnl
     return HistoricalRiskState(
         equity=round(equity, 6), peak=round(peak, 6), daily_pnl=round(daily, 6),
-        weekly_pnl=round(weekly, 6), closes=len(closes),
+        weekly_pnl=round(weekly, 6), closes=sum(1 for t in closes if t.trade_type not in ("ENTRY", "FUNDING")),
         first_ts=float(closes[0].timestamp) if closes else 0.0,
         last_ts=float(closes[-1].timestamp) if closes else 0.0,
     )

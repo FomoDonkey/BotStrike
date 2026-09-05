@@ -26,7 +26,7 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 # Schema version — bump on column additions
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 CREATE_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS trades (
     spread_bps REAL DEFAULT 0,
     atr REAL DEFAULT 0,
     pnl_pct REAL DEFAULT 0,
+    entry_fee_charged REAL DEFAULT 0,
     timestamp REAL NOT NULL,
     FOREIGN KEY (session_id) REFERENCES sessions(session_id)
 );
@@ -149,8 +150,14 @@ class TradeRepository:
                     conn.execute(f"ALTER TABLE trades ADD COLUMN {col_name} {col_type}")
                 except sqlite3.OperationalError:
                     pass  # Column already exists
-            conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
-            logger.info("db_migrated", from_version=from_version, to_version=SCHEMA_VERSION)
+        if from_version < 3:
+            # v3: the entry-fee share an EXIT's fee already paid at the entry fill (cash rules)
+            try:
+                conn.execute("ALTER TABLE trades ADD COLUMN entry_fee_charged REAL DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+        conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+        logger.info("db_migrated", from_version=from_version, to_version=SCHEMA_VERSION)
 
     @contextmanager
     def _connect(self):
@@ -177,8 +184,8 @@ class TradeRepository:
                     duration_sec, micro_vpin, micro_risk_score,
                     slippage_bps, expected_cost_bps, fill_probability, order_type,
                     mae_bps, mfe_bps, signal_strength, spread_bps, atr, pnl_pct,
-                    timestamp
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    entry_fee_charged, timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 trade.trade_id, trade.session_id, trade.source,
                 trade.symbol, trade.side, trade.price, trade.quantity,
@@ -190,7 +197,7 @@ class TradeRepository:
                 trade.slippage_bps, trade.expected_cost_bps, trade.fill_probability,
                 trade.order_type, trade.mae_bps, trade.mfe_bps,
                 trade.signal_strength, trade.spread_bps, trade.atr, trade.pnl_pct,
-                trade.timestamp,
+                trade.entry_fee_charged, trade.timestamp,
             ))
             conn.commit()
 
@@ -207,8 +214,8 @@ class TradeRepository:
                     duration_sec, micro_vpin, micro_risk_score,
                     slippage_bps, expected_cost_bps, fill_probability, order_type,
                     mae_bps, mfe_bps, signal_strength, spread_bps, atr, pnl_pct,
-                    timestamp
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    entry_fee_charged, timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, [
                 (
                     t.trade_id, t.session_id, t.source,
@@ -221,7 +228,7 @@ class TradeRepository:
                     t.slippage_bps, t.expected_cost_bps, t.fill_probability,
                     t.order_type, t.mae_bps, t.mfe_bps,
                     t.signal_strength, t.spread_bps, t.atr, t.pnl_pct,
-                    t.timestamp,
+                    t.entry_fee_charged, t.timestamp,
                 )
                 for t in trades
             ])
@@ -562,5 +569,6 @@ class TradeRepository:
             spread_bps=d.get("spread_bps", 0),
             atr=d.get("atr", 0),
             pnl_pct=d.get("pnl_pct", 0),
+            entry_fee_charged=d.get("entry_fee_charged", 0) or 0.0,
             timestamp=d["timestamp"],
         )

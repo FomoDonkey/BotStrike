@@ -2196,4 +2196,6 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
       pico MTM persistido (segunda ronda, ver audit)
 - [x] Notificaciones "Compra" sin contexto = rebalance diario: fills del trend ahora pasan por el hook (Activity,
       toast, socket), Telegram explica el fill, fills TradFi a la marca del venue, funding no es una pérdida
-- [ ] Comisión de entrada al fill en vez de al cierre (toca DB/analytics/UI)
+- [x] Comisión de entrada al fill (regla de caja única `cash_effect`/`fee_paid` en modelo, ledger, restauración,
+      all-time, portfolio, bridge, simulador y trend; columna `entry_fee_charged` con migración v3; el cierre
+      solo acredita lo que la entrada pagó de verdad, prorrata en parciales; 458 tests)

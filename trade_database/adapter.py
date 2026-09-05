@@ -177,6 +177,7 @@ class TradeDBAdapter:
         spread_bps: float = 0.0,
         atr: float = 0.0,
         pnl_pct: float = 0.0,
+        entry_fee_charged: float = 0.0,
     ) -> None:
         """Registra un trade desde el sistema live/paper.
 
@@ -213,6 +214,7 @@ class TradeDBAdapter:
             spread_bps=spread_bps,
             atr=atr,
             pnl_pct=pnl_pct,
+            entry_fee_charged=entry_fee_charged,
             timestamp=trade.timestamp,
         )
         self._track(record)

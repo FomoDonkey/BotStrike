@@ -82,6 +82,10 @@ class TradeRecord:
 
     # Derived
     pnl_pct: float = 0.0           # PnL as % of equity_before
+    # The entry-fee share of the closed quantity that was already charged at the ENTRY fill:
+    # an EXIT row's `pnl` stays the round-trip net (what every trade statistic reads) while
+    # its CASH effect is pnl + this, because that share left the account at entry (2026-09-05).
+    entry_fee_charged: float = 0.0
 
     # Timestamp
     timestamp: float = field(default_factory=time.time)
@@ -137,6 +141,7 @@ class TradeRecord:
             "spread_bps": self.spread_bps,
             "atr": self.atr,
             "pnl_pct": self.pnl_pct,
+            "entry_fee_charged": self.entry_fee_charged,
             "timestamp": self.timestamp,
         }
 
@@ -180,3 +185,35 @@ class SessionRecord:
             "strategies_used": self.strategies_used,
             "notes": self.notes,
         }
+
+
+# ── The two cash rules every ledger, chain and analytic must share ───────────────────────────
+def cash_effect(t) -> float:
+    """What this row did to the account balance.
+
+    A venue debits the fee of every fill when it fills. The book used to charge both legs' fees at
+    the close, so a position's entry fee sat in the balance until it closed (2026-09-05). Now:
+      ENTRY   -> -fee (its own fee, paid at fill)
+      EXIT    -> pnl + entry_fee_charged  (pnl is the round-trip net; the entry share was already paid)
+      FUNDING -> pnl (a settlement)
+    Rows written before the change carry fee 0 on ENTRY and entry_fee_charged 0 on EXIT, so they
+    chain exactly as they always did.
+    """
+    ttype = str(getattr(t, "trade_type", "") or "").upper()
+    if not ttype:
+        return 0.0                                   # untyped legacy row: never chained anywhere
+    if ttype == "ENTRY":
+        return -float(getattr(t, "fee", 0.0) or 0.0)
+    return float(getattr(t, "pnl", 0.0) or 0.0) + float(getattr(t, "entry_fee_charged", 0.0) or 0.0)
+
+
+def fee_paid(t) -> float:
+    """The fee this row actually charged the account: an EXIT's own leg only, because the entry
+    share inside its `fee` was charged by the ENTRY row (legacy EXIT rows carry the whole round trip)."""
+    ttype = str(getattr(t, "trade_type", "") or "ENTRY").upper()
+    fee = float(getattr(t, "fee", 0.0) or 0.0)
+    if ttype == "ENTRY":
+        return fee
+    if ttype == "FUNDING":
+        return 0.0
+    return max(0.0, fee - float(getattr(t, "entry_fee_charged", 0.0) or 0.0))

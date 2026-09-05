@@ -82,7 +82,14 @@ def serialize_position(p: Position) -> Dict:
 
 
 def serialize_trade(t: Trade) -> Dict:
-    is_exit = t.pnl != 0 or t.fee > 0 or t.order_id.startswith("paper_exit") or t.order_id.startswith("paper_sl") or t.order_id.startswith("paper_tp")
+    # An entry pays its fee at the fill now, so `fee > 0` no longer marks an exit: the fill's own
+    # action, its PnL or its order id do (2026-09-05).
+    sf = getattr(t, "signal_features", None) or {}
+    action = str(sf.get("action", "") or "")
+    oid = t.order_id or ""
+    is_exit = (action.startswith("exit") or t.pnl != 0
+               or any(oid.startswith(pfx) for pfx in ("paper_exit", "paper_sl", "paper_tp", "paper_close",
+                                                       "paper_manual", "trend_exit", "trend_rebalance")))
     # For display: show the POSITION side, not the closing side
     # If this is an exit BUY (closing a SHORT), display_side = "SELL" (the original position)
     if is_exit:

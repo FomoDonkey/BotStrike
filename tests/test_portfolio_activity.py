@@ -21,7 +21,11 @@ T0 = 1_788_000_000.0                       # 2026-08-25 ~ UTC
 
 def _t(ts, symbol="ETH-USD", side="BUY", ttype="ENTRY", pnl=0.0, fee=0.04, price=2000.0, qty=0.05,
        strategy="MEAN_REVERSION", dur=0.0):
-    return SimpleNamespace(timestamp=ts, symbol=symbol, side=side, trade_type=ttype, pnl=pnl, fee=fee, price=price,
+    # cash rules (2026-09-05): an ENTRY row carries the fee it paid at the fill; an EXIT row's `fee`
+    # is the round trip (entry share + its own leg) with the entry share in `entry_fee_charged`
+    is_exit = ttype == "EXIT"
+    return SimpleNamespace(timestamp=ts, symbol=symbol, side=side, trade_type=ttype, pnl=pnl,
+                           fee=fee * 2 if is_exit else fee, entry_fee_charged=fee if is_exit else 0.0, price=price,
                            quantity=qty, strategy=strategy, duration_sec=dur, regime="RANGING", order_id="x",
                            trade_id="id", entry_price=price, exit_price=price, equity_after=0.0, session_id="s",
                            source="paper", fee_asset="USD")

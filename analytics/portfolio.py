@@ -69,8 +69,10 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
     funding_paid = sum(_f(t.pnl) for t in funding_rows)
     fills_notional = [(_f(getattr(t, "price", 0.0)) * _f(getattr(t, "quantity", 0.0))
                        if (getattr(t, "trade_type", "") or "") != "FUNDING" else 0.0) for t in rows]
-    realized = sum(_f(t.pnl) for t in closes) + funding_paid
-    fees_paid = sum(_f(getattr(t, "fee", 0.0)) for t in rows)
+    # the balance and the fees follow the cash rules every surface shares (trade_database.models)
+    from trade_database.models import cash_effect, fee_paid as _fee_paid
+    realized = sum(cash_effect(t) for t in rows)
+    fees_paid = sum(_fee_paid(t) for t in rows)
     volume = sum(fills_notional)
     since_ts = _f(rows[0].timestamp) if rows else now_ts
     cutoff_30 = now_ts - 30 * DAY
@@ -84,12 +86,10 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
     for t, notional in zip(rows, fills_notional):
         r = day_row(_day(t.timestamp))
         r["volume"] += notional
-        r["fees"] += _f(getattr(t, "fee", 0.0))
+        r["fees"] += _fee_paid(t)
         ttype = getattr(t, "trade_type", "") or "ENTRY"
-        if ttype == "FUNDING":
-            r["pnl"] += _f(t.pnl)          # moves the equity curve, but is not a trade
-        elif ttype != "ENTRY":
-            r["pnl"] += _f(t.pnl)
+        r["pnl"] += cash_effect(t)         # the day's move of the balance: fees, exits, funding
+        if ttype not in ("ENTRY", "FUNDING"):
             r["trades"] += 1
 
     start = datetime.fromtimestamp(since_ts, tz=timezone.utc).date()

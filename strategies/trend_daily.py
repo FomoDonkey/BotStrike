@@ -214,6 +214,10 @@ class BookPosition:
     opened: str                 # YYYY-MM-DD
     opened_ts: float
     mark_price: float = 0.0
+    # Entry fee actually debited at the entry fill(s), still outstanding on the open quantity. A
+    # position opened before 2026-09-05 paid nothing at entry (the state file has no field → 0),
+    # so its close reports nothing as already paid and charges the entry leg then, as it always did.
+    entry_fee_paid: float = 0.0
 
     @property
     def is_short(self) -> bool:
@@ -600,9 +604,15 @@ class TrendDailyEngine:
         pos.weight = target_w
         pos.mark_price = fill
         st.weights[sym] = target_w
+        # The venue debits the taker fee when the order fills. It used to be charged at the close
+        # together with the exit leg, which left the balance ~0.05 % of notional too high for as
+        # long as the position lived (audit 2026-09-05). `entry_fee_rate` on the position is what
+        # the close later reports as already paid (`entry_fee_charged`).
+        entry_fee = fill * abs(size) * taker
+        pos.entry_fee_paid = float(getattr(pos, "entry_fee_paid", 0.0) or 0.0) + entry_fee
         trade = Trade(
             symbol=to_ui_symbol(sym), side=Side.BUY if buying else Side.SELL, price=fill,
-            quantity=abs(size), fee=0.0,
+            quantity=abs(size), fee=entry_fee,
             order_id=f"trend_entry_{uuid.uuid4().hex[:8]}", strategy=StrategyType.TREND_DAILY,
             timestamp=now, pnl=0.0, expected_price=price,
             actual_slippage_bps=abs(fill - price) / price * 1e4,
@@ -638,8 +648,13 @@ class TrendDailyEngine:
         qty = min(rounded, abs(pos.size))
         signed_qty = qty if long_pos else -qty
         gross = (fill - pos.entry_price) * signed_qty          # sign carries the direction
-        fees = pos.entry_price * qty * pos.entry_fee_rate + fill * qty * taker
-        pnl = gross - fees
+        entry_share = pos.entry_price * qty * pos.entry_fee_rate          # the entry leg of this quantity
+        fees = entry_share + fill * qty * taker
+        pnl = gross - fees                                     # round-trip net: what the statistics read
+        # what of that entry leg was ALREADY debited at the entry fill (pro rata on a partial close):
+        # the close credits it back to the balance so it is not paid twice
+        paid = float(getattr(pos, "entry_fee_paid", 0.0) or 0.0)
+        entry_fee_charged = min(entry_share, paid * (qty / abs(pos.size))) if abs(pos.size) > 0 else 0.0
         hold = max(0.0, now - pos.opened_ts)
         full_exit = qty >= abs(pos.size) - 1e-12
         trade = Trade(
@@ -657,13 +672,15 @@ class TrendDailyEngine:
                                          if pos.entry_price else 0.0),
                              "open_price": price, "pool_symbol": sym,
                              "direction": "long" if long_pos else "short",
-                             "position_size_after": 0.0 if full_exit else abs(pos.size - signed_qty)},
+                             "position_size_after": 0.0 if full_exit else abs(pos.size - signed_qty),
+                             "entry_fee_charged": entry_fee_charged},
         )
         if full_exit:
             st.positions.pop(sym, None)
             st.weights[sym] = 0.0
         else:
             pos.size = pos.size - signed_qty
+            pos.entry_fee_paid = max(0.0, paid - entry_fee_charged)
             pos.weight = target_w
             pos.mark_price = fill
             st.weights[sym] = target_w

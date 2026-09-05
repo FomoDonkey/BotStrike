@@ -1716,7 +1716,8 @@ def _account_overview(engine) -> dict:
     try:
         import datetime as _dt
         day0 = _dt.datetime.now(_dt.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-        fees_today = float(sum((t.fee or 0.0) for t in engine.trade_repo.get_trades(
+        from trade_database.models import fee_paid
+        fees_today = float(sum(fee_paid(t) for t in engine.trade_repo.get_trades(
             source="paper" if engine.paper else "live", start_time=day0)))
     except Exception:
         pass
@@ -1772,14 +1773,19 @@ def _json_safe(obj):
     return obj
 
 
+def _cash_effect(row) -> float:
+    from trade_database.models import cash_effect
+    return cash_effect(row)
+
+
 def _activity_fill(trade, serialized: dict) -> None:
-    """Record a fill in the activity feed (never raises). Exits are detected like the live log:
-    the serialized trade may not carry trade_type."""
+    """Record a fill in the activity feed (never raises). The serialized trade carries the
+    classification (an entry now pays a fee, so `fee > 0` no longer means an exit)."""
     try:
-        ttype = getattr(trade, "trade_type", None)
+        ttype = serialized.get("trade_type") or getattr(trade, "trade_type", None)
         ttype = getattr(ttype, "value", ttype)
         if not ttype:
-            ttype = "EXIT" if (float(getattr(trade, "pnl", 0) or 0) != 0 or float(getattr(trade, "fee", 0) or 0) > 0) else "ENTRY"
+            ttype = "EXIT" if float(getattr(trade, "pnl", 0) or 0) != 0 else "ENTRY"
         row = dict(serialized)
         row.setdefault("timestamp", getattr(trade, "timestamp", None))
         row["trade_type"] = str(ttype)
@@ -3175,6 +3181,9 @@ def _trade_row(r) -> dict:
         "signal_strength": getattr(r, "signal_strength", None) or 0.0,
         "spread_bps": getattr(r, "spread_bps", None) or 0.0,
         "order_id": oid,
+        # the entry share an EXIT's fee already paid at the entry fill; the row's own cash effect
+        "entry_fee_charged": float(getattr(r, "entry_fee_charged", 0.0) or 0.0),
+        "cash_effect": round(_cash_effect(r), 6),
     }
 
 
