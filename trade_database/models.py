@@ -203,7 +203,8 @@ def cash_effect(t) -> float:
     if not ttype:
         return 0.0                                   # untyped legacy row: never chained anywhere
     if ttype == "ENTRY":
-        return -float(getattr(t, "fee", 0.0) or 0.0)
+        fee = float(getattr(t, "fee", 0.0) or 0.0)
+        return -fee if fee else 0.0                  # not -0.0 on a legacy entry
     return float(getattr(t, "pnl", 0.0) or 0.0) + float(getattr(t, "entry_fee_charged", 0.0) or 0.0)
 
 
