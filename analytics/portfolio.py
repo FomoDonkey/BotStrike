@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from analytics.alltime import SHARPE_MIN_DAYS, SHARPE_MIN_TRADES
 
 DAY = 86400.0
+T_STAT_MIN_TRADES = 20      # below this a per-strategy t-stat is noise and is reported as null
 
 
 def _day(ts: float) -> str:
@@ -170,6 +171,14 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
         srows = [t for t in rows if str(getattr(t, "strategy", "") or "") == s]
         sc = [t for t in srows if (getattr(t, "trade_type", "") or "ENTRY") not in ("ENTRY", "FUNDING")]
         pnls = [_f(t.pnl) for t in sc]
+        # Funding is paid by THIS strategy's positions: without it the card read +9.99 while the
+        # account read +10.09 at the same instant (2026-09-05).
+        s_funding = sum(_f(t.pnl) for t in srows if (getattr(t, "trade_type", "") or "") == "FUNDING")
+        # A rebalance trim is not a trade for the statistics (analytics/edge.py), and a t-stat
+        # needs a sample: 15.88 off three rows was noise dressed as evidence.
+        from analytics.edge import is_rebalance_row
+        stat_rows = [t for t in sc if not is_rebalance_row(t)]
+        stat_pnls = [_f(t.pnl) for t in stat_rows]
         gp = sum(p for p in pnls if p > 0)
         gl = -sum(p for p in pnls if p < 0)
         spos = [p for p in positions if str(p.get("strategy") or "") == s]
@@ -182,8 +191,9 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
         if len(curve) > 200:
             step = len(curve) // 200 + 1
             curve = curve[::step] + [curve[-1]]
-        sd = statistics.pstdev(pnls) if len(pnls) > 1 else 0.0
-        t_stat = statistics.mean(pnls) / sd * math.sqrt(len(pnls)) if sd > 0 else 0.0
+        sd = statistics.pstdev(stat_pnls) if len(stat_pnls) > 1 else 0.0
+        t_stat = (statistics.mean(stat_pnls) / sd * math.sqrt(len(stat_pnls))
+                  if sd > 0 and len(stat_pnls) >= T_STAT_MIN_TRADES else None)
         # daily pnl for this strategy
         sday: Dict[str, float] = {}
         for t in sc:
@@ -192,14 +202,16 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
         s_sharpe = _sharpe_daily(list(sday.values()), initial) if (len(sc) >= SHARPE_MIN_TRADES and s_span >= SHARPE_MIN_DAYS) else None
         by_strategy.append({
             "strategy": s, "trades": len(sc), "open_positions": len(spos),
-            "realized": round(sum(pnls), 4), "unrealized": round(s_unreal, 4), "pnl": round(sum(pnls) + s_unreal, 4),
+            "realized": round(sum(pnls) + s_funding, 4), "unrealized": round(s_unreal, 4),
+            "pnl": round(sum(pnls) + s_funding + s_unreal, 4), "funding": round(s_funding, 6),
+            "trims": len(sc) - len(stat_rows),
             "volume": round(sum(_f(t.price) * _f(t.quantity) for t in srows), 2),
             "fees": round(sum(_f(getattr(t, "fee", 0.0)) for t in srows), 4),
             "win_rate": round(sum(1 for p in pnls if p > 0) / len(pnls), 4) if pnls else 0.0,
             "profit_factor": round(gp / gl, 3) if gl > 0 else (float("inf") if gp > 0 else 0.0),
             "sharpe": (round(s_sharpe, 3) if s_sharpe is not None else None),
             "max_drawdown": round(_max_dd([0.0] + [c[1] for c in curve], initial), 6) if curve else 0.0,
-            "t_stat": round(t_stat, 3),
+            "t_stat": (round(t_stat, 3) if t_stat is not None else None),
             "first_trade_ts": round(_f(srows[0].timestamp), 3) if srows else None,
             "equity_curve": curve,
             "return_30d": round(sum(_f(t.pnl) for t in sc if _f(t.timestamp) >= cutoff_30) / initial, 6) if initial > 0 else 0.0,

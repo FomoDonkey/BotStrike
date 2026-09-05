@@ -95,7 +95,7 @@ function EpisodeCard({ e, active, nowSec, onClick }: { e: Episode; active: boole
 /** Journal: one large chart per market with every entry, add, trim and exit, the path of each trade
  *  coloured by its result, the live exit ladder, and the trade list that zooms the chart. */
 export function JournalPage() {
-  const { markers: fills, loading } = useTradeHistory();
+  const { markers: fills, trades: rawTrades, loading } = useTradeHistory();
   const positionsBySymbol = useTradingStore((s) => s.positions);
   const positions = useMemo(() => Object.values(positionsBySymbol).flat(), [positionsBySymbol]);
   const [tick, setTick] = useState(() => Math.floor(Date.now() / 1000));
@@ -133,6 +133,19 @@ export function JournalPage() {
   const symEpisodes = useMemo(() => episodes.filter((e) => e.symbol === symbol), [episodes, symbol]);
   const stats = useMemo(() => episodeStats(symEpisodes), [symEpisodes]);
   const allStats = useMemo(() => episodeStats(episodes), [episodes]);
+  // funding settles on the positions, not on a fill: it is part of what the market cost or paid
+  const funding = useMemo(() => {
+    let all = 0, sym = 0;
+    for (const t of rawTrades) {
+      if (t.trade_type !== "FUNDING") continue;
+      const v = Number(t.pnl) || 0;
+      all += v;
+      if (t.symbol === symbol) sym += v;
+    }
+    return { all, sym };
+  }, [rawTrades, symbol]);
+  const allNet = allStats.realised + allStats.unrealized + funding.all;
+  const symNet = stats.realised + stats.unrealized + funding.sym;
   const trades = useMemo(() => (show.fills ? fills.filter((f) => f.symbol === symbol) : []), [fills, symbol, show.fills]);
   const priceLines = useMemo(() => (show.ladder ? positionPriceLines(positions, symbol) : []), [positions, symbol, show.ladder]);
   const paths = useMemo<PathSpec[]>(() => (show.paths ? symEpisodes.map((e) => episodePath(e, tick, selected === e.id)) : []),
@@ -156,7 +169,7 @@ export function JournalPage() {
     <div className="flex flex-col gap-3 p-3 sm:p-4 min-w-0">
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-[18px] font-semibold text-text flex items-center gap-2"><History className="w-5 h-5 text-mint" /> Journal</h1>
-        <span className="text-[12px] text-text-2">every fill on the chart · {allStats.closed} closed · {allStats.open} open · net <span className={cn("num font-semibold", allStats.net + allStats.unrealized >= 0 ? "text-mint" : "text-rose")}>{formatSignedMoney(allStats.net + allStats.unrealized)}</span> across {markets.length} market{markets.length === 1 ? "" : "s"}</span>
+        <span className="text-[12px] text-text-2">every fill on the chart · {allStats.closed} round trip{allStats.closed === 1 ? "" : "s"} closed · {allStats.trims} trim{allStats.trims === 1 ? "" : "s"} · {allStats.open} open · net <span className={cn("num font-semibold", allNet >= 0 ? "text-mint" : "text-rose")} title="realised (exits and trims) + open PnL + funding: the same figure as the account">{formatSignedMoney(allNet)}</span> across {markets.length} market{markets.length === 1 ? "" : "s"}</span>
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           <Popover align="right" width="w-56" trigger={(open) => <DropdownTrigger size="xs" open={open} label={symbol || "Market"} />}>
             {(close) => (
@@ -188,14 +201,14 @@ export function JournalPage() {
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2">
-        <KpiCard label="Net PnL" hint="Realised PnL of the closed trades on this market" value={<span className={stats.net >= 0 ? "text-mint" : "text-rose"}>{formatSignedMoney(stats.net)}</span>} sub={`${stats.closed} closed`} />
+        <KpiCard label="Net PnL" hint="Realised (every exit and trim) + open PnL + funding on this market: the account's own figure for it" value={<span className={symNet >= 0 ? "text-mint" : "text-rose"}>{formatSignedMoney(symNet)}</span>} sub={`realised ${formatSignedMoney(stats.realised)} · funding ${formatSignedMoney(funding.sym)}`} />
         <KpiCard label="Open PnL" hint="Mark-to-market of the open position(s) on this market" value={<span className={stats.unrealized >= 0 ? "text-mint" : "text-rose"}>{formatSignedMoney(stats.unrealized)}</span>} sub={`${stats.open} open`} />
-        <KpiCard label="Win rate" hint="Closed trades with a positive round-trip PnL" value={winRate === null ? "---" : formatPct(winRate, 0)} sub={winRate === null ? "no closed trades" : `${stats.wins} of ${stats.closed}`} />
-        <KpiCard label="Profit factor" hint="Gross wins / gross losses of the closed trades" value={pf === null ? (stats.grossWins > 0 ? "∞" : "---") : pf.toFixed(2)} sub={`+${formatMoney(stats.grossWins)} / −${formatMoney(stats.grossLosses)}`} />
-        <KpiCard label="Avg hold" hint="Average time from entry to the exit that flattened the position" value={stats.avgHoldSec === null ? "---" : formatDuration(stats.avgHoldSec)} />
-        <KpiCard label="Best" value={stats.best ? <span className="text-mint">{formatSignedMoney(stats.best.pnl)}</span> : "---"} sub={stats.best ? fmtTs(stats.best.closeTs ?? stats.best.openTs) : undefined} />
-        <KpiCard label="Worst" value={stats.worst ? <span className={stats.worst.pnl < 0 ? "text-rose" : "text-text"}>{formatSignedMoney(stats.worst.pnl)}</span> : "---"} sub={stats.worst ? fmtTs(stats.worst.closeTs ?? stats.worst.openTs) : undefined} />
-        <KpiCard label="Fees" hint="Venue fees paid on this market, entries and exits" value={formatMoney(stats.fees)} />
+        <KpiCard label="Round trips" hint="Positions opened and flattened. A rebalance trim realises money but is not a round trip" value={stats.closed} sub={`${stats.trims} trim${stats.trims === 1 ? "" : "s"} realised`} />
+        <KpiCard label="Win rate" hint="Round trips with a positive net PnL" value={winRate === null ? "---" : formatPct(winRate, 0)} sub={winRate === null ? "no round trip closed yet" : `${stats.wins} of ${stats.closed}`} />
+        <KpiCard label="Profit factor" hint="Gross wins / gross losses of the closed round trips" value={pf === null ? (stats.grossWins > 0 ? "∞" : "---") : pf.toFixed(2)} sub={`+${formatMoney(stats.grossWins)} / −${formatMoney(stats.grossLosses)}`} />
+        <KpiCard label="Avg hold" hint="Average time from entry to the exit that flattened the position (round trips)" value={stats.avgHoldSec === null ? "---" : formatDuration(stats.avgHoldSec)} />
+        <KpiCard label="Best / worst" hint="Best and worst closed round trips" value={stats.best ? <span className="text-mint">{formatSignedMoney(stats.best.pnl)}</span> : "---"} sub={stats.worst ? <span className={stats.worst.pnl < 0 ? "text-rose" : undefined}>worst {formatSignedMoney(stats.worst.pnl)}</span> : undefined} />
+        <KpiCard label="Fees" hint="Venue fees on this market: the round-trip fee of every exit and trim, plus the entry fee accrued on what is still open" value={formatMoney(stats.fees)} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-3 min-w-0">

@@ -66,7 +66,9 @@ def test_portfolio_separates_funding_from_trades_and_volume():
     assert p["analysis"]["closed_trades"] == 2
     assert p["perf_30d"]["trades"] == 2 and p["perf_30d"]["win_rate"] == pytest.approx(0.5, abs=1e-4)
     by = {s["strategy"]: s for s in p["by_strategy"]}
-    assert by["TREND_DAILY"]["trades"] == 2 and by["TREND_DAILY"]["realized"] == pytest.approx(6.0)
+    # the strategy realised what its positions earned AND what they paid in funding (6.0 - 0.5)
+    assert by["TREND_DAILY"]["trades"] == 2 and by["TREND_DAILY"]["realized"] == pytest.approx(5.5)
+    assert by["TREND_DAILY"]["funding"] == pytest.approx(-0.5) and by["TREND_DAILY"]["t_stat"] is None
     # funding rows carry quantity 0 → they must not inflate traded volume
     assert p["alltime_volume"] == pytest.approx(4 * 700.0)
     day0 = p["daily"][0]

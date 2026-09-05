@@ -230,7 +230,7 @@ function PositionCard({ p, now }: { p: PositionData; now: number }) {
               <ListRow label="SL" hint={HINTS.sl}>{p.stop_loss && p.stop_loss > 0 ? formatPrice(p.stop_loss) : "---"}</ListRow>
               <ListRow label="TP" hint={HINTS.tp}>{p.take_profit && p.take_profit > 0 ? formatPrice(p.take_profit) : "---"}</ListRow>
             </>}
-        <ListRow label="Liq." hint={HINTS.liq}>{liq.price ? formatPrice(liq.price) : <span title="Leverage 1 — the position is fully funded, so no price liquidates it">none · 1x</span>}</ListRow>
+        <ListRow label="Liq." hint={HINTS.liq}>{liq.price ? formatPrice(liq.price) : <span title={p.leverage && p.leverage > 1 ? `Cross margin at ${p.leverage}x: liquidation is account-level, far beyond the drawdown halt` : "Leverage 1 — the position is fully funded, so no price liquidates it"}>none · {p.leverage ?? 1}x</span>}</ListRow>
         <ListRow label="Margin" hint={HINTS.margin}>{formatMoney(positionMargin(p))}</ListRow>
         <ListRow label="Hold" hint={HINTS.hold}><HoldTime seconds={positionHoldSec(p, now)} /></ListRow>
         <ListRow label="Side">{long ? "Long" : "Short"} · {STRATEGY_LABELS[p.strategy ?? ""] ? "" : ""}{p.leverage ?? 1}x</ListRow>

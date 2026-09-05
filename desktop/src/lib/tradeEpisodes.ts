@@ -115,12 +115,16 @@ export function buildEpisodes(fills: TradeData[], positions: PositionData[], now
       openEp.ladder = p.exit_ladder ?? null;
       openEp.unrealized = Number(p.unrealized_pnl ?? 0) || 0;
       openEp.entryPrice = p.entry_price;                       // the book's own average, fee-aware
+      // the entry fee of what is still open is accrued on the position (fees_paid); the exits'
+      // rows carry the round-trip fee of what already left
+      openEp.fees = openEp.fills.filter((f) => f.kind === "trim" || f.kind === "exit").reduce((a, f) => a + f.fee, 0)
+        + (Number(p.fees_paid ?? 0) || 0);
     } else {
       const openTs = Number(p.opened_ts ?? 0) || nowSec;
       out.push({
         id: `${k}|pos|${openTs}`, symbol: p.symbol, strategy: p.strategy, long: isLong(p.side),
         openTs, closeTs: null, open: true, entryPrice: p.entry_price, exitPrice: null, qty: Math.abs(Number(p.size) || 0),
-        pnl: 0, unrealized: Number(p.unrealized_pnl ?? 0) || 0, fees: 0, fills: [], exitReason: null,
+        pnl: 0, unrealized: Number(p.unrealized_pnl ?? 0) || 0, fees: Number(p.fees_paid ?? 0) || 0, fills: [], exitReason: null,
         position: p, ladder: p.exit_ladder ?? null, truncated: true,
       });
     }
@@ -131,6 +135,10 @@ export function buildEpisodes(fills: TradeData[], positions: PositionData[], now
 export interface EpisodeStats {
   closed: number;
   open: number;
+  /** rebalance trims across every episode (realised money, not round trips) */
+  trims: number;
+  /** realised PnL of every exit and trim, closed or still open */
+  realised: number;
   wins: number;
   winRate: number | null;
   net: number;
@@ -157,8 +165,10 @@ export function episodeStats(episodes: Episode[]): EpisodeStats {
     if (!worst || e.pnl < worst.pnl) worst = e;
   }
   for (const e of open) fees += e.fees;
+  const trims = episodes.reduce((a, e) => a + e.fills.filter((f) => f.kind === "trim").length, 0);
+  const realised = episodes.reduce((a, e) => a + e.pnl, 0);
   return {
-    closed: closed.length, open: open.length, wins,
+    closed: closed.length, open: open.length, trims, realised, wins,
     winRate: closed.length ? wins / closed.length : null,
     net, grossWins: gw, grossLosses: gl,
     profitFactor: gl > 0 ? gw / gl : (gw > 0 ? null : null),

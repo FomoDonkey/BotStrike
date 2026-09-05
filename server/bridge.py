@@ -1093,6 +1093,11 @@ def _trend_position_rows(engine) -> list:
         excursions = trend.excursions()
     except Exception:  # noqa: BLE001 - a display figure must never break the positions feed
         excursions = {}
+    # The book is sized by volatility up to trend_leverage_cap of equity, so its exposure exceeds
+    # the equity by design (1.36x today). Reported at "1x" with margin = notional, the account
+    # showed a NEGATIVE paper balance and 136 % margin usage (2026-09-05). On the venue the book
+    # would run cross-margined at the cap: margin = notional / cap.
+    book_lev = max(1.0, float(getattr(engine.settings.trading, "trend_leverage_cap", 1.0) or 1.0))
     for p in trend.status().get("positions", []):
         mark = p["mark_price"] or p["entry_price"]
         pos_st = trend.state.positions.get(p["symbol"])
@@ -1107,7 +1112,8 @@ def _trend_position_rows(engine) -> list:
             "mark_price": mark, "notional": p["notional"], "unrealized_pnl": p["unrealized_pnl"],
             "pnl_pct": ret,
             "roe_pct": ret,
-            "leverage": 1, "margin": p["notional"], "liquidation_price": 0.0,
+            "leverage": book_lev, "margin": p["notional"] / book_lev, "liquidation_price": 0.0,
+            "margin_mode": "cross",
             "stop_loss": 0.0, "take_profit": 0.0, "sl_distance_pct": None, "tp_distance_pct": None,
             "strategy": StrategyType.TREND_DAILY.value,
             "opened_ts": getattr(pos_st, "opened_ts", 0.0), "hold_sec": max(0.0, time.time() - getattr(pos_st, "opened_ts", time.time())),
@@ -1828,6 +1834,15 @@ async def get_portfolio():
         unrealized_pnl=float(acct.get("unrealized_pnl") or 0.0),
         fees_taker=float(getattr(tcfg, "taker_fee", 0.0004)), fees_maker=float(getattr(tcfg, "maker_fee", 0.0002)),
     )
+    # The 30-day drawdown is a realised chain; the account's live drawdown floors it, as the
+    # all-time figure already is (the page read 0.00 % under a live 0.37 %, 2026-09-05).
+    try:
+        live_dd = float(getattr(engine.risk_manager, "current_drawdown_pct", 0.0) or 0.0)
+        p30 = out.get("perf_30d")
+        if isinstance(p30, dict):
+            p30["drawdown"] = round(max(float(p30.get("drawdown") or 0.0), live_dd), 6)
+    except Exception:  # noqa: BLE001 - a floor must never break the page
+        pass
     out.update({"engine": True, "mode": state.mode})
     return _json_safe(out)
 
