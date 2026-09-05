@@ -56,6 +56,9 @@ START_MS = 1_502_928_000_000  # 2017-08-17 — first Binance daily candle
 LATE_FILL_SEC = 3600.0
 FETCH_ATTEMPTS = 3          # daily kline download retries per symbol
 HEAL_DAYS = 5               # cached bars re-read on every refresh so late revisions land
+# Venue mark vs the last settled reference close: warn when the perp sits further from its
+# reference than this (thin book, stale reference, wrong mapping). A monitor, never a gate.
+BASIS_WARN = 0.025
 SPOT_KLINES_URL = "https://api.binance.com/api/v3/klines"
 
 
@@ -376,6 +379,44 @@ class TrendDailyEngine:
                          microsecond=0) + timedelta(minutes=int(self.config.trend_execution_delay_min))
         return now >= run.timestamp()
 
+    def _basis_snapshot(self, data: Dict[str, pd.DataFrame]) -> Dict[str, float]:
+        """Venue mark against the last settled reference close, per market.
+
+        The signal comes from the reference series (Yahoo for TradFi, Binance for crypto) - the
+        only history long and clean enough to validate on: Strike's own daily bars begin in
+        April 2026 (the S&P in August), a third of gold's days have no trade, and weekends print
+        near-flat bars. The fill and the valuation come from Strike's mark. The two must agree to
+        within the day's move; a wider gap means the run is trading a breakout the venue never
+        printed. Logged on every run and hourly, warned above BASIS_WARN, shown in /api/trend."""
+        out: Dict[str, float] = {}
+        today = self._today()
+        for sym, df in data.items():
+            try:
+                settled = df[df.index < today] if isinstance(df.index, pd.DatetimeIndex) else df
+                close = float(settled["close"].dropna().iloc[-1])
+                mark = self._venue_mark_of(sym)
+            except Exception:  # noqa: BLE001 - one bad frame must not hide the others
+                continue
+            if mark and close > 0:
+                out[sym] = round(mark / close - 1.0, 5)
+        if out:
+            self.last_basis = out
+            self.last_basis_ts = float(self._clock())
+            logger.info("trend_basis", **{to_ui_symbol(k): v for k, v in out.items()})
+            wide = {to_ui_symbol(k): v for k, v in out.items() if abs(v) > BASIS_WARN}
+            if wide:
+                logger.warning("trend_basis_wide", limit=BASIS_WARN, **wide)
+        return out
+
+    async def _refresh_basis(self) -> None:
+        try:
+            params = TrendParams.from_config(self.config)
+            data = await asyncio.to_thread(self.store.load, self.pool(), self._today(), False,
+                                           params.min_history_days)
+            self._basis_snapshot(data)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("trend_basis_refresh_failed", error=str(e)[:120])
+
     async def warm_cache(self) -> int:
         """Fetch the daily bars of the whole pool once, so every reader of cached frames (exit
         ladders, MAE/MFE, the daily-open fallback) has them from the first request — a fresh CT or
@@ -385,6 +426,7 @@ class TrendDailyEngine:
             data = await asyncio.to_thread(self.store.load, self.pool(), self._today(), True,
                                            params.min_history_days)
             logger.info("trend_cache_warmed", markets=len(data))
+            self._basis_snapshot(data)
             return len(data)
         except Exception as e:  # noqa: BLE001 - the daily run refreshes again in any case
             logger.warning("trend_cache_warm_failed", error=str(e)[:160])
@@ -401,6 +443,8 @@ class TrendDailyEngine:
                     await self.run_once()
                 elif self.state.positions:
                     await self.mark_positions()
+                if self._clock() - float(getattr(self, "last_basis_ts", 0.0)) >= 3600.0:
+                    await self._refresh_basis()
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -459,6 +503,7 @@ class TrendDailyEngine:
             data = await asyncio.to_thread(self.store.load, self.pool(), today, True,
                                            params.min_history_days)
             st.candidates = len(data)
+            self._basis_snapshot(data)
             decision = today - pd.Timedelta(days=1)
             month_key = today.strftime("%Y-%m")
             # The universe is re-picked monthly, but ALSO whenever the pool or the number of
@@ -1056,6 +1101,9 @@ class TrendDailyEngine:
         return {
             "enabled": self.enabled, "killed": self.killed,
             "last_adds_blocked": getattr(self.state, "last_adds_blocked", ""),
+            "basis": {to_ui_symbol(k): v for k, v in dict(getattr(self, "last_basis", {}) or {}).items()},
+            "basis_ts": float(getattr(self, "last_basis_ts", 0.0) or 0.0),
+            "basis_warn": BASIS_WARN,
             "allocation": float(tc.allocation_trend_daily),
             "next_run_utc": datetime.fromtimestamp(self.next_run_ts(), timezone.utc).isoformat().replace("+00:00", "Z"),
             "last_run_utc": (datetime.fromtimestamp(st.last_run_ts, timezone.utc).isoformat().replace("+00:00", "Z")

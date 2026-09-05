@@ -21,6 +21,7 @@ logger = structlog.get_logger(__name__)
 
 # Tamaño máximo de barras almacenadas por símbolo
 MAX_BARS = 2000
+VENUE_KLINE_LIMIT = 1500   # bars per klines request, Binance and Strike alike
 
 
 class MarketDataCollector:
@@ -127,21 +128,30 @@ class MarketDataCollector:
             import aiohttp
             from exchange.binance_client import SYMBOL_MAP as _SYMBOL_MAP
             binance_sym = _SYMBOL_MAP.get(symbol, symbol.replace("-", ""))
-            limit = hours * 60  # 1m bars
-            # Use FUTURES API (fapi), not spot API — prices differ by basis/funding
-            url = f"https://fapi.binance.com/fapi/v1/klines?symbol={binance_sym}&interval=1m&limit={limit}"
-
+            wanted = max(hours * 60, 60)  # 1m bars
+            start_ms = int((time.time() - hours * 3600) * 1000)
+            rows: list = []
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status != 200:
-                        logger.warning("binance_seed_failed", symbol=symbol, status=resp.status)
-                        return
-                    data = await resp.json()
+                for _ in range(4):  # the venue pages at 1 500 bars; 33 h is two pages
+                    limit = min(wanted - len(rows), VENUE_KLINE_LIMIT)
+                    if limit <= 0:
+                        break
+                    # Use FUTURES API (fapi), not spot API — prices differ by basis/funding
+                    url = (f"https://fapi.binance.com/fapi/v1/klines?symbol={binance_sym}&interval=1m"
+                           f"&limit={limit}&startTime={start_ms}")
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                        if resp.status != 200:
+                            logger.warning("binance_seed_failed", symbol=symbol, status=resp.status)
+                            break
+                        data = await resp.json()
+                    page = self._kline_rows(data or [])
+                    rows.extend(r for r in page if not rows or r["timestamp"] > rows[-1]["timestamp"])
+                    if len(page) < limit:
+                        break
+                    start_ms = int(page[-1]["timestamp"] * 1000) + 60_000
 
-            if not data:
+            if not rows:
                 return
-
-            rows = self._kline_rows(data)
             self._seed_rows(symbol, sym_config, rows, source="binance", hours=hours)
         except Exception as e:
             logger.warning("binance_seed_error", symbol=symbol, error=str(e))
@@ -168,13 +178,25 @@ class MarketDataCollector:
         returns right up to the current minute.
         """
         try:
-            limit = min(max(hours * 60, 60), 1500)
+            wanted = max(hours * 60, 60)
             start_ms = int((time.time() - hours * 3600) * 1000)
-            data = await client.get_klines(symbol, interval="1m", limit=limit, start_time=start_ms)
-            if not data:
+            rows: list = []
+            for _ in range(4):  # the venue answers 1 500 bars at most; 33 h of 1 m bars is two pages
+                limit = min(wanted - len(rows), VENUE_KLINE_LIMIT)
+                if limit <= 0:
+                    break
+                data = await client.get_klines(symbol, interval="1m", limit=limit, start_time=start_ms)
+                page = self._kline_rows(data or [])
+                if not page:
+                    break
+                rows.extend(r for r in page if not rows or r["timestamp"] > rows[-1]["timestamp"])
+                if len(page) < limit:
+                    break
+                start_ms = int(page[-1]["timestamp"] * 1000) + 60_000
+            if not rows:
                 logger.warning("strike_seed_empty", symbol=symbol)
                 return
-            self._seed_rows(symbol, sym_config, self._kline_rows(data), source="strike", hours=hours)
+            self._seed_rows(symbol, sym_config, rows, source="strike", hours=hours)
         except Exception as e:
             logger.warning("strike_seed_error", symbol=symbol, error=str(e))
 

@@ -1183,14 +1183,20 @@ class BotStrike:
                 await asyncio.sleep(30)
 
     def _seed_hours(self) -> int:
-        """1-minute history to seed at start: enough COMPLETE regime bars
-        (regime_timeframe_min × regime_vol_lookback) so the detector is not UNKNOWN
-        for hours after every restart. Capped at 24 h (Binance limit 1500 bars)."""
+        """1-minute history to seed at start: enough COMPLETE regime bars so the detector is
+        neither UNKNOWN nor classifying on warm-up indicators for hours after every restart."""
+        from core.market_data import MAX_BARS
+        from core.regime_detector import ADX_WARMUP_BARS
         tc = self.settings.trading
         tf = max(1, int(getattr(tc, "regime_timeframe_min", 1)))
         lookback = max((s.regime_vol_lookback for s in self.settings.symbols), default=50)
-        hours = int(math.ceil(tf * (lookback + 5) / 60.0)) + 1
-        return max(6, min(24, hours))
+        # Enough COMPLETE regime bars for the volatility percentile (100 bars) or the lookback,
+        # plus the ADX warm-up the thresholds skip. 15 h (55 bars) left the detector reading
+        # RANGING on warm-up ADX for a day after every restart (2026-09-05). The seed pages the
+        # venue, so the only ceiling is the live frame itself (MAX_BARS of 1 m bars = 33 h).
+        bars = max(lookback, 100) + ADX_WARMUP_BARS + 5
+        hours = int(math.ceil(tf * bars / 60.0)) + 1
+        return max(6, min(MAX_BARS // 60, hours))
 
     # ── Compounding / persisted risk state (2026-09-02) ───────────────
     def _restore_history(self) -> None:

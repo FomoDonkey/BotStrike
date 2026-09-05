@@ -32,6 +32,13 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+# Wilder's ADX (EWM span 27) carries ~10 % of its seed after 42 bars; the thresholds never look at
+# the bars before that. And whatever the window, they stay inside textbook bands.
+ADX_WARMUP_BARS = 42
+MIN_THRESHOLD_BARS = 30
+ADX_TREND_BAND = (20.0, 30.0)
+MOM_THRESHOLD_BAND = (0.005, 0.03)
+
 
 class RegimeDetector:
     """Detecta el régimen de mercado usando múltiples señales."""
@@ -262,39 +269,35 @@ class RegimeDetector:
         if cached and (now - last) < self._threshold_cache_sec:
             return cached
 
-        lookback = min(len(df), 500)
-        recent = df.iloc[-lookback:]  # iloc es más eficiente que tail()
-
-        # Calcular distribución de volatilidad para este activo
-        vol_pct_series = recent.get("vol_pct", pd.Series(dtype=float)).dropna()
-        if len(vol_pct_series) > 10:
-            # Un solo np.percentile con múltiples cuantiles
-            vol_pcts = np.percentile(vol_pct_series.values, [30, 75])
-            vol_low = float(vol_pcts[0])
-            vol_high = float(vol_pcts[1])
-        else:
-            vol_low = config.regime_vol_threshold_low
-            vol_high = config.regime_vol_threshold_high
-
-        # ADX adaptativo
-        adx_series = recent.get("adx", pd.Series(dtype=float)).dropna()
-        if len(adx_series) > 10:
-            adx_trend = float(np.percentile(adx_series.values, 60))
-        else:
-            adx_trend = 25.0
-
-        # Momentum adaptativo basado en volatilidad del activo
-        mom_series = recent.get("momentum_20", pd.Series(dtype=float)).dropna().abs()
-        if len(mom_series) > 10:
-            mom_threshold = float(np.percentile(mom_series.values, 65))
-        else:
-            mom_threshold = 0.02
+        # Skip the indicator warm-up at the head of the frame. Wilder's ADX starts from its first
+        # bars and reads 60+ for the first two or three periods; with the 15 h seed of a restart the
+        # 60th percentile of that came out at 61, so nothing could ever be TRENDING and every
+        # symbol read RANGING for a day after each restart - five restarts on 2026-09-05 made it
+        # "siempre RANGING". The percentiles are then clamped to textbook bands (ADX 20-30,
+        # momentum 0.5-3 %), so a short or odd window can bias them but never break them.
+        valid = df.iloc[ADX_WARMUP_BARS:] if len(df) >= ADX_WARMUP_BARS + MIN_THRESHOLD_BARS else df.iloc[0:0]
+        recent = valid.iloc[-500:]
+        vol_low = float(config.regime_vol_threshold_low)
+        vol_high = float(config.regime_vol_threshold_high)
+        adx_trend, mom_threshold = 25.0, 0.005
+        if len(recent) >= MIN_THRESHOLD_BARS:
+            vol_pct_series = recent.get("vol_pct", pd.Series(dtype=float)).dropna()
+            if len(vol_pct_series) > 10:
+                lo, hi = np.percentile(vol_pct_series.values, [30, 75])
+                if lo < hi:
+                    vol_low, vol_high = float(lo), float(hi)
+            adx_series = recent.get("adx", pd.Series(dtype=float)).dropna()
+            if len(adx_series) > 10:
+                adx_trend = float(np.percentile(adx_series.values, 60))
+            mom_series = recent.get("momentum_20", pd.Series(dtype=float)).dropna().abs()
+            if len(mom_series) > 10:
+                mom_threshold = float(np.percentile(mom_series.values, 65))
 
         thresholds = {
-            "vol_low": max(vol_low, 0.2),
-            "vol_high": min(vol_high, 0.9),
-            "adx_trend": max(adx_trend, 20.0),
-            "mom_threshold": max(mom_threshold, 0.005),
+            "vol_low": min(max(vol_low, 0.2), 0.5),
+            "vol_high": max(min(vol_high, 0.9), 0.6),
+            "adx_trend": min(max(adx_trend, ADX_TREND_BAND[0]), ADX_TREND_BAND[1]),
+            "mom_threshold": min(max(mom_threshold, MOM_THRESHOLD_BAND[0]), MOM_THRESHOLD_BAND[1]),
         }
         self._adaptive_thresholds[symbol] = thresholds
         self._threshold_last_update[symbol] = now
