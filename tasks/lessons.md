@@ -1580,3 +1580,10 @@ qué controles la usaban como único punto de paso.
   dejar de negociar a mitad de mes.
 - Estimar pesos con la caché local es inútil si no está al día (a mí me dio 0,040 donde el CT, con datos
   frescos, da 0,079). Los números de decisión salen del CT o de una caché recién refrescada.
+
+## 2026-09-05 — "¿es lo óptimo?" se contesta con una meseta medida, no con opinión
+- Antes de cambiar un parámetro de diseño, medirlo con el mismo harness y recordar el error estándar del
+  Sharpe (±0,53 con 10 años): frecuencia del universo (diaria…trimestral) y tope de correlación (0,6…0,95)
+  caen todos dentro del ruido; solo lo extremo (anual, fijo, sin tope) es distinguible, y es peor.
+- "Adaptar al mercado" ya vive en la señal (peso 0 sin tendencia) y en el tamaño (vol targeting); ponerlo en
+  la pertenencia al universo solo añade rotación (variante de evento: mismo Sharpe, doble de cambios).

@@ -2221,3 +2221,7 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
 - [x] 2026-09-05 filtro de liquidez del venue: salida diaria (10×), fail-closed sin volúmenes, `/api/trend.liquidity` (b7af4ba, desplegado)
 - [ ] 2026-09-06 04:05 UTC: confirmar que SP500 sale del universo y entra ADA (o que Edgar vetó bajando `trend_liq_venue_exit_multiple`)
 - [ ] UI: mostrar `/api/trend.liquidity` (suelos y volumen 24 h por mercado) en la página Strategies
+- [x] 2026-09-05 auditoría de optimalidad: frecuencia de universo y tope de correlación medidos (scripts/universe_repick_study.py), veredicto en tasks/audit_optimality_2026-09-05.md
+- [x] 2026-09-05 monitor de edge: los recortes de rebalanceo no cuentan como operaciones (ac986b5)
+- [ ] Decisiones de Edgar: canario con dinero real; pool (acciones sueltas); cortos a media posición (opción implementada, apagada)
+- [ ] Modo real: órdenes limit post-only con timeout y fallback a market (1-2 %/año medidos en fees)
