@@ -64,6 +64,7 @@ class Fills:
 
 def _engine(tmp_path, frames, equity=1000.0, clock=NOW, **cfg):
     s = Settings()
+    s.trading.trend_execution_hour_utc = 0        # these fixtures are due at 00:10 UTC
     s.trading.trend_pool = ",".join(frames)
     s.trading.trend_n_assets = 3
     s.trading.trend_liq_enter_usd = 1e6
@@ -621,3 +622,49 @@ def test_a_close_credits_only_what_the_entry_actually_paid(tmp_path):
     asyncio.run(eng._close_part("UPUSDT", eng.state.positions["UPUSDT"], half, 105.0, NOW + 120, target_w=0.0, reason="exit"))
     assert fills.trades[-1].signal_features["entry_fee_charged"] == pytest.approx(entry.fee / 2, rel=1e-6)
     assert "UPUSDT" not in eng.state.positions
+
+
+# ── the risk manager's limits hold the book's ADDS; exits still go through ─────────────────
+def test_risk_gate_holds_adds_but_never_exits(tmp_path):
+    frames = {"UPUSDT": _frame("up", today_open=100.0)}
+    gate = {"ok": True, "why": ""}
+    eng, fills, s = _engine(tmp_path, frames, trend_n_assets=1)
+    eng._risk_gate = lambda: (gate["ok"], gate["why"])
+    asyncio.run(eng.run_once())
+    first = [t for t in fills.trades if t.side == Side.BUY]
+    assert len(first) == 1 and eng.state.positions["UPUSDT"].size > 0
+    held = eng.state.weights["UPUSDT"]
+    # next day: the limit is in force and equity doubled, so the model would add a lot — it must not
+    gate.update(ok=False, why="daily_loss_limit")
+    hi = float(frames["UPUSDT"]["close"].max()) * 1.05          # a new high: the signal stays long
+    frames["UPUSDT"].loc[TODAY] = [hi, hi, hi, hi, 0, 0]          # today's bar closes the day at the high
+    frames["UPUSDT"].loc[TODAY + pd.Timedelta(days=1)] = [hi, hi, hi, hi, 0, 0]
+    eng._clock = lambda: NOW + 86400
+    eng._equity_provider = lambda: 2000.0
+    fills.trades.clear()
+    asyncio.run(eng.run_once())
+    assert [t for t in fills.trades if t.side == Side.BUY] == []
+    assert eng.state.weights["UPUSDT"] == pytest.approx(held)
+    assert eng.state.last_adds_blocked == "daily_loss_limit"
+    assert eng.status()["last_adds_blocked"] == "daily_loss_limit"
+    # the trend breaks while the gate is still shut: the exit executes regardless
+    lo = float(frames["UPUSDT"]["close"].min()) * 0.5             # far below every trailing stop
+    frames["UPUSDT"].loc[TODAY + pd.Timedelta(days=1)] = [lo, lo, lo, lo, 0, 0]   # the decision day's close
+    frames["UPUSDT"].loc[TODAY + pd.Timedelta(days=2)] = [lo, lo, lo, lo, 0, 0]
+    eng._clock = lambda: NOW + 2 * 86400
+    fills.trades.clear()
+    asyncio.run(eng.run_once())
+    assert [t for t in fills.trades if t.side == Side.SELL] and "UPUSDT" not in eng.state.positions
+
+
+def test_default_execution_hour_is_after_midnight_new_york(tmp_path):
+    """Yahoo relabels a futures day at midnight ET; running at 00:05 UTC read the new Globex
+    session as the settled close (2026-09-05). The default run is 04:05 UTC."""
+    s = Settings()
+    assert s.trading.trend_execution_hour_utc == 4
+    eng = TrendDailyEngine(s, on_fill=Fills(), equity_provider=lambda: 1000.0,
+                           data_store=FakeStore({"UPUSDT": _frame("up")}), state_path=str(tmp_path / "t.json"),
+                           clock=lambda: datetime(2026, 9, 2, 3, 59, tzinfo=timezone.utc).timestamp())
+    assert not eng.is_due()
+    eng._clock = lambda: datetime(2026, 9, 2, 4, 6, tzinfo=timezone.utc).timestamp()
+    assert eng.is_due()

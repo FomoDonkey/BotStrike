@@ -1531,3 +1531,15 @@ valida con un componente, hay que comprobar que el mismo componente recibe las m
 `task_names` y `tasks` se construían por separado; al añadir un bucle a uno y no al otro, el supervisor
 reiniciaba el bucle equivocado. Si dos listas deben ir emparejadas, construirlas en un solo sitio o
 comprobar su longitud al arrancar.
+
+## Reproducir la señal desde cero es la única auditoría que vale (2026-09-05)
+Cinco de seis pesos coincidieron con datos frescos; el sexto salía al doble. Comparar la caché del CT
+vela a vela con una descarga nueva encontró UNA vela distinta por mercado y explicó el 2x: Yahoo
+enseña la sesión nueva de futuros bajo la fecha anterior entre 18:00 y 00:00 ET. Ninguna lectura de
+código lo habría visto. Regla: una caché de datos externos debe releer sus últimos días siempre, y una
+vela del día en curso de la bolsa nunca es "completa" por muy anterior que sea su fecha UTC.
+
+## Un límite de riesgo solo protege a la estrategia que lo consulta (2026-09-05)
+Daily/weekly/breaker vivían en `check_signal`, que solo llaman las estrategias intradía — todas
+retiradas. El único libro vivo nunca preguntaba. Cuando se retira una estrategia hay que comprobar
+qué controles la usaban como único punto de paso.

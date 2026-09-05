@@ -179,7 +179,8 @@ class BotStrike:
             # captured now would skip that wrapper — the daily rebalance's six fills never reached
             # the Activity feed or the toasts (Edgar, 2026-09-05).
             self.trend_engine = TrendDailyEngine(
-                settings, on_fill=lambda t: self._process_paper_fill(t), equity_provider=self._sizing_equity)
+                settings, on_fill=lambda t: self._process_paper_fill(t), equity_provider=self._sizing_equity,
+                risk_gate=self.risk_manager.can_add_exposure)
 
         # Edge monitor state (analytics/edge.py) — refreshed by _metrics_loop
         self.edge_stats: Dict = {}

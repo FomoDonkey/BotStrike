@@ -55,6 +55,7 @@ START_MS = 1_502_928_000_000  # 2017-08-17 — first Binance daily candle
 # CURRENT price, never at the stale daily open — the model assumes execution AT the open.
 LATE_FILL_SEC = 3600.0
 FETCH_ATTEMPTS = 3          # daily kline download retries per symbol
+HEAL_DAYS = 5               # cached bars re-read on every refresh so late revisions land
 SPOT_KLINES_URL = "https://api.binance.com/api/v3/klines"
 
 
@@ -145,7 +146,10 @@ class DailyDataStore:
             return cached
         start_ms = START_MS
         if cached is not None and len(cached):
-            start_ms = int((cached.index[-1] + pd.Timedelta(days=1)).timestamp() * 1000)
+            # Re-read the last days every time so a bar cached before its source settled it is
+            # replaced by the settled one (fresh rows win in the concat below): Yahoo revises a
+            # futures close at settlement, and once a bar is cached it was never looked at again.
+            start_ms = int((cached.index[-1] - pd.Timedelta(days=HEAL_DAYS)).timestamp() * 1000)
         fresh = None
         last_err: Optional[Exception] = None
         for attempt in range(FETCH_ATTEMPTS):
@@ -256,6 +260,7 @@ class TrendState:
     last_run_late: bool = False
     opens_prev: Dict[str, float] = field(default_factory=dict)   # opens used at the last execution
     tracking: List[Dict[str, Any]] = field(default_factory=list)
+    last_adds_blocked: str = ""          # why the last run held its adds (risk gate), else ""
     candidates: int = 0
 
     def to_json(self) -> Dict[str, Any]:
@@ -270,7 +275,7 @@ class TrendState:
             st.positions[k] = BookPosition(**{f: v.get(f, 0.0) for f in BookPosition.__dataclass_fields__})
         for k in ("weights", "universe", "universe_month", "universe_key", "targets", "last_run_date", "last_run_ts",
                   "last_run_status", "last_error", "equity_basis", "opens_prev", "tracking", "candidates",
-                  "last_run_late"):
+                  "last_run_late", "last_adds_blocked"):
             if k in d:
                 setattr(st, k, d[k])
         # One tracking row per day. Files written before 2026-09-05 hold a row per RUN — a restart
@@ -290,11 +295,15 @@ class TrendDailyEngine:
                  equity_provider: Callable[[], float],
                  data_store: Optional[DailyDataStore] = None,
                  state_path: str = DEFAULT_STATE_PATH,
-                 clock: Callable[[], float] = time.time) -> None:
+                 clock: Callable[[], float] = time.time,
+                 risk_gate: Optional[Callable[[], Any]] = None) -> None:
         self.settings = settings
         self.config = settings.trading
         self._on_fill = on_fill
         self._equity_provider = equity_provider
+        # () -> (may_add: bool, reason: str). The risk manager's loss limits, circuit breaker and
+        # drawdown halt hold this book's ADDS; exits and reductions always go through (2026-09-05).
+        self._risk_gate = risk_gate
         self.store = data_store or DailyDataStore()
         self.state_path = state_path
         self._clock = clock
@@ -461,6 +470,23 @@ class TrendDailyEngine:
             for sym in list(st.positions):
                 targets.setdefault(sym, 0.0)
             exec_w = apply_rebalance_threshold(targets, st.weights, params.rebalance_threshold)
+            # No NEW risk while a loss limit, the breaker or the drawdown halt is in force: every
+            # add is held at what is already held; exits and reductions still execute.
+            may_add, why = True, ""
+            if self._risk_gate is not None:
+                try:
+                    may_add, why = self._risk_gate()
+                except Exception as e:  # noqa: BLE001 - a broken gate must not stop the exits
+                    logger.warning("trend_risk_gate_error", error=str(e)[:120])
+            if not may_add:
+                blocked = []
+                for sym, w in list(exec_w.items()):
+                    held = float(st.weights.get(sym, 0.0))
+                    if abs(w) > abs(held) + 1e-12 and w * held >= 0:
+                        exec_w[sym] = held
+                        blocked.append(sym)
+                logger.warning("trend_adds_blocked_by_risk", reason=why, blocked=blocked)
+            st.last_adds_blocked = why if not may_add else ""
             # Scheduled execution time of today; a late run (restart/first deploy hours after
             # the open) cannot honestly claim the open price → fill at the forming candle's close
             sched = today.timestamp() + int(self.config.trend_execution_hour_utc) * 3600                 + int(self.config.trend_execution_delay_min) * 60
@@ -501,7 +527,7 @@ class TrendDailyEngine:
                     logger.warning("trend_no_price_skipped", symbol=sym)
                     continue
                 turnover += abs(w - float(st.weights.get(sym, 0.0)))
-                await self._execute_symbol(sym, w, price, equity, today_key, now)
+                await self._execute_symbol(sym, w, price, equity, today_key, now, allow_add=may_add)
             st.targets = {s: round(w, 6) for s, w in targets.items() if s in st.universe or w > 0}
             self._record_tracking(today_key, opens, turnover, equity, prev_basis)
             st.opens_prev = opens
@@ -538,7 +564,7 @@ class TrendDailyEngine:
         return max(base, half) if half is not None else base
 
     async def _execute_symbol(self, sym: str, target_w: float, price: float, equity: float,
-                              today_key: str, now: float) -> None:
+                              today_key: str, now: float, allow_add: bool = True) -> None:
         """Move one market from what we hold to what the model wants, in SIGNED notional.
 
         Everything here is expressed as signed exposure (positive long, negative short) so one path
@@ -579,6 +605,11 @@ class TrendDailyEngine:
             return
 
         # entry or add, in the direction of `delta`
+        if not allow_add:
+            # a loss limit / breaker / drawdown halt is in force: no new risk, not even the
+            # equity-driven re-alignment of a weight that did not change
+            logger.info("trend_add_held_by_risk", symbol=sym, wanted_usd=round(abs(delta), 2))
+            return
         slip = self._slippage_bps(sym) / 10_000.0
         buying = delta > 0
         fill = self._venue_price(sym, price * (1.0 + slip) if buying else price * (1.0 - slip))
@@ -999,6 +1030,7 @@ class TrendDailyEngine:
         tc = self.config
         return {
             "enabled": self.enabled, "killed": self.killed,
+            "last_adds_blocked": getattr(self.state, "last_adds_blocked", ""),
             "allocation": float(tc.allocation_trend_daily),
             "next_run_utc": datetime.fromtimestamp(self.next_run_ts(), timezone.utc).isoformat().replace("+00:00", "Z"),
             "last_run_utc": (datetime.fromtimestamp(st.last_run_ts, timezone.utc).isoformat().replace("+00:00", "Z")

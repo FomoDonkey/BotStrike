@@ -181,7 +181,13 @@ class TradingConfig:
     trend_n_assets: int = 3                      # top-N by 30d median dollar volume
     trend_leverage_cap: float = 3.0              # cap on the vol scalar (= balanced/aggressive)
     trend_rebalance_threshold: float = 0.20      # only re-trade vol-induced size changes > 20%
-    trend_execution_hour_utc: int = 0            # execute at the daily open (00:00 UTC)...
+    # 04:00 UTC, not the 00:00 UTC crypto open: the TradFi daily bars come from Yahoo, which
+    # shows the NEXT Globex session's live prints under the CURRENT date from 18:00 ET until
+    # midnight ET (04:00 UTC in summer). A 00:05 UTC run read one hour of the new session as the
+    # settled close and doubled silver on a breakout that never printed (2026-09-05). Four hours
+    # after the crypto open costs a fraction of a day's drift on four markets; a day-late TradFi
+    # signal on the other four would cost far more.
+    trend_execution_hour_utc: int = 4
     trend_execution_delay_min: int = 5           # ...plus this delay (candle must exist)
     trend_min_order_usd: float = 10.0            # skip rebalances smaller than this notional
     trend_min_listing_days: int = 365

@@ -136,6 +136,9 @@ def build_event_row(event: str, ev: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 "detail": f"{pos} positions · targets {_fmt_targets(ev.get('targets'))}"[:240]}
     if event == "trend_late_run_fills_at_current_price":
         return {"kind": "run", "title": "Trend daily late run", "detail": "fills at current price", "level": "warning"}
+    if event == "trend_adds_blocked_by_risk":
+        return {"kind": "risk", "title": "Trend adds held by risk",
+                "detail": f"{ev.get('reason', '')} · {', '.join(ev.get('blocked') or [])}"[:200], "level": "warning"}
     if event == "trend_book_flattened":
         return {"kind": "risk", "title": "Trend book flattened", "detail": str(ev.get("reason", ""))[:200], "level": "warning"}
     if event == "strategy_disabled_by_performance":

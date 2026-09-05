@@ -61,17 +61,28 @@ def fetch_daily_yahoo(symbol: str, start_ms: int = 0, timeout: float = 30.0,
             res = payload["chart"]["result"][0]
             ts = res["timestamp"]
             q = res["indicators"]["quote"][0]
+            # Bars are dated by the EXCHANGE's calendar day (Yahoo stamps a futures day at 00:00
+            # New York), and the bar of the CURRENT exchange day is never trusted: while the day's
+            # session runs it is forming, and from the evening Globex open (18:00 ET) until
+            # midnight ET Yahoo shows the NEXT session's live prints under the CURRENT date. The
+            # CT cached silver's "3 Sep" as o 67.63 h 67.69 l 67.51 c 67.59 — one hour of the
+            # 4 Sep session — and doubled the position on a breakout that never printed
+            # (2026-09-05). The settled bar for a day is only stable after midnight ET.
+            tz = str((res.get("meta") or {}).get("exchangeTimezoneName") or "America/New_York")
+            stamps = pd.to_datetime([int(t) for t in ts], unit="s", utc=True).tz_convert(tz).normalize()
+            today_local = pd.Timestamp.now(tz=tz).normalize()
             df = pd.DataFrame({
                 "open": q["open"], "high": q["high"], "low": q["low"], "close": q["close"],
                 "volume": [v or 0.0 for v in (q.get("volume") or [0] * len(ts))],
-            }, index=pd.to_datetime([int(t) for t in ts], unit="s", utc=True).normalize().tz_localize(None))
+            }, index=stamps.tz_localize(None))
+            df = df[stamps < today_local]
             df = df.dropna(subset=["close"])
             for c in ("open", "high", "low"):
                 df[c] = df[c].fillna(df["close"])
             # the engine ranks the universe by dollar volume; indices report index volume, which is
             # not comparable, so quote_volume is close*volume and only used for ordering
             df["quote_volume"] = df["close"] * df["volume"]
-            df = df[~df.index.duplicated(keep="last")].sort_index()
+            df = df[~df.index.duplicated(keep="first")].sort_index()   # the settled bar, never a live repeat
             if start_ms:
                 df = df[df.index >= pd.Timestamp(start_ms, unit="ms").normalize()]
             return df if len(df) else None

@@ -2199,3 +2199,10 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
 - [x] Comisión de entrada al fill (regla de caja única `cash_effect`/`fee_paid` en modelo, ledger, restauración,
       all-time, portfolio, bridge, simulador y trend; columna `entry_fee_charged` con migración v3; el cierre
       solo acredita lo que la entrada pagó de verdad, prorrata en parciales; 458 tests)
+
+### Auditoría de la estrategia (2026-09-05, cuarta ronda) — ver `tasks/audit_2026-09-05.md`
+- [x] S1 velas Yahoo contaminadas → fechado por bolsa, sin vela del día, relectura 5 días, ejecución 04:05 UTC
+- [x] S2 freno de riesgo sobre el libro trend (`can_add_exposure` → sin adds bajo límite; salidas siempre)
+- [x] Pesos de hoy reproducidos de forma independiente; fills vs reglas del venue; Σ cash DB = ledger
+- [ ] Tras el despliegue: borrar caché Yahoo del CT, comprobar `next_run_utc` 04:05 y que el rebalance del 06 baje XAG
+- [ ] Decidir: anualización 365 vs 252 para TradFi (revalidar si se cambia)

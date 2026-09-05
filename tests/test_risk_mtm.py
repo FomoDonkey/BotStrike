@@ -110,3 +110,14 @@ def test_raise_peak_only_raises():
     rm.raise_peak(900.0)
     rm.raise_peak(float("nan"))
     assert rm.equity_peak == 1_050.0
+
+
+def test_can_add_exposure_names_the_limit_in_force():
+    rm = _rm()
+    rm.update_unrealized(0.0)
+    assert rm.can_add_exposure() == (True, "")
+    rm.update_unrealized(-120.0)                   # 12 % down on the day, mark-to-market
+    assert rm.can_add_exposure() == (False, "daily_loss_limit")
+    rm2 = _rm(max_dd=0.10)
+    rm2.update_unrealized(-100.0)
+    assert rm2.can_add_exposure()[1] in ("max_drawdown", "circuit_breaker")

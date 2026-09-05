@@ -467,6 +467,26 @@ class RiskManager:
             self._equity_peak = self._mtm()
         self._arm_circuit_breaker_if_severe()
 
+    def can_add_exposure(self) -> tuple:
+        """Whether NEW risk may be taken right now, and if not, why.
+
+        The intraday path asks this inside check_signal. The daily trend book never asked
+        (2026-09-05): the daily/weekly loss limits and the circuit breaker gated only strategies
+        that are retired, so the one live book could keep adding through a breached limit. Exits
+        and reductions are never gated — only adds.
+        """
+        if self._drawdown_halted or self._check_max_drawdown():
+            return False, "max_drawdown"
+        if self.is_circuit_breaker_active:
+            return False, "circuit_breaker"
+        eq = self._mtm()
+        if self.daily_pnl_mtm < 0 and abs(self.daily_pnl_mtm) >= eq * float(self.config.max_daily_loss_pct):
+            return False, "daily_loss_limit"
+        weekly_pct = float(getattr(self.config, "max_weekly_loss_pct", 1.0) or 1.0)
+        if self.weekly_pnl_mtm < 0 and abs(self.weekly_pnl_mtm) >= eq * weekly_pct:
+            return False, "weekly_loss_limit"
+        return True, ""
+
     def raise_peak(self, peak: float) -> None:
         """A mark-to-market peak remembered across restarts (data/risk_peak.json): the trade chain
         only knows the realised peak, so a restart used to measure the drawdown from a lower high."""
