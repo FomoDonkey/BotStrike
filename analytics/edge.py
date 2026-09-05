@@ -32,6 +32,15 @@ VERDICT_WARN = "warn"
 VERDICT_KILL = "kill"
 
 
+REBALANCE_ORDER_PREFIXES = ("trend_rebalance_",)
+
+
+def is_rebalance_row(t: Any) -> bool:
+    """True for a partial re-alignment of an open position (the trend book's drift trims)."""
+    oid = str(getattr(t, "order_id", "") or "")
+    return oid.startswith(REBALANCE_ORDER_PREFIXES)
+
+
 def _stats_for(trades: List[Any], min_trades: int, t_kill: float, fee_kill: float) -> Dict[str, Any]:
     n = len(trades)
     if n == 0:
@@ -112,7 +121,13 @@ def compute_edge_stats(trade_repo, source: str = "paper", window: int = 200,
         logger.warning("edge_stats_unavailable", error=str(e), error_type=type(e).__name__)
         trades = []
     closes = [t for t in trades if t.trade_type and t.trade_type not in ("ENTRY", "FUNDING")]
+    # A rebalance trim is housekeeping, not a closed trade: the trend book trims a winner after it
+    # grew and adds to a loser after it shrank, so counting trims as trades biased the statistic
+    # towards the last move and drowned the ~90 real exits a year in drift rows (2026-09-05).
+    trims = [t for t in closes if is_rebalance_row(t)]
+    closes = [t for t in closes if not is_rebalance_row(t)]
     closes.sort(key=lambda t: float(t.timestamp or 0.0))
+    out["rebalance_rows_excluded"] = len(trims)
     by_strategy: Dict[str, List[Any]] = {}
     for t in closes:
         by_strategy.setdefault(t.strategy or "UNKNOWN", []).append(t)
