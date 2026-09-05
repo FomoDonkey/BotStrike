@@ -73,7 +73,7 @@ function EpisodeCard({ e, active, nowSec, onClick }: { e: Episode; active: boole
       </div>
       <div className="mt-1.5 flex items-baseline justify-between gap-2">
         <span className={cn("num text-[16px] font-semibold", tone)}>{formatSignedMoney(total)}</span>
-        <span className={cn("num text-[12px] font-medium", tone)}>{ret === null ? "" : formatSignedPct(ret * 100, 2)}</span>
+        <span className={cn("num text-[12px] font-medium", tone)}>{ret === null ? "" : formatSignedPct(ret, 2)}</span>
       </div>
       <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11.5px] text-text-2">
         <span>Entry <span className="num text-text">{formatPrice(e.entryPrice)}</span></span>
@@ -84,7 +84,7 @@ function EpisodeCard({ e, active, nowSec, onClick }: { e: Episode; active: boole
         <span>Fills <span className="num text-text">{e.fills.length}</span>{trims ? <span className="text-amber"> · {trims} trim{trims > 1 ? "s" : ""}</span> : null}{adds ? <span> · {adds} add{adds > 1 ? "s" : ""}</span> : null}</span>
         <span className="col-span-2 text-text-3">{fmtTs(e.openTs)} → {e.closeTs ? fmtTs(e.closeTs) : "open"}</span>
         {e.open && e.ladder ? (
-          <span className="col-span-2 text-text-3">Exit ladder <span className="num text-text-2">{formatPrice(e.ladder.first_exit)} → {formatPrice(e.ladder.full_exit)}</span> · {e.ladder.active}/{e.ladder.total} legs · worst {formatSignedPct((e.ladder.worst_case_pct ?? 0) * 100, 1)}</span>
+          <span className="col-span-2 text-text-3">Exit ladder <span className="num text-text-2">{formatPrice(e.ladder.first_exit)} → {formatPrice(e.ladder.full_exit)}</span> · {e.ladder.active}/{e.ladder.total} legs · worst {formatSignedPct(e.ladder.worst_case_pct ?? 0, 1)}</span>
         ) : null}
         {e.truncated ? <span className="col-span-2 text-text-3">entry fills older than the loaded history</span> : null}
       </div>
@@ -190,7 +190,7 @@ export function JournalPage() {
       <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2">
         <KpiCard label="Net PnL" hint="Realised PnL of the closed trades on this market" value={<span className={stats.net >= 0 ? "text-mint" : "text-rose"}>{formatSignedMoney(stats.net)}</span>} sub={`${stats.closed} closed`} />
         <KpiCard label="Open PnL" hint="Mark-to-market of the open position(s) on this market" value={<span className={stats.unrealized >= 0 ? "text-mint" : "text-rose"}>{formatSignedMoney(stats.unrealized)}</span>} sub={`${stats.open} open`} />
-        <KpiCard label="Win rate" hint="Closed trades with a positive round-trip PnL" value={winRate === null ? "---" : formatPct(winRate * 100, 0)} sub={winRate === null ? "no closed trades" : `${stats.wins} of ${stats.closed}`} />
+        <KpiCard label="Win rate" hint="Closed trades with a positive round-trip PnL" value={winRate === null ? "---" : formatPct(winRate, 0)} sub={winRate === null ? "no closed trades" : `${stats.wins} of ${stats.closed}`} />
         <KpiCard label="Profit factor" hint="Gross wins / gross losses of the closed trades" value={pf === null ? (stats.grossWins > 0 ? "∞" : "---") : pf.toFixed(2)} sub={`+${formatMoney(stats.grossWins)} / −${formatMoney(stats.grossLosses)}`} />
         <KpiCard label="Avg hold" hint="Average time from entry to the exit that flattened the position" value={stats.avgHoldSec === null ? "---" : formatDuration(stats.avgHoldSec)} />
         <KpiCard label="Best" value={stats.best ? <span className="text-mint">{formatSignedMoney(stats.best.pnl)}</span> : "---"} sub={stats.best ? fmtTs(stats.best.closeTs ?? stats.best.openTs) : undefined} />

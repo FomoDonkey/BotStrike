@@ -515,8 +515,8 @@ export function CandlestickChart({ symbol, className, trades, paths, focus, time
         } else {
           const isWin = t.pnl > 0;
           const pnlStr = `${t.pnl >= 0 ? "+" : "−"}$${Math.abs(t.pnl).toFixed(2)}`;
-          // serialize_trade sends the POSITION side on exits (BUY = closed long)
-          const wasLong = t.side === "BUY";
+          // the row carries the ORDER side: a SELL closes a long (lib/market.tradePositionSide)
+          const wasLong = t.side === "SELL";
           if (isTrim(t)) {
             // a rebalance trim: part of the position re-aligned to its weight, not a decision to leave
             markers.push({

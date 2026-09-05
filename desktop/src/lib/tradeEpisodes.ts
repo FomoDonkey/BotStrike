@@ -59,7 +59,9 @@ function key(symbol: string, strategy: string | null | undefined): string {
 
 /** Fold fills (oldest first) into episodes; attach the live positions to the open ones. */
 export function buildEpisodes(fills: TradeData[], positions: PositionData[], nowSec: number): Episode[] {
-  const sorted = [...fills].filter((f) => f.timestamp > 0 && f.price > 0).sort((a, b) => a.timestamp - b.timestamp);
+  const rank = (f: TradeData) => (f.trade_type === "ENTRY" ? 0 : 1);
+  const sorted = [...fills].filter((f) => f.timestamp > 0 && f.price > 0)
+    .sort((a, b) => a.timestamp - b.timestamp || rank(a) - rank(b));
   const byKey = new Map<string, { size: number; ep: Episode | null; entryQty: number; entryCost: number; exitQty: number; exitCost: number }>();
   const out: Episode[] = [];
   for (const f of sorted) {
@@ -68,7 +70,7 @@ export function buildEpisodes(fills: TradeData[], positions: PositionData[], now
     if (f.trade_type === "ENTRY") {
       if (!st.ep || st.size <= EPS) {
         st.ep = {
-          id: `${k}|${f.timestamp}`, symbol: f.symbol, strategy: f.strategy, long: f.side === "BUY",
+          id: `${k}|${f.timestamp}`, symbol: f.symbol, strategy: f.strategy, long: isLong(f.side),
           openTs: f.timestamp, closeTs: null, open: true, entryPrice: f.price, exitPrice: null, qty: 0,
           pnl: 0, unrealized: 0, fees: 0, fills: [], exitReason: null,
         };
@@ -83,7 +85,10 @@ export function buildEpisodes(fills: TradeData[], positions: PositionData[], now
       st.ep.fees += f.fee || 0;
     } else if (st.ep) {
       const after = st.size - f.quantity;
-      const kind: FillKind = after <= EPS || !isTrim(f) && after <= st.size * 0.02 ? "exit" : "trim";
+      const reason = String(f.exit_reason ?? "").toUpperCase();
+      const flattens = after <= Math.max(EPS, st.size * 0.02);
+      // a trim never closes the episode; a full exit closes it even when the sizes disagree by dust
+      const kind: FillKind = isTrim(f) ? "trim" : (flattens || (reason !== "" && reason !== "REBALANCE")) ? "exit" : "trim";
       st.ep.fills.push({ ts: f.timestamp, price: f.price, qty: f.quantity, kind, pnl: f.pnl || 0, fee: f.fee || 0, side: f.side });
       st.size = Math.max(0, after);
       st.exitQty += f.quantity; st.exitCost += f.quantity * f.price;
