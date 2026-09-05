@@ -1570,3 +1570,13 @@ qué controles la usaban como único punto de paso.
   `settings.symbols` / `SYMBOLS` es el mapa.
 - Las auditorías anteriores miraban lógica y contabilidad (correctas); esta dimensión (cobertura por
   universo) es distinta y hay que recorrerla explícitamente.
+
+## 2026-09-05 — un filtro que "nunca bloquea" es un filtro que a veces no existe
+- `_venue_volumes` devolvía {} ante cualquier error y la selección seguía sin suelo de liquidez: el libro
+  acabó con el 41 % del equity en un mercado que negocia 788 $/día. Regla: un filtro de viabilidad de
+  ejecución debe fallar CERRADO (no cambiar nada y avisar), no abierto. Y la prueba de que se aplicó es
+  reproducir la decisión con y sin el filtro y ver cuál coincide con lo que hay en vivo.
+- Los mínimos de liquidez se comprueban cada día, no solo al re-elegir el universo: un mercado puede
+  dejar de negociar a mitad de mes.
+- Estimar pesos con la caché local es inútil si no está al día (a mí me dio 0,040 donde el CT, con datos
+  frescos, da 0,079). Los números de decisión salen del CT o de una caché recién refrescada.

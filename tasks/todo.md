@@ -2218,3 +2218,6 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
 - [x] 2026-09-05 cobertura: régimen para cualquier mercado (bridge, velas del venue), listas dinámicas en la UI (bac0e4e, verificado en CT)
 - [ ] Pool del libro trend: 12 de 31 mercados (decisión pendiente de Edgar: incluir acciones sueltas — AAOI, COIN, CRCL, GOOGL, MU, HYPE — ya investigadas)
 - [ ] Mercados finos: valorar marcar el régimen como "baja confianza" cuando las velas del venue son irregulares (ADX 90+)
+- [x] 2026-09-05 filtro de liquidez del venue: salida diaria (10×), fail-closed sin volúmenes, `/api/trend.liquidity` (b7af4ba, desplegado)
+- [ ] 2026-09-06 04:05 UTC: confirmar que SP500 sale del universo y entra ADA (o que Edgar vetó bajando `trend_liq_venue_exit_multiple`)
+- [ ] UI: mostrar `/api/trend.liquidity` (suelos y volumen 24 h por mercado) en la página Strategies
