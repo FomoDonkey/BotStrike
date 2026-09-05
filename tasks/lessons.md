@@ -1547,3 +1547,7 @@ qué controles la usaban como único punto de paso.
 ## 2026-09-05 — "---" y "Loading…" en una pestaña en segundo plano no es el bridge
 - `usePolling` saltaba TAMBIÉN la primera petición si `document.visibilityState === "hidden"`: una pestaña abierta en segundo plano (o una automatizada) se quedaba en "---"/"Loading strategies…" aunque `/api/*` respondiera en 10 ms. Antes de culpar al servidor: `fetch` desde la propia página + `document.visibilityState`.
 - Fix: la primera petición sale siempre; solo los ticks periódicos esperan a que la pestaña sea visible (a6e2ada).
+
+## 2026-09-05 — un reinicio re-basaba el PnL diario/semanal mark-to-market
+- El baseline de PnL abierto (`_day_start_unrealized`) se sembraba en la primera marca de CADA proceso: tras un redeploy el diario pasó de +$0,29 a −$0,003 con el libro igual, y una pérdida abierta anterior al reinicio dejaba de contar contra el límite diario. Cualquier métrica "desde las 00:00" tiene que persistir su baseline con la clave del periodo (`data/risk_peak.json`: day / ISO week) y restaurarse solo si el periodo sigue vivo (5c6c34a).
+- Regla: después de cada redeploy comparar las cifras de periodo (daily/weekly) antes y después; si cambian sin que cambie el libro, hay un baseline que no sobrevive.
