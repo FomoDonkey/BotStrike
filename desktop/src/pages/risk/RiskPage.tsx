@@ -14,6 +14,7 @@ import { HINTS } from "@/lib/hints";
 import { cn, formatMoney, formatPct, formatSignedMoney } from "@/lib/utils";
 import { positionNotional } from "@/lib/market";
 import { RiskProfileCards } from "./RiskProfileCards";
+import { Hint } from "@/components/shared/Hint";
 import { useEndpoint } from "@/hooks/useEndpoint";
 import { api } from "@/lib/api";
 
@@ -206,9 +207,11 @@ export function RiskPage() {
               {exposureCapUsd !== null && <span className="text-text-2 font-medium"> · {formatMoney(exposureCapUsd)}</span>}
             </ListRow>
             <ListRow label="Open positions">{positions.length}</ListRow>
-            <ListRow label="Regimes" hint="Intraday classifier (15-minute bars) for the engine's symbols and for every market the trend book trades or holds, the latter from the venue's own bars. Informational: the trend book does not read it.">
-              <span className="inline-flex flex-wrap gap-1 justify-end">{regimeRows.map((r) => <span key={r.symbol} title={`${r.source} · ${r.tf}m bars`}><RegimeChip regime={r.regime} size="xs" suffix={<span className="ml-1 text-text">{r.symbol.split("-")[0]}</span>} /></span>)}</span>
-            </ListRow>
+            {/* twelve chips do not fit a one-line row: label above, chips wrapping below (2026-09-05) */}
+            <div className="py-1.5 min-w-0">
+              <span className="text-text-2 font-medium text-[12.5px]"><Hint title="Intraday classifier (15-minute bars) for the engine's symbols and for every market the trend book trades or holds, the latter from the venue's own bars. Informational: the trend book does not read it.">Regimes</Hint></span>
+              <div className="mt-1 flex flex-wrap gap-1">{regimeRows.map((r) => <span key={r.symbol} title={`${r.source} · ${r.tf}m bars`}><RegimeChip regime={r.regime} size="xs" suffix={<span className="ml-1 text-text">{r.symbol.split("-")[0]}</span>} /></span>)}</div>
+            </div>
           </ListSection>
         </Panel>
       </div>
