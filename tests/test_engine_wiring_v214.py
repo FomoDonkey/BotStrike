@@ -13,6 +13,14 @@ from main import BotStrike
 from test_telegram_sync import _make_bot, _process_and_settle
 
 
+@pytest.fixture(autouse=True)
+def _no_persisted_risk_state(monkeypatch, tmp_path):
+    """The engine restores its mark-to-market peak and period baselines from data/risk_peak.json.
+    On the CT that file holds the live book (peak 1,033 on 2026-09-06), and the deploy's own test
+    run read it: the restore test expected the peak of its two fake trades and got the venue's."""
+    monkeypatch.setattr(BotStrike, "_risk_peak_path", lambda self: str(tmp_path / "risk_peak.json"))
+
+
 class Repo:
     def __init__(self, trades):
         self._t = trades
