@@ -1121,6 +1121,9 @@ def _trend_position_rows(engine) -> list:
             "mfe_bps": (excursions.get(p["symbol"]) or {}).get("mfe_bps"),
             "entry_fee_rate": getattr(pos_st, "entry_fee_rate", 0.0),
             "fees_paid": p["entry_price"] * p["size"] * getattr(pos_st, "entry_fee_rate", 0.0),
+            # what of that entry fee has ALREADY left the balance (charged at the fill since
+            # a56be59; positions opened before it pay it at the close)
+            "entry_fee_debited": float(getattr(pos_st, "entry_fee_paid", 0.0) or 0.0),
             "funding_paid": _position_funding(acc, p["ui_symbol"], getattr(pos_st, "opened_ts", 0.0),
                                               funding_by_symbol),
             "order_id": "", "order_type": "MARKET", "trigger": "donchian_ensemble", "weight": p["weight"],

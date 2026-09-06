@@ -180,6 +180,10 @@ export function positionLiquidation(p: PositionData): LiqEstimate {
   }
   const lev = positionLeverage(p);
   if (lev <= 1 || !(p.entry_price > 0)) return { price: null, estimated: false };
+  // Cross margin (the trend book): liquidation is account-level, when the whole equity falls to the
+  // maintenance margin of every position, far beyond the drawdown halt. The isolated formula below
+  // printed "53,253 est" on a 3x BTC position that nothing liquidates at that price (2026-09-06).
+  if (p.margin_mode === "cross") return { price: null, estimated: false };
   const mm = PAPER_MAINTENANCE_MARGIN;
   const px = isLong(p.side) ? p.entry_price * (1 - 1 / lev + mm) : p.entry_price * (1 + 1 / lev - mm);
   return { price: px, estimated: true };

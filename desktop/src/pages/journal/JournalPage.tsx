@@ -144,8 +144,10 @@ export function JournalPage() {
     }
     return { all, sym };
   }, [rawTrades, symbol]);
-  const allNet = allStats.realised + allStats.unrealized + funding.all;
-  const symNet = stats.realised + stats.unrealized + funding.sym;
+  // realised + open + funding − the entry fees the balance has already paid on open positions:
+  // exactly the account's all-time PnL
+  const allNet = allStats.realised + allStats.unrealized + funding.all - allStats.feeDebited;
+  const symNet = stats.realised + stats.unrealized + funding.sym - stats.feeDebited;
   const trades = useMemo(() => (show.fills ? fills.filter((f) => f.symbol === symbol) : []), [fills, symbol, show.fills]);
   const priceLines = useMemo(() => (show.ladder ? positionPriceLines(positions, symbol) : []), [positions, symbol, show.ladder]);
   const paths = useMemo<PathSpec[]>(() => (show.paths ? symEpisodes.map((e) => episodePath(e, tick, selected === e.id)) : []),
@@ -169,7 +171,7 @@ export function JournalPage() {
     <div className="flex flex-col gap-3 p-3 sm:p-4 min-w-0">
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-[18px] font-semibold text-text flex items-center gap-2"><History className="w-5 h-5 text-mint" /> Journal</h1>
-        <span className="text-[12px] text-text-2">every fill on the chart · {allStats.closed} round trip{allStats.closed === 1 ? "" : "s"} closed · {allStats.trims} trim{allStats.trims === 1 ? "" : "s"} · {allStats.open} open · net <span className={cn("num font-semibold", allNet >= 0 ? "text-mint" : "text-rose")} title="realised (exits and trims) + open PnL + funding: the same figure as the account">{formatSignedMoney(allNet)}</span> across {markets.length} market{markets.length === 1 ? "" : "s"}</span>
+        <span className="text-[12px] text-text-2">every fill on the chart · {allStats.closed} round trip{allStats.closed === 1 ? "" : "s"} closed · {allStats.trims} trim{allStats.trims === 1 ? "" : "s"} · {allStats.open} open · net <span className={cn("num font-semibold", allNet >= 0 ? "text-mint" : "text-rose")} title="realised (exits and trims) + open PnL + funding − entry fees already paid on open positions: the account's all-time PnL">{formatSignedMoney(allNet)}</span> across {markets.length} market{markets.length === 1 ? "" : "s"}</span>
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           <Popover align="right" width="w-56" trigger={(open) => <DropdownTrigger size="xs" open={open} label={symbol || "Market"} />}>
             {(close) => (
@@ -201,7 +203,7 @@ export function JournalPage() {
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2">
-        <KpiCard label="Net PnL" hint="Realised (every exit and trim) + open PnL + funding on this market: the account's own figure for it" value={<span className={symNet >= 0 ? "text-mint" : "text-rose"}>{formatSignedMoney(symNet)}</span>} sub={`realised ${formatSignedMoney(stats.realised)} · funding ${formatSignedMoney(funding.sym)}`} />
+        <KpiCard label="Net PnL" hint="Realised (every exit and trim) + open PnL + funding on this market: the account's own figure for it" value={<span className={symNet >= 0 ? "text-mint" : "text-rose"}>{formatSignedMoney(symNet)}</span>} sub={`realised ${formatSignedMoney(stats.realised)} · funding ${formatSignedMoney(funding.sym)}${stats.feeDebited > 0 ? ` · entry fees paid ${formatMoney(stats.feeDebited)}` : ""}`} />
         <KpiCard label="Open PnL" hint="Mark-to-market of the open position(s) on this market" value={<span className={stats.unrealized >= 0 ? "text-mint" : "text-rose"}>{formatSignedMoney(stats.unrealized)}</span>} sub={`${stats.open} open`} />
         <KpiCard label="Round trips" hint="Positions opened and flattened. A rebalance trim realises money but is not a round trip" value={stats.closed} sub={`${stats.trims} trim${stats.trims === 1 ? "" : "s"} realised`} />
         <KpiCard label="Win rate" hint="Round trips with a positive net PnL" value={winRate === null ? "---" : formatPct(winRate, 0)} sub={winRate === null ? "no round trip closed yet" : `${stats.wins} of ${stats.closed}`} />

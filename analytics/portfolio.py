@@ -202,8 +202,10 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
         s_sharpe = _sharpe_daily(list(sday.values()), initial) if (len(sc) >= SHARPE_MIN_TRADES and s_span >= SHARPE_MIN_DAYS) else None
         by_strategy.append({
             "strategy": s, "trades": len(sc), "open_positions": len(spos),
-            "realized": round(sum(pnls) + s_funding, 4), "unrealized": round(s_unreal, 4),
-            "pnl": round(sum(pnls) + s_funding + s_unreal, 4), "funding": round(s_funding, 6),
+            # the same cash rule the account chains (entries pay their fee at the fill, exits credit
+            # the entry share, funding settles): 8.28 vs the account's 8.16 was the ADA/ZEC entry fees
+            "realized": round(sum(cash_effect(t) for t in srows), 4), "unrealized": round(s_unreal, 4),
+            "pnl": round(sum(cash_effect(t) for t in srows) + s_unreal, 4), "funding": round(s_funding, 6),
             "trims": len(sc) - len(stat_rows),
             "volume": round(sum(_f(t.price) * _f(t.quantity) for t in srows), 2),
             "fees": round(sum(_f(getattr(t, "fee", 0.0)) for t in srows), 4),

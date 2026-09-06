@@ -422,6 +422,10 @@ export interface PositionData {
   mfe_bps?: number;
   entry_fee_rate?: number;
   fees_paid?: number;
+  /** entry fee already debited from the balance at the fill (0 for positions opened before fill-time fees) */
+  entry_fee_debited?: number;
+  /** "cross" for the trend book: liquidation is account-level, no per-position price */
+  margin_mode?: string;
   funding_paid?: number;
   order_id?: string;
   trigger?: string;
