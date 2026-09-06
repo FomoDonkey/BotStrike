@@ -1605,3 +1605,11 @@ qué controles la usaban como único punto de paso.
   equity). Cinco discrepancias reales salieron así en una pasada.
 - Un recorte de rebalanceo es dinero realizado pero no es una operación cerrada: las estadísticas
   (win rate, t-stat, profit factor) lo excluyen; el PnL realizado lo incluye. Etiquetar las dos cosas.
+
+## 2026-09-06 — un test que lee un archivo real del despliegue no es un test
+- `test_restore_history_compounds_equity_and_keeps_peak` pasaba en local (sin `data/risk_peak.json`)
+  y fallaba en el CT (con el pico vivo). Todo lo que persiste estado en `data/` se aísla en los tests
+  con un fixture autouse que redirige la ruta a `tmp_path`.
+- Cuando dos superficies dan cifras distintas para "lo mismo" (60 % vs 33 % de win rate), la causa
+  casi nunca es un cálculo: es que cuentan cosas distintas (filas vs ciclos). Se elige UNA definición
+  y se aplica en todos los productores, no se retoca la que molesta.

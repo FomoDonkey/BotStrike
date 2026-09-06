@@ -2232,3 +2232,5 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
 - [ ] Journal: cuando haya >1 estrategia por mercado, mostrar el filtro de estrategia; y exportar CSV de episodios
 - [x] 2026-09-05 revisión página a página: Journal (recortes, funding, fees), estrategia (funding, t-stat), margen/apalancamiento del libro, drawdown 30 d, System (c36d33c, 8bcdfc4)
 - [ ] Desplegar c36d33c + 8bcdfc4 en el CT (pendiente de la aprobación Tailscale) y verificar Journal / Portfolio / Strategies en Chrome
+- [x] 2026-09-06 desplegado y verificado: estadísticas por ciclo completo en todas las superficies, Journal = cuenta al céntimo, margen cross 3× (4e7a04d)
+- [x] 2026-09-06 ejecución 04:05 UTC: S&P y plata fuera (suelo de liquidez), ADA y ZEC dentro
