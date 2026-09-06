@@ -119,7 +119,7 @@ export function StrategiesPage() {
     { id: "wr", label: "Win rate", sortValue: (r) => r.pf?.win_rate ?? r.edge?.win_rate ?? null, render: (r) => <span className="num">{typeof (r.pf?.win_rate ?? r.edge?.win_rate) === "number" ? formatPct((r.pf?.win_rate ?? r.edge?.win_rate) as number, 0) : "---"}</span> },
     { id: "sharpe", label: "Sharpe", sortValue: (r) => r.pf?.sharpe ?? null, render: (r) => <span className="num">{typeof r.pf?.sharpe === "number" ? r.pf.sharpe.toFixed(2) : "n/a"}</span> },
     { id: "dd", label: "Max DD", sortValue: (r) => r.pf?.max_drawdown ?? null, render: (r) => <span className={cn("num", r.pf && r.pf.max_drawdown > 0 && "text-rose")}>{r.pf ? formatPct(r.pf.max_drawdown) : "---"}</span> },
-    { id: "t", label: "t-stat", sortValue: (r) => r.pf?.t_stat ?? r.edge?.t_stat ?? null, render: (r) => { const t = r.pf?.t_stat ?? r.edge?.t_stat; return <span className={cn("num", typeof t === "number" && t <= -2 && "text-rose", typeof t === "number" && t >= 2 && "text-mint")}>{typeof t === "number" ? t.toFixed(2) : "---"}</span>; } },
+    { id: "t", label: "t-stat", sortValue: (r) => r.pf?.t_stat ?? (r.edge?.verdict === "insufficient" ? null : r.edge?.t_stat) ?? null, render: (r) => { const t = r.pf?.t_stat ?? (r.edge?.verdict === "insufficient" ? null : r.edge?.t_stat); return <span className={cn("num", typeof t === "number" && t <= -2 && "text-rose", typeof t === "number" && t >= 2 && "text-mint")}>{typeof t === "number" ? t.toFixed(2) : "---"}</span>; } },
   ];
 
   const active = strategies.filter((s) => s.active).length;

@@ -29,6 +29,12 @@ def compute_alltime_performance(trade_repo, initial_capital: float,
         from trade_database.models import cash_effect, fee_paid
         trades = trade_repo.get_trades(source=source)
         closes = [t for t in trades if t.trade_type and t.trade_type not in ("ENTRY", "FUNDING")]
+        # A rebalance trim realises money (it is in the balance below) but it is not a trade for
+        # the statistics: with two trims among five rows the page read 60 % win rate and PF 7.97
+        # while the edge monitor, on the three real exits, read 33 % and 3.04 (2026-09-06).
+        from analytics.edge import is_rebalance_row
+        trims = [t for t in closes if is_rebalance_row(t)]
+        closes = [t for t in closes if not is_rebalance_row(t)]
         # Funding is a realized cash flow, not a trade: it moves equity but must not pollute
         # win rate / PF / Sharpe (roadmap P0.1).
         funding_total = sum(float(t.pnl or 0.0) for t in trades if t.trade_type == "FUNDING")
@@ -79,6 +85,7 @@ def compute_alltime_performance(trade_repo, initial_capital: float,
         return {
             "initial_capital": initial,
             "total_trades": rep.total_trades,
+            "rebalance_trims": len(trims),
             # Funding is a realized cash flow: it belongs in the all-time PnL and in the equity
             # curve, but never in the trade statistics. Reporting `pnl` without it made
             # /api/performance disagree with /api/portfolio and with the account (2026-09-03).

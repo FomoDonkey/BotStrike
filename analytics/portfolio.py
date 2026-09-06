@@ -65,7 +65,11 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
                       fees_taker: float = 0.0004, fees_maker: float = 0.0002) -> Dict[str, Any]:
     initial = _f(initial_capital)
     rows = sorted(trades, key=lambda t: _f(getattr(t, "timestamp", 0.0)))
-    closes = [t for t in rows if (getattr(t, "trade_type", "") or "ENTRY") not in ("ENTRY", "FUNDING")]
+    from analytics.edge import is_rebalance_row
+    # statistics (trades, win rate, holds, Sharpe) count round trips; a rebalance trim is money
+    # (in the balance, the days and the volume) but not a trade
+    closes = [t for t in rows if (getattr(t, "trade_type", "") or "ENTRY") not in ("ENTRY", "FUNDING")
+              and not is_rebalance_row(t)]
     funding_rows = [t for t in rows if (getattr(t, "trade_type", "") or "") == "FUNDING"]
     funding_paid = sum(_f(t.pnl) for t in funding_rows)
     fills_notional = [(_f(getattr(t, "price", 0.0)) * _f(getattr(t, "quantity", 0.0))
@@ -90,7 +94,7 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
         r["fees"] += _fee_paid(t)
         ttype = getattr(t, "trade_type", "") or "ENTRY"
         r["pnl"] += cash_effect(t)         # the day's move of the balance: fees, exits, funding
-        if ttype not in ("ENTRY", "FUNDING"):
+        if ttype not in ("ENTRY", "FUNDING") and not is_rebalance_row(t):
             r["trades"] += 1
 
     start = datetime.fromtimestamp(since_ts, tz=timezone.utc).date()
@@ -169,23 +173,24 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
     by_strategy = []
     for s in strategies:
         srows = [t for t in rows if str(getattr(t, "strategy", "") or "") == s]
-        sc = [t for t in srows if (getattr(t, "trade_type", "") or "ENTRY") not in ("ENTRY", "FUNDING")]
+        sc_all = [t for t in srows if (getattr(t, "trade_type", "") or "ENTRY") not in ("ENTRY", "FUNDING")]
+        # A rebalance trim is not a trade for the statistics (analytics/edge.py): the card read
+        # 60 % / PF 7.97 on five rows while the edge monitor read 33 % / 3.04 on the three real
+        # exits. Trims stay in the money (realised, curve) and are counted apart.
+        sc = [t for t in sc_all if not is_rebalance_row(t)]
         pnls = [_f(t.pnl) for t in sc]
         # Funding is paid by THIS strategy's positions: without it the card read +9.99 while the
         # account read +10.09 at the same instant (2026-09-05).
         s_funding = sum(_f(t.pnl) for t in srows if (getattr(t, "trade_type", "") or "") == "FUNDING")
-        # A rebalance trim is not a trade for the statistics (analytics/edge.py), and a t-stat
-        # needs a sample: 15.88 off three rows was noise dressed as evidence.
-        from analytics.edge import is_rebalance_row
-        stat_rows = [t for t in sc if not is_rebalance_row(t)]
-        stat_pnls = [_f(t.pnl) for t in stat_rows]
+        stat_rows = sc
+        stat_pnls = pnls
         gp = sum(p for p in pnls if p > 0)
         gl = -sum(p for p in pnls if p < 0)
         spos = [p for p in positions if str(p.get("strategy") or "") == s]
         s_unreal = sum(_f(p.get("unrealized_pnl")) for p in spos)
         curve = []
         acc = 0.0
-        for t in sc:
+        for t in sc_all:                      # the curve is money: trims included
             acc += _f(t.pnl)
             curve.append([round(_f(t.timestamp), 3), round(acc, 4)])
         if len(curve) > 200:
@@ -206,7 +211,7 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
             # the entry share, funding settles): 8.28 vs the account's 8.16 was the ADA/ZEC entry fees
             "realized": round(sum(cash_effect(t) for t in srows), 4), "unrealized": round(s_unreal, 4),
             "pnl": round(sum(cash_effect(t) for t in srows) + s_unreal, 4), "funding": round(s_funding, 6),
-            "trims": len(sc) - len(stat_rows),
+            "trims": len(sc_all) - len(sc),
             "volume": round(sum(_f(t.price) * _f(t.quantity) for t in srows), 2),
             "fees": round(sum(_f(getattr(t, "fee", 0.0)) for t in srows), 4),
             "win_rate": round(sum(1 for p in pnls if p > 0) / len(pnls), 4) if pnls else 0.0,
