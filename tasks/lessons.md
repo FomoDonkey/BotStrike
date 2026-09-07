@@ -1613,3 +1613,10 @@ qué controles la usaban como único punto de paso.
 - Cuando dos superficies dan cifras distintas para "lo mismo" (60 % vs 33 % de win rate), la causa
   casi nunca es un cálculo: es que cuentan cosas distintas (filas vs ciclos). Se elige UNA definición
   y se aplica en todos los productores, no se retoca la que molesta.
+
+## 2026-09-07 — "el stop no se mueve" y "asegurar beneficios"
+- Antes de responder "es por diseño", reproducir el nivel desde los datos: la escalera coincidió con
+  el modelo y con la API, y los niveles habían subido esa misma noche. La percepción venía de mirar
+  entre dos ejecuciones diarias.
+- Medir la intuición en vez de discutirla: asegurar el 25-50 % del máximo cuesta 4 puntos de CAGR;
+  ahora está en la tabla y no hay que volver a debatirlo.

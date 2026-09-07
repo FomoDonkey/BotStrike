@@ -2234,3 +2234,4 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
 - [ ] Desplegar c36d33c + 8bcdfc4 en el CT (pendiente de la aprobación Tailscale) y verificar Journal / Portfolio / Strategies en Chrome
 - [x] 2026-09-06 desplegado y verificado: estadísticas por ciclo completo en todas las superficies, Journal = cuenta al céntimo, margen cross 3× (4e7a04d)
 - [x] 2026-09-06 ejecución 04:05 UTC: S&P y plata fuera (suelo de liquidez), ADA y ZEC dentro
+- [x] 2026-09-07 conciliación completa tras la ejecución del 6 sep (11 identidades OK); stops verificados; profit-lock medido y descartado (scripts/profit_lock_study.py)

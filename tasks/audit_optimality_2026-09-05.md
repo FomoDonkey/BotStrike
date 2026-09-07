@@ -112,3 +112,28 @@ El diseño está en una meseta medida: ninguna variante probada (frecuencia de u
 correlación, lookbacks, ventana de vol, umbral de rebalanceo, cadencia intradía) se distingue de la
 base más allá del ruido, y las que se distinguen son peores. Lo que sí estaba mal era de ejecución
 (el suelo de liquidez sin aplicar, el régimen tras reinicio, los baselines) y se ha corregido hoy.
+
+
+## 8. Asegurar beneficios moviendo el stop — medido el 2026-09-07 (pregunta de Edgar tras ZEC +10 %)
+
+Los stops SÍ se mueven: una vez al día, tras el cierre, y siguen el punto medio del canal Donchian de
+cada plazo (ZEC 920,74 → 1.021,57; SOL 92,58 → 103,49; WTI 88,62 → 90,85 en la noche del 6 al 7).
+Reproducidos de forma independiente desde los datos diarios: idénticos al modelo y a la API. Lo que
+no hacen es "asegurar" la ganancia tras una subida fuerte. Medido con las mismas entradas y solo
+cambiando el stop (`scripts/profit_lock_study.py`, panel de 14 mercados, 3.654 días):
+
+| Regla de stop | Sharpe | CAGR | maxDD | rotación/año | ciclos | mitades |
+|---|---|---|---|---|---|---|
+| **punto medio del canal (el bot)** | **1,92** | **12,5 %** | **8,2 %** | 15,9 | 878 | 2,00 / 1,85 |
+| + breakeven tras +5 % | 1,91 | 12,4 % | 8,2 % | 16,0 | 896 | 2,00 / 1,82 |
+| + asegurar el 25 % del máximo | 1,65 | 8,7 % | 9,0 % | 28,2 | 1.698 | 1,74 / 1,56 |
+| + asegurar el 50 % del máximo | 1,66 | 8,2 % | 7,7 % | 30,9 | 1.961 | 1,72 / 1,61 |
+| + chandelier 3 × ATR | 1,97 | 12,4 % | 8,0 % | 16,5 | 1.064 | 2,14 / 1,82 |
+| + chandelier 2 × ATR | 1,89 | 11,3 % | 8,0 % | 17,7 | 1.235 | 1,95 / 1,85 |
+| mínimo del canal (más holgado) | 1,59 | 12,5 % | 11,6 % | 11,9 | 368 | 1,66 / 1,52 |
+
+Lectura: asegurar beneficios cuesta 4 puntos de CAGR al año y dobla la rotación — es exactamente lo
+que una estrategia de tendencia no debe hacer, porque su rendimiento viene de las pocas tendencias
+grandes y el stop de "seguridad" las corta a la mitad. Breakeven no cambia nada. El chandelier 3×ATR
+suma 0,05 de Sharpe (ruido, y la ganancia está solo en la primera mitad). El stop más holgado (mínimo
+del canal) mantiene el CAGR con un 40 % más de caída. Veredicto: **el stop se queda como está**.
