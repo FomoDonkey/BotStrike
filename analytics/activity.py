@@ -106,7 +106,12 @@ class ActivityLog:
             pnl = float(t.get("pnl") or 0.0)
             roe = t.get("roe_pct")
             reason = str(t.get("exit_reason") or ttype.lower()).replace("_", " ")
-            return self.add("fill", f"Closed {pos} {symbol}",
+            # ONE trade definition (2026-09-06): a rebalance trim realises money but does not close
+            # the position — the feed said "Closed LONG BTC-USD" for a 30 % trim while the row
+            # beside it still showed the position open (2026-09-08).
+            trimmed = reason == "rebalance" or str(t.get("order_id") or "").startswith("trend_rebalance_")
+            verb = "Trimmed" if trimmed else "Closed"
+            return self.add("fill", f"{verb} {pos} {symbol}",
                             f"{qty:.6g} {base} (${notional:,.2f}) · {reason}" + (f" · {nice}" if nice else ""),
                             symbol=symbol, side=side, strategy=strategy, pnl=pnl,
                             roe_pct=(float(roe) if roe is not None else None), ts=t.get("timestamp"),

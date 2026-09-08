@@ -82,6 +82,11 @@ def test_activity_log_persists_and_maps_events(tmp_path):
     rows = log.list()
     assert rows[0]["title"] == "Closed LONG BTC-USD" and rows[0]["pnl"] == 1.5 and "take profit" in rows[0]["detail"]
     assert rows[1]["title"] == "Opened LONG BTC-USD" and "$105.00" in rows[1]["detail"] and "Trend Daily" in rows[1]["detail"]
+    # a rebalance trim realises money but does not close the position: it is not "Closed" (2026-09-08)
+    # (the fill hook passes the POSITION side on exits, like the EXIT row above)
+    log.record_fill({"symbol": "BTC-USD", "side": "BUY", "trade_type": "EXIT", "quantity": 0.0005, "price": 71000.0,
+                     "pnl": -0.7, "exit_reason": "rebalance", "order_id": "trend_rebalance_ab12", "strategy": "TREND_DAILY"})
+    assert log.list()[0]["title"] == "Trimmed LONG BTC-USD" and "rebalance" in log.list()[0]["detail"]
     # ring buffer + persistence
     for i in range(6):
         log.add("system", f"e{i}", ts=T0 + 100 + i)

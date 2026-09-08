@@ -216,7 +216,7 @@ export function JournalPage() {
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-3 min-w-0">
         <Panel className="relative min-w-0 overflow-hidden">
           <PanelHeader dense title={<span className="flex items-center gap-2">{symbol || "—"} <span className="text-text-2 font-medium">· {servedInterval ?? timeframe}{servedInterval ? <span className="text-amber"> (the venue served {servedInterval} bars)</span> : null}</span></span>}
-            right={<span className="flex items-center gap-2 text-[11px] text-text-2">
+            right={<span className="hidden sm:flex items-center gap-2 text-[11px] text-text-2">
               <span className="inline-flex items-center gap-1"><span className="text-mint">▲</span> long entry</span>
               <span className="inline-flex items-center gap-1"><span className="text-rose">▼</span> short entry</span>
               <span className="inline-flex items-center gap-1"><span className="text-mint">●</span> exit +</span>

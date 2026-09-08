@@ -73,8 +73,13 @@ endpoints del CT a JSON y perseguir cada texto/número que no coincidiera con la
   arrancó sobre el árbol ya actualizado (git reset del gate fallido) y el libro persistió intacto. No fue el deploy.
 - [x] Las filas "Bridge started" del feed son reales (cada restart); el gate de tests NO escribe en `data/activity.json`
   (`BOTSTRIKE_ACTIVITY_PATH` → tmp en conftest).
+- [x] Despliegue 3 (abe0f72) PASS 502/502; verificado en Chrome sobre http://192.168.1.204:9420 (bundle `index-DclpOZxc.js`
+  servido por el bridge): Trade, Journal, Portfolio, Strategies, Risk, System, Settings a 1536 px y Trade/Portfolio/Risk/
+  Journal a 390 px (iframe de 390 px: sin desbordes, `scrollWidth == clientWidth` en todas). 0 errores de consola.
+- [x] Tercera pasada: Activity dice "Trimmed LONG X · rebalance" para un trim (decía "Closed LONG" con la posición aún
+  abierta al lado); leyenda del Journal oculta bajo 640 px (se cortaba a 390).
 ### Pendiente
-- [ ] Despliegue 3 con la segunda tanda + verificación final en Chrome sobre http://192.168.1.204:9420 a 1440 y 390.
+- [ ] Nada de UI. Observación de quant (no UI): tracking modelo vs papel (7 días: modelo +1,1 %, papel −0,2 %, TE 26 %).
 - [ ] Observación de quant, no de UI: tracking modelo +3,1 % vs papel +0,9 % en 6 días (TE 27 %); el 7 sep modelo +3,64 %
   vs papel +0,71 %. Revisar la definición de `paper_ret` (¿ventana 04:05→04:05 con marcas del venue?) antes de leerlo como
   coste de ejecución.
