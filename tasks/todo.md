@@ -37,6 +37,21 @@ endpoints del CT a JSON y perseguir cada texto/número que no coincidiera con la
 - [x] Tooltips: liquidación explica cross margin; realised PnL = cadena de caja (salidas+trims−fees de entrada+funding);
   régimen "informativo, el libro diario no lo lee"; chip de régimen de la barra superior dice que es BTC intradía; Signals
   vacío dice que las intradía están retiradas; "30D return" → "30D realised".
+### Encontrado en la verificación en Chrome (segunda pasada) y corregido
+- [x] Journal: el gráfico se quedaba en blanco/aparcado tras cargar el histórico REST (el zoom de 30 d se aplicaba sobre las
+  3 velas del socket y no se reaplicaba) → `historyStart` en las deps del efecto de foco.
+- [x] Activity: las filas de régimen no decían de qué mercado eran ("Regime BREAKOUT · was RANGING") → símbolo en la fila.
+- [x] Market Details: "Leverage 2x max · Max position $150" eran los topes del camino INTRADÍA (`validate_signal`), que el
+  libro diario no atraviesa; junto a una posición 3x cross del mismo mercado era una contradicción → "Leverage ceiling 3x ·
+  cross" y "Sizing: target weight × equity" cuando solo opera el trend.
+- [x] Una definición de trade también en las pestañas: "Trade History N" contaba trims; ahora N = ciclos y la tabla dice
+  "3 round trips · 3 rebalance trims (REBAL)". Regime "daily · n/a" también en Trade/Order History para TREND_DAILY.
+- [x] System "Client" distingue bundle servido por el bridge / dev-preview / Tauri.
+- [x] `scripts/ops_monitor.py`: el plazo del run diario seguía en 00:20Z (`TREND_DEADLINE_MIN = 20`) desde que el run pasó
+  a 04:05Z → alerta falsa "no se ha ejecutado" cada noche entre 00:20 y 04:05 (visible en System → Ops monitor y Telegram).
+  Ahora sale de `/api/trend.params` (hora + delay + 15 min de gracia) y el resumen diario va después del run. Tests.
+- [x] Ayudas del esquema (`config/overrides.py`): funding con cifras escritas (WTI −15,7 % ya era −16,1 %) → sin cifras
+  fijas; "funding warn/block" en "/8h" → por settlement e inertes; "Eligible strategies" cita retiradas como opciones → inerte.
 ### Corregido en el servidor
 - [x] `analytics/activity.py`: un cambio de régimen HACIA UNKNOWN ya no se publica (Activity mostraba "Regime UNKNOWN · was
   TRENDING_DOWN" en BTC a las 00:08Z mientras `/api/regime` decía TRENDING_DOWN; la vuelta se filtraba como arranque).
@@ -50,8 +65,16 @@ endpoints del CT a JSON y perseguir cada texto/número que no coincidiera con la
   funding +0,0664 (340 filas); ventana 24 h del venue; hourly funding; chart 20/21 indicadores.
 - [x] Falsa alarma descartada: "Â·" en la descripción de la estrategia era mi `open()` en cp1252 al leer el JSON; los bytes
   del servidor son `c2 b7` (UTF-8 correcto). Verificado con xxd antes de tocar nada.
+### Despliegue y hechos de operación
+- [x] Despliegue 1 (7c3eb63): gate del CT 500/501 por `test_weekly_pnl_resets_on_a_new_iso_week` (test del 2 sep que asumía
+  que "el próximo lunes" 7 sep no había llegado) → determinista (374b54d) → despliegue 2 PASS a las 00:52Z.
+- [x] El host Proxmox se REINICIÓ a las 00:35:22Z (kernel 7.0.14-14 → -15 instalado a la 01:59 local; timer
+  `mizu-reboot-2026-09-08` → `systemctl reboot`; la VM 950 no apagó a tiempo). CT 104 abajo 00:35:02–00:35:52Z; el bridge
+  arrancó sobre el árbol ya actualizado (git reset del gate fallido) y el libro persistió intacto. No fue el deploy.
+- [x] Las filas "Bridge started" del feed son reales (cada restart); el gate de tests NO escribe en `data/activity.json`
+  (`BOTSTRIKE_ACTIVITY_PATH` → tmp en conftest).
 ### Pendiente
-- [ ] Desplegar (commit + push + `host_deploy.sh`, aprobación Tailscale) y verificar en Chrome real cada página a 1440 y 390.
+- [ ] Despliegue 3 con la segunda tanda + verificación final en Chrome sobre http://192.168.1.204:9420 a 1440 y 390.
 - [ ] Observación de quant, no de UI: tracking modelo +3,1 % vs papel +0,9 % en 6 días (TE 27 %); el 7 sep modelo +3,64 %
   vs papel +0,71 %. Revisar la definición de `paper_ret` (¿ventana 04:05→04:05 con marcas del venue?) antes de leerlo como
   coste de ejecución.

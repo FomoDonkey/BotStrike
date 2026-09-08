@@ -29,6 +29,7 @@ import { OrdersTable } from "@/pages/trading/OrdersTable";
 import { OrderHistoryTable } from "@/pages/trading/OrderHistoryTable";
 import { TradeHistoryTable } from "@/pages/trading/TradeHistoryTable";
 import { useTradeHistory } from "@/pages/trading/useTradeHistory";
+import { isTrim } from "@/lib/tradeEpisodes";
 import { PortfolioChart } from "./PortfolioChart";
 import type { TrendPosition } from "@/lib/api";
 
@@ -175,7 +176,8 @@ export function PortfolioPage() {
 
   const tables = (
     <Panel className="flex flex-col overflow-hidden min-h-[280px] max-h-[520px]">
-      <TabBar size="sm" tabs={TABLE_TABS.map((t) => ({ ...t, count: t.id === "positions" ? positions.length : t.id === "trend" ? trend.data?.positions?.length : t.id === "history" ? history.closed.length : undefined }))} value={tab} onChange={setTab} />
+      {/* Trade History counts ROUND TRIPS (one trade definition, 2026-09-06); the trims are listed inside */}
+      <TabBar size="sm" tabs={TABLE_TABS.map((t) => ({ ...t, count: t.id === "positions" ? positions.length : t.id === "trend" ? trend.data?.positions?.length : t.id === "history" ? history.closed.filter((x) => !isTrim(x)).length : undefined }))} value={tab} onChange={setTab} />
       {tab === "positions" && <PositionsTable positions={positions} />}
       {tab === "trend" && <TrendBookTable rows={trend.data?.positions ?? []} loaded={trend.loaded} />}
       {tab === "orders" && <OrdersTable positions={positions} />}

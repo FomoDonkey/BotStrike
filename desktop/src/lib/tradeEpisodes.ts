@@ -51,7 +51,8 @@ export interface Episode {
 
 const EPS = 1e-9;
 
-export function isTrim(t: TradeData): boolean {
+/** A rebalance trim, on a store fill (TradeData) or an API row (TradeRecord): both carry the fields. */
+export function isTrim(t: { exit_reason?: string | null; order_id?: string | null }): boolean {
   const reason = String(t.exit_reason ?? "").toUpperCase();
   return reason === "REBALANCE" || String(t.order_id ?? "").startsWith("trend_rebalance_");
 }

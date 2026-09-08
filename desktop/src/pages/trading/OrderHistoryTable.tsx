@@ -113,7 +113,8 @@ export function OrderHistoryTable({ trades, symbol, loading, filter }: OrderHist
           : <PnlCell pnl={r.pnl} inline /> },
     { id: "reason", label: "Trigger / exit", align: "l", render: (r) => <span className="font-medium">{r.kind === "EXIT" ? (r.exitReason ?? "---") : (r.trigger ?? "---")}</span> },
     { id: "strategy", label: "Strategy", align: "l", render: (r) => <StrategyTag strategy={r.strategy} /> },
-    { id: "regime", label: "Regime", align: "l", render: (r) => r.regime ? r.regime.replace(/_/g, " ") : "---" },
+    // the daily book decides on daily bars: same convention as the Positions table
+    { id: "regime", label: "Regime", align: "l", render: (r) => r.strategy === "TREND_DAILY" ? <span className="text-text-2 font-medium" title="Decided on daily bars — the 15 m regime is not an input of this strategy">daily · n/a</span> : r.regime ? r.regime.replace(/_/g, " ") : "---" },
   ];
 
   return (

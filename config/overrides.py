@@ -74,8 +74,9 @@ GROUPS: List[Dict[str, Any]] = [
                 "Off = always size on the fixed initial capital."),
         _t("funding_enabled", "Charge perpetual funding", "bool",
            help="At every settlement, open positions pay (or receive) the venue funding rate on their notional. "
-                "Measured on Strike over 90 days: longs paid a median 8.1 %/yr of notional, from XAG +15.1 % to "
-                "WTI -15.7 %, where the longs are paid. Off = paper ignores funding."),
+                "Measured on Strike over 90 days the pool's longs paid a median of about 8 %/yr of notional; the "
+                "live per-market medians are on Trade → Account and Portfolio → Funding cost (a figure typed "
+                "in here went stale within days). Off = paper ignores funding."),
         _t("funding_interval_hours", "Funding interval (hours)", "int", min=1, max=24, step=1, unit="h",
            help="Settlement period of the venue. STRIKE SETTLES EVERY HOUR (verified 2026-09-03: its funding "
                 "history returns 167 rows for 7 days and the next settlement is always the top of the hour). "
@@ -212,11 +213,13 @@ GROUPS: List[Dict[str, Any]] = [
         _t("slippage_bps", "Slippage model", "number", min=0, max=50, step=0.5, unit="bps"),
         # Compared against the SIGNAL's market snapshot, which quotes an 8 h rate, so the unit stays
         # 8-hourly even though the accrual clock follows the venue (1 h on Strike).
-        _t("funding_rate_warn", "Funding warn", "number", min=0, max=0.01, step=0.00005, unit="/8h",
-           help="Reduce size when a new intraday entry would pay at least this 8 h funding rate. "
-                "Does not apply to the daily trend book, which executes directly."),
-        _t("funding_rate_block", "Funding block", "number", min=0, max=0.01, step=0.00005, unit="/8h",
-           help="Refuse a new intraday entry that would pay at least this 8 h funding rate."),
+        _t("funding_rate_warn", "Funding warn", "number", min=0, max=0.01, step=0.00005, unit="/settlement",
+           help="Reduce size when a new INTRADAY entry would pay at least this funding rate per settlement "
+                "(hourly on Strike, 8 h on Binance-style venues). Inert today: every intraday strategy is "
+                "retired, and the daily trend book executes regardless of funding."),
+        _t("funding_rate_block", "Funding block", "number", min=0, max=0.01, step=0.00005, unit="/settlement",
+           help="Refuse a new INTRADAY entry that would pay at least this funding rate per settlement. Inert "
+                "today for the same reason."),
         _t("microstructure_enabled", "Microstructure analytics", "bool",
            help="VPIN / Hawkes / Kyle λ / order-book imbalance. Zero measured predictive power (audit R2); "
                 "costs ~16% CPU. Off unless a strategy needs it."),
@@ -238,7 +241,9 @@ GROUPS: List[Dict[str, Any]] = [
         _s("leverage", "Leverage", "int", min=1, max=20, step=1, unit="x"),
         _s("max_position_usd", "Max position", "number", min=5, max=1_000_000, step=5, unit="$"),
         _s("strategies", "Eligible strategies", "list",
-           help="Comma-separated: MEAN_REVERSION, FIBONACCI_RETRACEMENT. Empty = none."),
+           help="Intraday strategies allowed on this symbol, comma-separated (MEAN_REVERSION, "
+                "FIBONACCI_RETRACEMENT, DIVERGENCE). All three are retired by the research with allocation 0, "
+                "so this list is inert; the daily trend book picks its own universe and ignores it."),
         _s("mr_zscore_entry", "MR z-score entry", "number", min=0.5, max=5, step=0.1),
         _s("mr_zscore_exit", "MR z-score exit", "number", min=0, max=3, step=0.1),
         _s("mr_lookback", "MR lookback", "int", min=20, max=500, step=5, unit="bars"),

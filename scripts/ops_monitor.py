@@ -33,7 +33,13 @@ STATE_PATH = os.path.join(APP_DIR, "data", "ops_monitor_state.json")
 LAST_PATH = os.path.join(APP_DIR, "data", "ops_monitor_last.json")
 WINDOW_MIN = int(os.getenv("BOTSTRIKE_MONITOR_WINDOW_MIN", "15"))
 ALERT_REPEAT_SEC = 6 * 3600
-TREND_DEADLINE_MIN = 20          # the run is scheduled 00:05 UTC; alert if not OK by 00:20
+# The run is scheduled at trend_execution_hour_utc:execution_delay_min (04:05 UTC since 2026-09-05,
+# after the TradFi daily bars settle); alert if it is not OK GRACE minutes later. Read from the
+# bridge's /api/trend params so a moved schedule cannot leave a stale deadline here: this constant
+# sat at 00:20 for three days after the move and raised "run not executed" every night between
+# 00:20 and 04:05 (2026-09-08).
+TREND_DEADLINE_GRACE_MIN = 15
+TREND_DEADLINE_MIN = 4 * 60 + 5 + TREND_DEADLINE_GRACE_MIN   # fallback when the bridge sends no params
 MAX_TICK_AGE_SEC = 120.0
 MAX_REGIME_FLIPS_PER_HOUR = 8    # after the 15-min/30-min fix we measure 1-2/h in total
 # Transient conditions need to persist for more than one check before waking anyone: a deploy
@@ -126,6 +132,21 @@ def maintenance_age_min(maint: Optional[Dict], now: datetime) -> Optional[float]
         return None
 
 
+def trend_deadline_min(trend: Optional[dict]) -> int:
+    """Minute of the UTC day by which today's trend run must be OK: schedule + grace."""
+    params = (trend or {}).get("params") if isinstance(trend, dict) else None
+    if not isinstance(params, dict):
+        return TREND_DEADLINE_MIN
+    try:
+        hour = int(params.get("execution_hour_utc"))
+        delay = int(params.get("execution_delay_min", 5))
+    except (TypeError, ValueError):
+        return TREND_DEADLINE_MIN
+    if not 0 <= hour <= 23:
+        return TREND_DEADLINE_MIN
+    return min(24 * 60 - 1, hour * 60 + delay + TREND_DEADLINE_GRACE_MIN)
+
+
 def evaluate(now: datetime, health: Optional[dict], trend: Optional[dict], risk: Optional[dict],
              account: Optional[dict], journal_15: Dict, journal_60: Dict, journal_24h: Dict,
              state: Dict, maintenance: Optional[Dict] = None) -> Report:
@@ -134,6 +155,7 @@ def evaluate(now: datetime, health: Optional[dict], trend: Optional[dict], risk:
     age = maintenance_age_min(maintenance, now)
     in_maint = age is not None and 0 <= age <= MAINT_GRACE_MIN
     minutes = now.hour * 60 + now.minute
+    deadline = trend_deadline_min(trend)
     prev_counts: Dict[str, int] = dict(state.get("consecutive") or {})
     counts: Dict[str, int] = {}
 
@@ -174,7 +196,7 @@ def evaluate(now: datetime, health: Optional[dict], trend: Optional[dict], risk:
         rep.facts["trend_status"] = status
         if status == "error":
             alert("trend_error", f"Run diario del trend con ERROR: {trend.get('last_error', '')[:200]}")
-        elif minutes >= TREND_DEADLINE_MIN and last != today:
+        elif minutes >= deadline and last != today:
             alert("trend_missing", f"El run diario del trend de hoy ({today}) no se ha ejecutado "
                                    f"(último: {trend.get('last_run_utc') or 'nunca'})")
         if trend.get("killed"):
@@ -210,8 +232,9 @@ def evaluate(now: datetime, health: Optional[dict], trend: Optional[dict], risk:
         alert("regime_flood", f"{journal_60['regime_changed']} cambios de régimen en la última hora "
                               f"(umbral {MAX_REGIME_FLIPS_PER_HOUR})")
 
-    # daily summary: first evaluation after 00:20 UTC, once per day
-    if minutes >= TREND_DEADLINE_MIN and state.get("last_summary_date") != today:
+    # daily summary: first evaluation after the run's deadline, once per day — so it reports
+    # today's run, not yesterday's
+    if minutes >= deadline and state.get("last_summary_date") != today:
         rep.summary = _summary(today, trend, risk, account, journal_24h)
     rep.consecutive = counts                    # anything not seen this run resets to zero
     return rep                                  # `pending` travels as its own field, not inside facts

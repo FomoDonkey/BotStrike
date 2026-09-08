@@ -10,6 +10,7 @@ import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { ActivityFeed } from "@/components/ui/ActivityFeed";
 import { STRATEGY_LABELS, SYMBOLS } from "@/lib/constants";
 import { isLong, tradePositionSide } from "@/lib/market";
+import { isTrim } from "@/lib/tradeEpisodes";
 import { PositionsTable } from "./PositionsTable";
 import { useOrders } from "@/hooks/useOrders";
 import { OrdersTable } from "./OrdersTable";
@@ -78,7 +79,8 @@ export function BottomPanel({ symbol, positions, trades, closed, signals, loadin
     { id: "positions" as const, label: "Positions", count: fPositions.length },
     { id: "orders" as const, label: "Orders", count: fOrders },
     { id: "order_history" as const, label: "Order History" },
-    { id: "history" as const, label: "Trade History", count: fClosed.length },
+    // the count is ROUND TRIPS (one trade definition, 2026-09-06); the trims are listed inside
+    { id: "history" as const, label: "Trade History", count: fClosed.filter((t) => !isTrim(t)).length },
     { id: "signals" as const, label: "Signals", count: fSignals.length },
     ...(activityEnabled ? [{ id: "activity" as const, label: "Activity", count: activity.events.length || undefined }] : []),
   ];

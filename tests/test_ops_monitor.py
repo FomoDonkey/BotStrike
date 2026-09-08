@@ -10,9 +10,9 @@ def _now(h, m):
 
 HEALTH = {"status": "ok", "degraded": False, "reasons": [], "engine_running": True, "engine_expected": True,
           "ws_connected": True, "last_tick_age_sec": 0.5, "telegram_failures": 0}
-TREND = {"enabled": True, "killed": False, "last_run_utc": "2026-09-03T00:05:41Z", "last_run_status": "ok",
+TREND = {"enabled": True, "killed": False, "last_run_utc": "2026-09-03T04:05:41Z", "last_run_status": "ok",
          "last_error": "", "last_run_late": False, "universe": ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
-         "positions": [{}, {}, {}]}
+         "positions": [{}, {}, {}], "params": {"execution_hour_utc": 4, "execution_delay_min": 5}}
 RISK = {"circuit_breaker": False, "drawdown_halted": False, "killed_strategies": {}}
 ACCOUNT = {"equity": 1003.4, "realized_pnl": 0.0, "unrealized_pnl": 3.4, "open_positions": 3, "daily_pnl": 0.0,
            "weekly_pnl": 0.0, "drawdown_pct": 0.0, "exposure_pct": 0.27}
@@ -21,20 +21,29 @@ J_OK = {"available": True, "errors": 0, "first_error": "", "regime_changed": 1, 
 
 
 def test_healthy_before_deadline_is_silent():
-    rep = om.evaluate(_now(0, 10), HEALTH, {**TREND, "last_run_utc": "2026-09-02T00:05:41Z"}, RISK, ACCOUNT,
-                      J_OK, J_OK, J_OK, {})
-    assert rep.alerts == [] and rep.summary is None
+    stale = {**TREND, "last_run_utc": "2026-09-02T04:05:41Z"}
+    # the run is scheduled 04:05 UTC: neither 00:10 nor 04:10 (inside the grace) may alert
+    for h, m in ((0, 10), (0, 33), (4, 10)):
+        rep = om.evaluate(_now(h, m), HEALTH, stale, RISK, ACCOUNT, J_OK, J_OK, J_OK, {})
+        assert rep.alerts == [] and rep.summary is None, (h, m)
+
+
+def test_deadline_follows_the_schedule_the_bridge_reports():
+    assert om.trend_deadline_min(TREND) == 4 * 60 + 5 + om.TREND_DEADLINE_GRACE_MIN
+    assert om.trend_deadline_min({**TREND, "params": {"execution_hour_utc": 0, "execution_delay_min": 5}}) == 20
+    assert om.trend_deadline_min({**TREND, "params": {}}) == om.TREND_DEADLINE_MIN     # no schedule on the wire
+    assert om.trend_deadline_min(None) == om.TREND_DEADLINE_MIN
 
 
 def test_missing_trend_run_after_deadline_and_daily_summary_once():
-    stale = {**TREND, "last_run_utc": "2026-09-02T00:05:41Z"}
-    rep = om.evaluate(_now(0, 33), HEALTH, stale, RISK, ACCOUNT, J_OK, J_OK, J_OK, {})
+    stale = {**TREND, "last_run_utc": "2026-09-02T04:05:41Z"}
+    rep = om.evaluate(_now(4, 33), HEALTH, stale, RISK, ACCOUNT, J_OK, J_OK, J_OK, {})
     assert [a["key"] for a in rep.alerts] == ["trend_missing"]
     assert rep.summary and "resumen diario 2026-09-03" in rep.summary and "1003.40" in rep.summary
-    again = om.evaluate(_now(0, 48), HEALTH, stale, RISK, ACCOUNT, J_OK, J_OK, J_OK,
+    again = om.evaluate(_now(4, 48), HEALTH, stale, RISK, ACCOUNT, J_OK, J_OK, J_OK,
                         {"last_summary_date": "2026-09-03"})
     assert again.summary is None                                   # only once per day
-    ok = om.evaluate(_now(0, 33), HEALTH, TREND, RISK, ACCOUNT, J_OK, J_OK, J_OK, {"last_summary_date": "2026-09-03"})
+    ok = om.evaluate(_now(4, 33), HEALTH, TREND, RISK, ACCOUNT, J_OK, J_OK, J_OK, {"last_summary_date": "2026-09-03"})
     assert ok.alerts == []
 
 
@@ -128,8 +137,8 @@ def test_transient_faults_need_two_consecutive_checks_before_alerting():
 
 def test_non_transient_faults_still_alert_on_the_first_check():
     """A missed daily run or a risk halt is not a blip: those must fire immediately."""
-    stale = {**TREND, "last_run_utc": "2026-09-02T00:05:41Z"}
-    rep = om.evaluate(_now(0, 33), HEALTH, stale, {**RISK, "circuit_breaker": True}, ACCOUNT,
+    stale = {**TREND, "last_run_utc": "2026-09-02T04:05:41Z"}
+    rep = om.evaluate(_now(4, 33), HEALTH, stale, {**RISK, "circuit_breaker": True}, ACCOUNT,
                       {**J_OK, "errors": 3, "first_error": "boom"}, J_OK, J_OK, {"last_summary_date": "2026-09-03"})
     keys = {a["key"] for a in rep.alerts}
     assert {"trend_missing", "circuit_breaker", "journal_errors"} <= keys and rep.pending == {}

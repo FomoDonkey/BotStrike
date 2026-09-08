@@ -592,14 +592,17 @@ export function CandlestickChart({ symbol, className, trades, paths, focus, time
     }
   }, [paths, chartReady, tfSeconds]);
 
-  // Step 3c: focus — zoom the time scale to one trade
+  // Step 3c: focus — zoom the time scale to one trade (or the journal's 30 d / 90 d window).
+  // `historyStart` is a dependency on purpose: the first render only has the socket's few bars,
+  // and a 30-day window applied to three bars left the chart parked on whitespace once the REST
+  // history arrived — the Journal opened on an almost empty 4 h chart of ADA (2026-09-08).
   useEffect(() => {
     const chart = chartRef.current;
     if (!chartReady || !chart || !focus || !(focus.to > focus.from)) return;
     try {
       chart.timeScale().setVisibleRange({ from: focus.from as UTCTimestamp, to: focus.to as UTCTimestamp });
     } catch { /* range outside the loaded history */ }
-  }, [focus, chartReady, symbol, timeframe]);
+  }, [focus, chartReady, symbol, timeframe, historyStart]);
 
   // Step 4: live price lines (entry / SL / TP / liq of open positions)
   useEffect(() => {

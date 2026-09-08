@@ -147,7 +147,7 @@ export function SystemPage() {
             <ListRow label="Last tick">{formatAge(feedAge)}{feedAge !== null ? " ago" : ""}</ListRow>
             <ListRow label="Endpoint">{exchange === "hyperliquid" ? "api.hyperliquid.xyz" : exchange === "strike" ? "api.strikefinance.org/ws/price" : "fstream.binance.com"}</ListRow>
             {/* the same bundle runs inside Tauri and served by the bridge; say which one this is */}
-            <ListRow label="Client">{inTauri ? "Tauri v2 · React 19" : `Web build served by ${SERVED_FROM_BRIDGE ? "the bridge" : "a dev server"} · React 19`}</ListRow>
+            <ListRow label="Client">{inTauri ? "Tauri v2 · React 19" : `Web build ${SERVED_FROM_BRIDGE && typeof window !== "undefined" && window.location.origin === bridgeUrl ? "served by the bridge" : "on a dev / preview server"} · React 19`}</ListRow>
           </ListSection>
         </Panel>
       </div>

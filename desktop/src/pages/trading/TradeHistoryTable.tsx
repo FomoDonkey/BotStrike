@@ -9,6 +9,7 @@ import { DetailCell } from "@/components/ui/DataTable";
 import { EmptyState } from "@/components/ui/Panel";
 import { cn, formatDateTime, formatPrice, formatSignedBps, formatSize, formatUSD, pnlBps } from "@/lib/utils";
 import { tradeHoldSec, tradeNotional, tradePositionSide, tradeRoe } from "@/lib/market";
+import { isTrim } from "@/lib/tradeEpisodes";
 
 interface TradeHistoryTableProps {
   trades: TradeRecord[];
@@ -27,6 +28,10 @@ function rowKey(t: TradeRecord, i: number): string {
 export function TradeHistoryTable({ trades, loading, error, symbol, limit = 150 }: TradeHistoryTableProps) {
   const [open, setOpen] = useState<string | null>(null);
   const rows = trades.slice(0, limit);
+  // ONE trade definition (2026-09-06): a trade is a round trip; a rebalance trim is realised money
+  // listed here with its REBAL chip, but it is not a trade. Say both counts once, above the table.
+  const trims = trades.filter(isTrim).length;
+  const roundTrips = trades.length - trims;
 
   if (rows.length === 0) {
     return <EmptyState sub={error ?? (loading ? undefined : "Closed round-trips appear here with PnL, fees, MAE / MFE and exit reason")}>{loading ? "Loading trade history…" : "No closed trades found"}</EmptyState>;
@@ -34,6 +39,11 @@ export function TradeHistoryTable({ trades, loading, error, symbol, limit = 150 
 
   return (
     <div className="overflow-auto flex-1 min-h-0">
+      {trims > 0 && (
+        <div className="px-3 py-1.5 border-b border-hairline text-[12px] font-medium text-text-2 sticky left-0">
+          <span className="text-text font-semibold">{roundTrips}</span> round trip{roundTrips === 1 ? "" : "s"} closed · <span className="text-text font-semibold">{trims}</span> rebalance trim{trims === 1 ? "" : "s"} (REBAL) — a trim realises money but is not a trade
+        </div>
+      )}
       <table className="term-table" style={{ minWidth: 1240 }}>
         <thead>
           <tr>
@@ -78,7 +88,8 @@ export function TradeHistoryTable({ trades, loading, error, symbol, limit = 150 
                   <td className="l"><ExitReasonChip reason={t.exit_reason} /></td>
                   <td><HoldTime seconds={hold} /></td>
                   <td className="l"><StrategyTag strategy={t.strategy} /></td>
-                  <td className="l">{t.regime ? t.regime.replace(/_/g, " ") : "---"}</td>
+                  {/* the daily book decides on daily bars: same convention as the Positions table */}
+                  <td className="l">{t.strategy === "TREND_DAILY" ? <span className="text-text-2 font-medium" title="Decided on daily bars — the 15 m regime is not an input of this strategy">daily · n/a</span> : t.regime ? t.regime.replace(/_/g, " ") : "---"}</td>
                 </tr>
                 {expanded && (
                   <tr className="detail">

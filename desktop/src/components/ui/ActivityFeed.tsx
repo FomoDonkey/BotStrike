@@ -47,7 +47,12 @@ export function ActivityRow({ e, compact }: { e: ActivityEvent; compact?: boolea
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2 min-w-0">
-          <span className={cn("text-[12.5px] font-semibold truncate", danger ? "text-rose" : warn ? "text-amber" : "text-text")}>{e.title}</span>
+          <span className={cn("text-[12.5px] font-semibold truncate", danger ? "text-rose" : warn ? "text-amber" : "text-text")}>
+            {e.title}
+            {/* a regime row said "Regime BREAKOUT · was RANGING" without naming the market: the
+                title carries no symbol, unlike a fill's (2026-09-08) */}
+            {e.symbol && !e.title.includes(e.symbol) && <span className="text-text-2 font-medium"> · {e.symbol}</span>}
+          </span>
           <span className="ml-auto num text-[11.5px] font-medium text-text-3 whitespace-nowrap">{formatDateTime(e.ts)}</span>
         </div>
         {e.detail && <p className="text-[12px] font-medium text-text-2 break-words leading-snug">{e.detail}</p>}

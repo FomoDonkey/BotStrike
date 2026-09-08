@@ -55,6 +55,7 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
   // "Risk per trade" is the intraday sizing rule; on a book whose only strategy is the daily trend
   // it described nothing that runs (2026-09-08)
   const intraday = (strategies ?? []).some((s) => s !== "TREND_DAILY");
+  const trendCap = typeof trading?.trend_leverage_cap === "number" ? trading.trend_leverage_cap : null;
   const microOn = trading ? trading.microstructure_enabled === true : typeof micro?.risk_score === "number";
   const minDwell = typeof trading?.regime_min_dwell_min === "number" ? trading.regime_min_dwell_min : null;
   const openNotional = positions.filter((p) => p.symbol === symbol).reduce((a, p) => a + positionNotional(p), 0);
@@ -99,10 +100,25 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
 
         <div className="min-w-0">
           <ListSection title="Order size rules">
-            <ListRow label="Leverage" hint="Cap on this market's leverage. The daily trend run does not use a fixed figure: it sizes each market by its own volatility (target vol / realised vol) and clamps the result at this cap.">{leverage !== null ? `${leverage}x max` : "---"}</ListRow>
-            <ListRow label="Max position" hint="Largest notional the risk manager allows on this symbol. A market with no per-symbol row has no fixed cap — the daily run sizes it by volatility and the account-wide exposure limit binds instead.">
-              {maxPos !== null ? formatUSD(maxPos) : <span className="text-text-2">No per-market cap</span>}
-            </ListRow>
+            {/* Two different caps live in the config: the per-symbol `leverage` / `max_position_usd`
+                belong to the INTRADAY risk path (validate_signal), which the trend book never goes
+                through; the book sizes by volatility under trend_leverage_cap (cross margin) and the
+                account exposure limit. Printing "Leverage 2x max · Max position $150" beside a 3x
+                trend position of the same market contradicted the row below it (2026-09-08). */}
+            {intraday || trendCap === null ? (
+              <ListRow label="Leverage" hint="Cap on an intraday position's leverage on this symbol (the daily trend book is sized by volatility under its own ceiling).">{leverage !== null ? `${leverage}x max` : "---"}</ListRow>
+            ) : (
+              <ListRow label="Leverage ceiling" hint="The trend book's ceiling on the position scalar (trend_leverage_cap), cross margin. Each market is sized at target vol / its own realised vol and clamped here on the quietest days; it is not a fixed multiplier.">{`${trendCap}x · cross`}</ListRow>
+            )}
+            {intraday ? (
+              <ListRow label="Max position" hint="Largest notional the intraday risk path allows on this symbol (validate_signal). The daily trend book does not go through it.">
+                {maxPos !== null ? formatUSD(maxPos) : <span className="text-text-2">No per-market cap</span>}
+              </ListRow>
+            ) : (
+              <ListRow label="Sizing" hint="The daily run's target weight × equity, clamped by the leverage ceiling above and by the account-wide exposure limit below. There is no fixed per-market cap on the trend book.">
+                <span className="text-text-2">target weight × equity</span>
+              </ListRow>
+            )}
             <ListRow label="Min notional" hint="Smallest order the paper book accepts">{minNotional !== null ? formatUSD(minNotional) : <span title="symbol_config.min_notional_usd needs bridge ≥ 2.16">---</span>}</ListRow>
             {intraday && <ListRow label="Risk per trade" hint="Fraction of equity risked between entry and stop on each intraday signal">{trading ? formatPct(trading.risk_per_trade_pct, 2) : "---"}</ListRow>}
             <ListRow label="Max total exposure" hint="Cap on the sum of open notionals: equity × this share × max leverage (the account-wide limit the risk manager enforces)">{trading ? formatPct(trading.max_total_exposure_pct, 0) : "---"}</ListRow>
