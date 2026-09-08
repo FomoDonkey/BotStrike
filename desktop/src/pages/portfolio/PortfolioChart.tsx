@@ -6,7 +6,7 @@ import { RangePills } from "@/components/ui/SegmentedControl";
 import { CalendarHeatmap } from "@/components/ui/CalendarHeatmap";
 import { EmptyState } from "@/components/ui/Panel";
 import { CHART_GRID, CHART_TEXT, CHART_TOOLTIP_ITEM, CHART_TOOLTIP_LABEL, CHART_TOOLTIP_STYLE, COLOR_DOWN, COLOR_UP } from "@/lib/constants";
-import { formatDateTime, formatMoney, formatSignedMoney } from "@/lib/utils";
+import { formatDate, formatDateTime, formatMoney, formatSignedMoney } from "@/lib/utils";
 
 type Tab = "value" | "pnl" | "volume" | "calendar";
 type Range = "7d" | "30d" | "all";
@@ -133,7 +133,7 @@ export function PortfolioChart({ days, missing, todayIso, curve, history, peak, 
   };
 
   const note = tab === "value" && hasEst
-    ? `Dashed: estimated — before ${realSince ? formatDateTime(realSince) : "the first sample"} the equity is rebuilt from the fills at each day's source close (Binance / Yahoo), not the venue's mark${estUntil ? `, up to ${formatDateTime(estUntil)}` : ""}. From then on the account is sampled every minute.`
+    ? `Dashed = estimated${estUntil ? ` up to ${formatDate(estUntil)}` : ""}: fills valued at each day's source close (Binance / Yahoo), not the venue's mark. Solid = the account sampled every minute${realSince ? ` since ${formatDateTime(realSince)}` : ""}.`
     : tab === "value" && valueData.length >= 2 && history?.samples
       ? "Marked equity, one sample a minute (analytics/equity_history)."
       : tab === "pnl" && dayData.some((d) => d.pnl_mtm !== undefined)
@@ -143,10 +143,10 @@ export function PortfolioChart({ days, missing, todayIso, curve, history, peak, 
   return (
     <div className="flex flex-col flex-1 min-h-0">
       <TabBar size="sm" tabs={TABS} value={tab} onChange={setTab} right={tab !== "calendar" ? <RangePills options={RANGES} value={range} onChange={setRange} /> : undefined} />
-      <div className="relative flex-1 min-h-[260px]">
+      <div className="relative flex-1 min-h-[200px]">
         <div className="absolute inset-0 flex flex-col p-1">{body()}</div>
       </div>
-      {note && <p className="px-3 py-1.5 border-t border-hairline text-[11.5px] font-medium text-text-2 leading-snug">{note}</p>}
+      {note && <p className="shrink-0 px-3 py-1.5 border-t border-hairline text-[11.5px] font-medium text-text-2 leading-snug">{note}</p>}
     </div>
   );
 }

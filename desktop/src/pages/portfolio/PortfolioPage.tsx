@@ -151,7 +151,8 @@ export function PortfolioPage() {
         <ListRow label="Max drawdown" hint={sharpe30?.drawdown_mtm ? "Worst peak-to-trough of the marked account value inside the last 30 days (open positions included), as a share of the peak" : "Worst drawdown of the realised chain in the window, at least today's live figure"}><span className={cn(sharpe30 && sharpe30.drawdown > 0 && "text-rose")}>{sharpe30 ? formatPct(sharpe30.drawdown) : "---"}</span></ListRow>
         <ListRow label="Win rate" hint="Round trips closed in the last 30 days that ended with a positive net PnL">{sharpe30 ? formatPct(sharpe30.win_rate, 1) : "---"}</ListRow>
         <ListRow label="Sharpe" hint={sharpe30 && !sharpe30.sharpe_valid ? sharpe30.sharpe_reason ?? "needs 30 days of history" : "Annualised Sharpe of the marked daily returns over the window"}>
-          {sharpe30 ? (sharpe30.sharpe_valid && typeof sharpe30.sharpe === "number" ? sharpe30.sharpe.toFixed(2) : <span title={sharpe30.sharpe_reason}>n/a · {sharpe30.sharpe_reason ?? "needs 30 days of history"}</span>) : "---"}
+          {sharpe30 ? (sharpe30.sharpe_valid && typeof sharpe30.sharpe === "number" ? sharpe30.sharpe.toFixed(2)
+            : <span title={sharpe30.sharpe_reason}>n/a{typeof sharpe30.sharpe_days === "number" ? <span className="text-text-3 font-medium"> · {sharpe30.sharpe_days}/{sharpe30.sharpe_min_days ?? 30} days</span> : null}</span>) : "---"}
         </ListRow>
         <ListRow label="Round trips" hint="Positions opened and flattened in the window; rebalance trims are not counted">{sharpe30 ? sharpe30.trades : "---"}</ListRow>
       </ListSection>

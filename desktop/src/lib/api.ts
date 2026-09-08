@@ -807,6 +807,8 @@ export interface PortfolioResponse {
     sharpe: number | null;
     sharpe_valid: boolean;
     sharpe_reason?: string;
+    sharpe_days?: number;      // days of history the Sharpe would use
+    sharpe_min_days?: number;  // … and how many it needs (30)
     trades: number;
   };
   win_days: WinDay[];

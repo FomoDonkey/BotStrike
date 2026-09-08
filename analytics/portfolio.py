@@ -195,7 +195,8 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
     days30 = (c30[-1].timestamp - c30[0].timestamp) / DAY if len(c30) >= 2 else 0.0
     sharpe_ok = len(c30) >= SHARPE_MIN_TRADES and days30 >= SHARPE_MIN_DAYS
     sharpe30 = _sharpe_daily(pnl30_by_day, basis30) if sharpe_ok else None
-    sharpe_reason = "" if sharpe30 is not None else f"needs {SHARPE_MIN_TRADES} trades and {SHARPE_MIN_DAYS} days"
+    sharpe_reason = "" if sharpe30 is not None else f"needs {SHARPE_MIN_TRADES} trades and {int(SHARPE_MIN_DAYS)} days"
+    sharpe_days = int(days30)
     dd30 = round(_max_dd([basis30] + curve30, basis30), 6) if curve30 else 0.0
     if has_hist:
         # the 30-day drawdown is the worst peak-to-trough of the MARKED path inside the window
@@ -216,13 +217,14 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
             if prev and prev > 0 and datetime.strptime(k, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() >= cutoff_30:
                 mtm_rets.append(close / prev - 1.0)
             prev = close
+        sharpe_days = len(mtm_rets)
         if len(mtm_rets) >= SHARPE_MIN_DAYS:
             sd = statistics.pstdev(mtm_rets)
             sharpe30 = (statistics.mean(mtm_rets) / sd * math.sqrt(365.0)) if sd > 0 else None
             sharpe_reason = "" if sharpe30 is not None else "flat history"
         else:
             sharpe30 = None
-            sharpe_reason = f"needs {SHARPE_MIN_DAYS} days of mark-to-market history (have {len(mtm_rets)})"
+            sharpe_reason = f"needs {int(SHARPE_MIN_DAYS)} days of MTM history (have {len(mtm_rets)})"
     perf_30d = {
         "drawdown": dd30,
         "drawdown_mtm": bool(has_hist),
@@ -230,6 +232,8 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
         "sharpe": (round(sharpe30, 3) if sharpe30 is not None else None),
         "sharpe_valid": sharpe30 is not None,
         "sharpe_reason": sharpe_reason,
+        "sharpe_days": sharpe_days,                 # days of history the Sharpe would use
+        "sharpe_min_days": int(SHARPE_MIN_DAYS),    # … and how many it needs
         "trades": len(c30),
         "pnl": round(sum(_f(t.pnl) for t in c30), 4),
         "volume": round(sum(n for t, n in zip(rows, fills_notional) if _f(t.timestamp) >= cutoff_30), 2),
