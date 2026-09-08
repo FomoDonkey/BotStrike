@@ -98,16 +98,26 @@ def test_weekly_loss_gate_blocks_entries_but_not_exits():
 
 
 def test_weekly_pnl_resets_on_a_new_iso_week(monkeypatch):
-    s = Settings()
-    rm = RiskManager(s)
-    rm.restore_history(equity=1000.0, peak=1000.0, daily_pnl=-1.0, weekly_pnl=-20.0)
-    import risk.risk_manager as rmod
+    # Both clocks are frozen: the restore happens on a Friday of ISO week 36 and the check on the
+    # Monday of week 37. Written against the REAL clock for the restore, the test passed until
+    # 2026-09-07 and failed the CT gate on 2026-09-08 — "next Monday" had arrived, so the restore's
+    # week key already equalled the mocked one and nothing had to reset (2026-09-08).
+    frozen = {"now": datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)}   # Friday, W36
 
     class _DT(datetime):
         @classmethod
         def now(cls, tz=None):
-            return datetime(2026, 9, 7, 0, 5, tzinfo=timezone.utc)   # next Monday
+            return frozen["now"]
     monkeypatch.setattr("datetime.datetime", _DT)
+
+    s = Settings()
+    rm = RiskManager(s)
+    rm.restore_history(equity=1000.0, peak=1000.0, daily_pnl=-1.0, weekly_pnl=-20.0)
+    assert rm.weekly_pnl == -20.0 and rm.daily_pnl == -1.0
+    rm.check_daily_reset()                                              # same day, same week: nothing moves
+    assert rm.weekly_pnl == -20.0 and rm.daily_pnl == -1.0
+
+    frozen["now"] = datetime(2026, 9, 7, 0, 5, tzinfo=timezone.utc)    # Monday, W37
     rm.check_daily_reset()
     assert rm.weekly_pnl == 0.0 and rm.daily_pnl == 0.0
 
