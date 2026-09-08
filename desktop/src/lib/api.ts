@@ -171,8 +171,13 @@ export interface PerformanceResponse {
   session_trades?: number;
   sortino_ratio?: number | null;
   expectancy?: number;
-  /** [epoch_seconds, equity] pairs for a real time axis */
+  /** [epoch_seconds, equity] pairs for a real time axis. Since 2026-09-08 this is the MARK-TO-MARKET
+   *  path (one sample a minute, estimated day-ends before `equity_history.real_since`); the realised
+   *  cash chain is `equity_curve_realised_ts`. */
   equity_curve_ts?: [number, number][];
+  equity_curve_realised_ts?: [number, number][];
+  /** what the mark-to-market history covers */
+  equity_history?: EquityHistoryMeta;
   /** Bridge ≥ 2.14 */
   current_drawdown?: number; // all-time, includes unrealized
   peak_equity?: number;
@@ -712,17 +717,35 @@ export interface SymbolConfigInfo {
 
 export type WinDayResult = "win" | "loss" | "flat";
 
+/** Coverage of the mark-to-market equity history (analytics/equity_history.py). */
+export interface EquityHistoryMeta {
+  /** epoch seconds of the first real (minute) sample; null while the history is empty */
+  real_since: number | null;
+  /** epoch seconds of the last ESTIMATED day-end (fills priced at the daily source close); null when none */
+  estimated_until: number | null;
+  samples: number;
+}
+
 export interface WinDay {
   date: string;
+  /** the day's mark-to-market move when the history covers it, else the day's realised cash */
   pnl: number;
+  pnl_realised?: number;
   trades: number;
   result: WinDayResult;
 }
 
 export interface PortfolioDay {
   date: string;
+  /** mark-to-market equity at the day's end (today: live); the cash chain is `equity_realised` */
   equity: number;
+  equity_realised?: number;
+  /** true when the day's equity is an estimate (fills priced at the daily source close) or carried forward */
+  equity_est?: boolean;
+  /** realised cash of the day (exits, trims, fees, funding) */
   pnl: number;
+  /** the day's mark-to-market move */
+  pnl_mtm?: number;
   volume: number;
   trades: number;
   fees: number;
@@ -741,6 +764,8 @@ export interface StrategyPortfolio {
   profit_factor: number;
   sharpe: number | null;
   max_drawdown: number;
+  /** true → the book's mark-to-market drawdown (the strategy is the whole book); false → its realised curve */
+  max_drawdown_mtm?: boolean;
   t_stat: number;
   first_trade_ts: number | null;
   /** [epoch_seconds, cumulative realized pnl] */
@@ -776,6 +801,8 @@ export interface PortfolioResponse {
   };
   perf_30d: {
     drawdown: number;
+    /** true → worst peak-to-trough of the marked path in the window; false → realised chain floored by the live figure */
+    drawdown_mtm?: boolean;
     win_rate: number;
     sharpe: number | null;
     sharpe_valid: boolean;
@@ -786,6 +813,7 @@ export interface PortfolioResponse {
   bias: { long_notional: number; short_notional: number; long_pct: number };
   daily: PortfolioDay[];
   by_strategy: StrategyPortfolio[];
+  equity_history?: EquityHistoryMeta;
 }
 
 export type ActivityKind = "fill" | "run" | "regime" | "risk" | "kill" | "system" | "config" | "signal";

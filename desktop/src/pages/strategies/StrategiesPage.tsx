@@ -48,6 +48,16 @@ export function StrategiesPage() {
   const schemaEp = useEndpoint(() => api.configSchema(), 300_000);
   const edgeEp = useEndpoint(() => api.edge(), 30_000);
   const pf = usePortfolio(30_000);
+  const perfEp = useEndpoint(() => api.performance(), 30_000);
+  // the book's marked path, downsampled for a 140 px sparkline
+  const mtmCurve = useMemo(() => {
+    const pts = perfEp.data?.equity_curve_ts ?? [];
+    if (pts.length < 2) return undefined;
+    const step = Math.max(1, Math.floor(pts.length / 140));
+    const out = pts.filter((_, i) => i % step === 0).map((p) => p[1]);
+    if (out[out.length - 1] !== pts[pts.length - 1][1]) out.push(pts[pts.length - 1][1]);
+    return out;
+  }, [perfEp.data]);
   const strategies = useMemo(() => strategiesEp.data?.strategies ?? [], [strategiesEp.data]);
 
   const fieldByPath = useMemo(() => {
@@ -118,7 +128,7 @@ export function StrategiesPage() {
     { id: "fees", label: "Fees", sortValue: (r) => r.pf?.fees ?? r.edge?.fees ?? null, render: (r) => <span className="num">{typeof (r.pf?.fees ?? r.edge?.fees) === "number" ? formatMoney((r.pf?.fees ?? r.edge?.fees) as number) : "---"}</span> },
     { id: "wr", label: "Win rate", sortValue: (r) => r.pf?.win_rate ?? r.edge?.win_rate ?? null, render: (r) => <span className="num">{typeof (r.pf?.win_rate ?? r.edge?.win_rate) === "number" ? formatPct((r.pf?.win_rate ?? r.edge?.win_rate) as number, 0) : "---"}</span> },
     { id: "sharpe", label: "Sharpe", sortValue: (r) => r.pf?.sharpe ?? null, render: (r) => <span className="num">{typeof r.pf?.sharpe === "number" ? r.pf.sharpe.toFixed(2) : "n/a"}</span> },
-    { id: "dd", label: "Max DD", sortValue: (r) => r.pf?.max_drawdown ?? null, render: (r) => <span className={cn("num", r.pf && r.pf.max_drawdown > 0 && "text-rose")}>{r.pf ? formatPct(r.pf.max_drawdown) : "---"}</span> },
+    { id: "dd", label: "Max DD", hint: "Marked peak-to-trough when the strategy is the whole book; otherwise the drawdown of its realised curve", sortValue: (r) => r.pf?.max_drawdown ?? null, render: (r) => <span className={cn("num", r.pf && r.pf.max_drawdown > 0 && "text-rose")}>{r.pf ? formatPct(r.pf.max_drawdown) : "---"}{r.pf?.max_drawdown_mtm ? <span className="text-text-2 font-medium"> mtm</span> : null}</span> },
     { id: "t", label: "t-stat", sortValue: (r) => r.pf?.t_stat ?? (r.edge?.verdict === "insufficient" ? null : r.edge?.t_stat) ?? null, render: (r) => { const t = r.pf?.t_stat ?? (r.edge?.verdict === "insufficient" ? null : r.edge?.t_stat); return <span className={cn("num", typeof t === "number" && t <= -2 && "text-rose", typeof t === "number" && t >= 2 && "text-mint")}>{typeof t === "number" ? t.toFixed(2) : "---"}</span>; } },
   ];
 
@@ -155,6 +165,7 @@ export function StrategiesPage() {
                 onEditParams={() => navigate("/settings", { state: { tab: paramGroupFor(s) } })}
                 canEdit={canEdit}
                 nowMs={now}
+                mtmCurve={mtmCurve}
               />
             </Fragment>
           ))}

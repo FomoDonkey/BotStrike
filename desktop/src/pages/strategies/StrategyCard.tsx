@@ -27,6 +27,8 @@ interface StrategyCardProps {
   /** Remote bridge without token → controls disabled */
   canEdit: boolean;
   nowMs: number;
+  /** the book's MARKED equity path, when this strategy is the whole book (pf.max_drawdown_mtm) */
+  mtmCurve?: number[];
 }
 
 /** Profit factor with no losing trades is not 99 or 9999.99 — those are the backend's sentinels. */
@@ -56,14 +58,17 @@ function strategyStatus(s: StrategyInfo): string {
 }
 
 /** Vault-style strategy card (spec §3.3). */
-export function StrategyCard({ s, pf, edge, allocField, busy, expanded, onToggleExpand, onAllocation, onEditParams, canEdit, nowMs }: StrategyCardProps) {
+export function StrategyCard({ s, pf, edge, allocField, busy, expanded, onToggleExpand, onAllocation, onEditParams, canEdit, nowMs, mtmCurve }: StrategyCardProps) {
   const enabled = s.enabled ?? s.allocation > 0;
   const color = STRATEGY_COLORS[s.type] ?? "#FFFFFF";
   const label = STRATEGY_LABELS[s.type] ?? s.name ?? s.type;
   const max = allocField?.max ?? 1;
   const step = allocField?.step ?? 0.05;
   const params = Object.entries(s.params ?? {});
-  const curve = pf?.equity_curve?.map((p) => p[1]) ?? [];
+  // The sparkline is the MARKED path when the strategy is the whole book: the realised curve of
+  // a trend book only steps at exits, so it climbed while the account went 1,038 → 1,010 (2026-09-08).
+  const mtm = !!pf?.max_drawdown_mtm && !!mtmCurve && mtmCurve.length >= 2;
+  const curve = mtm ? (mtmCurve as number[]) : (pf?.equity_curve?.map((p) => p[1]) ?? []);
   const alltime = pf ? pf.pnl : edge ? edge.net_pnl : null;
   const ageSec = pf?.first_trade_ts ? Math.max(0, nowMs / 1000 - pf.first_trade_ts) : null;
 
@@ -99,7 +104,9 @@ export function StrategyCard({ s, pf, edge, allocField, busy, expanded, onToggle
           <p className="text-[12.5px] font-medium text-text-2">All-time PNL</p>
           <p className="num text-[24px] font-bold leading-tight"><Signed value={alltime} format={formatSignedMoney} /></p>
         </div>
-        <Sparkline values={curve} width={140} height={40} />
+        <span title={mtm ? "Marked equity of the book (this strategy is the whole book), one sample a minute; estimated day-ends before the history began" : "Cumulative realised PnL of this strategy, one point per exit or trim"}>
+          <Sparkline values={curve} width={140} height={40} />
+        </span>
       </div>
 
       <div className="grid grid-cols-2 gap-x-6 px-4 pt-3">
@@ -111,7 +118,7 @@ export function StrategyCard({ s, pf, edge, allocField, busy, expanded, onToggle
         <ListRow label="Win rate">{pf ? formatPct(pf.win_rate, 0) : edge ? formatPct(edge.win_rate, 0) : "---"}</ListRow>
         <ListRow label="PF" hint="Profit factor = gross wins / gross losses. Infinite until the first loss.">{pf ? profitFactor(pf.profit_factor) : edge ? profitFactor(edge.profit_factor) : "---"}</ListRow>
         <ListRow label="Sharpe">{pf && typeof pf.sharpe === "number" ? num(pf.sharpe) : "n/a"}</ListRow>
-        <ListRow label="Max DD"><span className={cn(pf && pf.max_drawdown > 0 && "text-rose")}>{pf ? formatPct(pf.max_drawdown) : "---"}</span></ListRow>
+        <ListRow label="Max DD" hint={pf?.max_drawdown_mtm ? "Worst peak-to-trough of the marked account value (this strategy is the whole book), as a share of the peak — the same figure as the Risk page" : "Worst drawdown of this strategy's realised PnL curve (steps only at exits); with several strategies the marked split is not observable"}><span className={cn(pf && pf.max_drawdown > 0 && "text-rose")}>{pf ? formatPct(pf.max_drawdown) : "---"}</span></ListRow>
         <ListRow label="Age" hint="Since the first trade">{ageSec !== null ? formatDurationShort(ageSec) : "---"}</ListRow>
         <ListRow label="Allocation">{formatPct(s.allocation, 0)}</ListRow>
         <ListRow label="Open positions">{pf ? pf.open_positions : "---"}</ListRow>

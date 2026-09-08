@@ -7,6 +7,7 @@ import { Chip, StatusChip } from "@/components/ui/Chip";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/Modal";
 import { PulsingDot } from "@/components/shared/PulsingDot";
+import { Freshness } from "@/components/shared/Freshness";
 import { useSystemStore } from "@/stores/systemStore";
 import { useMarketStore } from "@/stores/marketStore";
 import { useExchangeStore } from "@/stores/exchangeStore";
@@ -96,7 +97,7 @@ export function SystemPage() {
         </Panel>
 
         <Panel>
-          <PanelHeader title="Ops monitor" right={opsData ? <Chip tone={(opsData.alerts?.length ?? 0) > 0 ? "amber" : "mint"} size="xs">{(opsData.alerts?.length ?? 0) > 0 ? `${opsData.alerts?.length} alert${opsData.alerts?.length === 1 ? "" : "s"}` : "all clear"}</Chip> : undefined} />
+          <PanelHeader title="Ops monitor" right={<><Freshness at={ops.at} error={ops.error} every={30_000} />{opsData ? <Chip tone={(opsData.alerts?.length ?? 0) > 0 ? "amber" : "mint"} size="xs">{(opsData.alerts?.length ?? 0) > 0 ? `${opsData.alerts?.length} alert${opsData.alerts?.length === 1 ? "" : "s"}` : "all clear"}</Chip> : null}</>} />
           {ops.missing ? (
             <EmptyState sub="GET /api/ops needs bridge ≥ 2.16">Ops monitor not available on this bridge</EmptyState>
           ) : !ops.loaded ? (

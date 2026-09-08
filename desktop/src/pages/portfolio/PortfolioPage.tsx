@@ -30,6 +30,7 @@ import { OrderHistoryTable } from "@/pages/trading/OrderHistoryTable";
 import { TradeHistoryTable } from "@/pages/trading/TradeHistoryTable";
 import { useTradeHistory } from "@/pages/trading/useTradeHistory";
 import { isTrim } from "@/lib/tradeEpisodes";
+import { Freshness } from "@/components/shared/Freshness";
 import { PortfolioChart } from "./PortfolioChart";
 import type { TrendPosition } from "@/lib/api";
 
@@ -110,6 +111,9 @@ export function PortfolioPage() {
       </ListSection>
       <ListSection title="Account equity">
         <ListRow label="Paper balance" hint="Cash = equity − margin used by open positions">{formatMoney(cash)}</ListRow>
+        {/* the two ways of counting, side by side: the marked account and the cash chain it would
+            settle to if every position closed at its entry (2026-09-08) */}
+        <ListRow label="Realised equity" hint={`Initial capital + every cash effect so far (fills net of fees, trims, funding). This is the cash chain; the account value above adds the open positions' PnL at the venue's marks. ${HINTS.realized}`}>{initial !== null && acct.equity > 0 ? formatMoney(acct.initial_capital + acct.realized_pnl) : "---"}</ListRow>
         <ListRow label="Trend book" hint="Notional of the trend daily positions">{trendBook !== null ? formatMoney(trendBook) : "---"}</ListRow>
         <ListRow label="Unrealized PNL" hint={HINTS.pnl}><Signed value={unreal} format={formatSignedMoney} /></ListRow>
       </ListSection>
@@ -138,26 +142,30 @@ export function PortfolioPage() {
         </ListRow>
       </ListSection>
       <ListSection title="Analysis">
-        <ListRow label="Longest win streak" hint="Consecutive UTC days with positive realised PnL">{p ? `${p.analysis.longest_win_streak_days} ${p.analysis.longest_win_streak_days === 1 ? "day" : "days"}` : "---"}</ListRow>
+        <ListRow label="Longest win streak" hint={p?.equity_history?.samples ? "Consecutive UTC days on which the marked account value rose (open positions included)" : "Consecutive UTC days with positive realised PnL"}>{p ? `${p.analysis.longest_win_streak_days} ${p.analysis.longest_win_streak_days === 1 ? "day" : "days"}` : "---"}</ListRow>
         <ListRow label="Trading style">{p ? p.analysis.trading_style : "---"}</ListRow>
         <ListRow label="Avg trade duration">{p ? (p.analysis.avg_hold_sec > 0 ? formatDurationShort(p.analysis.avg_hold_sec) : "---") : "---"}</ListRow>
         <ListRow label="Median trade duration">{p ? (p.analysis.median_hold_sec > 0 ? formatDurationShort(p.analysis.median_hold_sec) : "---") : "---"}</ListRow>
       </ListSection>
       <ListSection title="Performance 30D">
-        <ListRow label="Drawdown" hint={HINTS.drawdown}><span className={cn(sharpe30 && sharpe30.drawdown > 0 && "text-rose")}>{sharpe30 ? formatPct(sharpe30.drawdown) : "---"}</span></ListRow>
-        <ListRow label="Win rate">{sharpe30 ? formatPct(sharpe30.win_rate, 1) : "---"}</ListRow>
-        <ListRow label="Sharpe" hint={sharpe30 && !sharpe30.sharpe_valid ? sharpe30.sharpe_reason ?? "needs 30 trades and 30 days" : "Annualised Sharpe of the daily returns"}>
-          {sharpe30 ? (sharpe30.sharpe_valid && typeof sharpe30.sharpe === "number" ? sharpe30.sharpe.toFixed(2) : <span title={sharpe30.sharpe_reason}>n/a · {sharpe30.sharpe_reason ?? "needs 30 trades and 30 days"}</span>) : "---"}
+        <ListRow label="Max drawdown" hint={sharpe30?.drawdown_mtm ? "Worst peak-to-trough of the marked account value inside the last 30 days (open positions included), as a share of the peak" : "Worst drawdown of the realised chain in the window, at least today's live figure"}><span className={cn(sharpe30 && sharpe30.drawdown > 0 && "text-rose")}>{sharpe30 ? formatPct(sharpe30.drawdown) : "---"}</span></ListRow>
+        <ListRow label="Win rate" hint="Round trips closed in the last 30 days that ended with a positive net PnL">{sharpe30 ? formatPct(sharpe30.win_rate, 1) : "---"}</ListRow>
+        <ListRow label="Sharpe" hint={sharpe30 && !sharpe30.sharpe_valid ? sharpe30.sharpe_reason ?? "needs 30 days of history" : "Annualised Sharpe of the marked daily returns over the window"}>
+          {sharpe30 ? (sharpe30.sharpe_valid && typeof sharpe30.sharpe === "number" ? sharpe30.sharpe.toFixed(2) : <span title={sharpe30.sharpe_reason}>n/a · {sharpe30.sharpe_reason ?? "needs 30 days of history"}</span>) : "---"}
         </ListRow>
-        <ListRow label="Trades">{sharpe30 ? sharpe30.trades : "---"}</ListRow>
+        <ListRow label="Round trips" hint="Positions opened and flattened in the window; rebalance trims are not counted">{sharpe30 ? sharpe30.trades : "---"}</ListRow>
       </ListSection>
+      <div className="px-3 py-2 border-t border-hairline flex items-center justify-between gap-2">
+        <Freshness at={pf.at} error={pf.error} every={10_000} />
+        <span className="text-[11px] font-medium text-text-3">headline figures every 5 s</span>
+      </div>
       {pf.missing && <p className="px-3 py-2 text-[12px] font-medium text-text-2 border-t border-hairline">Rows marked --- need GET /api/portfolio (bridge ≥ 2.16).</p>}
     </Panel>
   );
 
   const kpis = (
     <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
-      <KpiCard label="Performance" hint="All-time PnL and the last 18 UTC days (mint = win day, rose = loss day)" value={<Signed value={alltimePnl} format={formatSignedMoney} />} unit="PNL" sub={winDays ? `${wins} win day${wins === 1 ? "" : "s"} · ${tradedDays} day${tradedDays === 1 ? "" : "s"} traded` : "Win days need bridge ≥ 2.16"}>
+      <KpiCard label="Performance" hint={p?.equity_history?.samples ? "All-time PnL and the last 18 UTC days: mint = the marked account value rose that day, rose = it fell (open positions included)" : "All-time PnL and the last 18 UTC days (mint = win day, rose = loss day, by realised cash)"} value={<Signed value={alltimePnl} format={formatSignedMoney} />} unit="PNL" sub={winDays ? `${wins} win day${wins === 1 ? "" : "s"} · ${winDays.filter((d) => d.result === "loss").length} loss · ${tradedDays} day${tradedDays === 1 ? "" : "s"} with a round trip` : "Win days need bridge ≥ 2.16"}>
         <WinDayDots days={winDays} />
       </KpiCard>
       <KpiCard label="Leverage" hint={HINTS.levEff} value={`${leverage.toFixed(2)}x`} sub={`Position value ${formatMoney(p ? p.equity * p.leverage : acct.position_value)}`}>
@@ -174,7 +182,9 @@ export function PortfolioPage() {
 
   const chart = (
     <Panel className="flex flex-col min-h-[320px] overflow-hidden">
-      <PortfolioChart days={p?.daily ?? []} missing={pf.missing} todayIso={todayIso} />
+      <PortfolioChart days={p?.daily ?? []} missing={pf.missing} todayIso={todayIso} nowSec={now / 1000}
+                      curve={perf.data?.equity_curve_ts ?? null} history={perf.data?.equity_history ?? p?.equity_history ?? null}
+                      peak={acct.peak_equity > 0 ? acct.peak_equity : (perf.data?.peak_equity ?? null)} />
     </Panel>
   );
 

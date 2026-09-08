@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chip";
 import { ConfirmDialog } from "@/components/ui/Modal";
 import { Hint } from "@/components/shared/Hint";
+import { Freshness } from "@/components/shared/Freshness";
 import { TOKEN_GATED_REASON } from "@/lib/constants";
 import { cn, capitalize, formatMoney, formatPct } from "@/lib/utils";
 
@@ -91,6 +92,7 @@ export function RiskProfileCards() {
     <div className="flex flex-col gap-2 min-w-0">
       <div className="flex items-baseline gap-2 flex-wrap">
         <h2 className="text-[14px] font-semibold text-text">Risk level</h2>
+        <Freshness at={ep.at} error={ep.error} every={PROFILES_POLL_MS} className="ml-auto order-last" />
         <span className="text-[12.5px] font-medium text-text-2">
           priced for the equity the bot sizes on <span className="num text-text font-semibold">{formatMoney(equity)}</span>
           {sharpe !== null && (

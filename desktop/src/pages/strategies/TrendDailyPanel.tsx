@@ -10,6 +10,7 @@ import { ProgressBar } from "@/components/ui/KpiCard";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { marketName } from "@/lib/market";
 import { Hint } from "@/components/shared/Hint";
+import { Freshness } from "@/components/shared/Freshness";
 import { CHART_GRID, CHART_TEXT, CHART_TOOLTIP_ITEM, CHART_TOOLTIP_LABEL, CHART_TOOLTIP_STYLE, COLOR_BLUE, COLOR_UP } from "@/lib/constants";
 import { cn, formatCompactUSD, formatLocalDateTime, formatMoney, formatPct, formatPrice, formatRelative, formatSignedMoney, formatSignedPct, formatSize } from "@/lib/utils";
 import { trimNumber } from "@/components/settings/schemaUtils";
@@ -73,6 +74,7 @@ export function TrendDailyPanel() {
         title="Trend daily · Donchian ensemble"
         right={
           <>
+            <Freshness at={ep.at} error={ep.error} every={30_000} className="hidden md:inline" />
             <StatusChip status={trend.enabled ? "enabled" : "disabled"} size="xs" />
             <StatusChip status={trend.mode} size="xs" />
             <span className="hidden sm:inline text-[12px] font-medium text-text-2">alloc <span className="text-text font-semibold">{formatPct(trend.allocation, 0)}</span> · exposure <span className="text-text font-semibold">{formatPct(trend.exposure ?? 0, 0)}</span> · <Hint title="The equity the last run sized on (initial capital + realised + open PnL at 04:05 UTC). The account's live equity moves with the marks until the next run.">sized on</Hint> <span className="text-text font-semibold">{formatMoney(trend.equity_basis ?? 0)}</span></span>

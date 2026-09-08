@@ -11,6 +11,8 @@ os.environ.setdefault("BOTSTRIKE_TREND_DATA_DIR", os.path.join(_tmp, "binance_da
 # The activity feed (analytics/activity.py) must never write into data/activity.json from tests:
 # the CT test gate polluted the production feed with synthetic trend runs (2026-09-02).
 os.environ.setdefault("BOTSTRIKE_ACTIVITY_PATH", os.path.join(_tmp, "activity.json"))
+# The mark-to-market equity history (analytics/equity_history.py) is production data too.
+os.environ.setdefault("BOTSTRIKE_EQUITY_HISTORY", os.path.join(_tmp, "equity_history.json"))
 
 # Script-style test files: they run assertions at import time via a `check(name, cond)`
 # helper instead of pytest functions, so collecting them would execute side effects.

@@ -997,7 +997,26 @@ def _merged_performance() -> Optional[Dict]:
     # The realised chain's worst drawdown ignores open positions: the Risk page read "All-time
     # max 0.00 %" under a live 0.37 % (2026-09-05). The all-time figure is at least today's.
     live_dd = (peak - equity) / peak if peak > 0 else 0.0
-    out["max_drawdown"] = round(max(float(cum.get("max_drawdown") or 0.0), live_dd), 6)
+    dd = max(float(cum.get("max_drawdown") or 0.0), live_dd)
+    # The MARK-TO-MARKET path (analytics/equity_history.py): the curve every chart draws, and the
+    # worst peak-to-trough it went through — the cash chain could not show the 1,038 → 1,010 of
+    # 6–8 Sep because the money sat in open positions (2026-09-08). The realised curve stays
+    # available under its own name.
+    try:
+        from analytics.equity_history import get_equity_history
+        hist = get_equity_history()
+        series = hist.series()
+        out["equity_curve_realised_ts"] = list(cum.get("equity_curve_ts") or [])
+        if series:
+            now_ts = time.time()
+            out["equity_curve_ts"] = series + [[round(now_ts, 3), round(equity, 4)]]
+            dd = max(dd, hist.max_drawdown(live_equity=equity))
+            peak = max(peak, hist.peak())
+        out["equity_history"] = {"real_since": hist.first_real_ts(), "estimated_until": hist.last_estimated_ts(),
+                                 "samples": hist.count()}
+    except Exception as e:  # noqa: BLE001 - the history must never break the metrics
+        logger.debug("equity_history_read_error", error=str(e))
+    out["max_drawdown"] = round(dd, 6)
     out.update({
         "equity": round(equity, 4),
         "pnl": round(cum["pnl"] + unrealized, 4),
@@ -1011,16 +1030,81 @@ def _merged_performance() -> Optional[Dict]:
     return out
 
 
+_equity_backfill_done = False
+
+
+async def _backfill_equity_history() -> None:
+    """Once per process: the day-end equity of every day before the first real sample, rebuilt
+    from the fills and priced at the daily source close (estimated, and flagged as such)."""
+    global _equity_backfill_done
+    if _equity_backfill_done:
+        return
+    _equity_backfill_done = True
+    engine = state.engine
+    try:
+        from datetime import datetime, timedelta, timezone
+        from analytics.equity_history import get_equity_history, reconstruct_daily_mtm
+        from strategies.trend_daily import to_ui_symbol
+        import pandas as pd
+        hist = get_equity_history()
+        repo = getattr(engine, "trade_repo", None)
+        te = getattr(engine, "trend_engine", None)
+        if repo is None or te is None:
+            return
+        trades = await asyncio.to_thread(repo.get_trades, source="paper" if getattr(engine, "paper", True) else "live")
+        if not trades:
+            return
+        first_ts = min(float(t.timestamp) for t in trades)
+        today = te._today()
+        first_real = hist.first_real_ts()
+        last = (datetime.fromtimestamp(first_real, tz=timezone.utc).date() if first_real else today.date()) - timedelta(days=1)
+        first = datetime.fromtimestamp(first_ts, tz=timezone.utc).date()
+        if last < first:
+            return
+        pool = list(te.pool())
+        ui2pool = {to_ui_symbol(s): s for s in pool}
+        wanted = sorted({ui2pool.get(str(t.symbol), str(t.symbol)) for t in trades if str(getattr(t, "trade_type", "")) != "FUNDING"})
+        frames = await asyncio.to_thread(te.store.load, wanted, today, False, 1)
+
+        def close_fn(ui_symbol: str, day: str):
+            df = frames.get(ui2pool.get(ui_symbol, ui_symbol))
+            if df is None:
+                return None
+            ts = pd.Timestamp(day)
+            if ts not in df.index:
+                return None
+            try:
+                return float(df.loc[ts, "close"])
+            except Exception:  # noqa: BLE001
+                return None
+
+        pts = reconstruct_daily_mtm(trades, float(engine.settings.trading.initial_capital), close_fn,
+                                    first.strftime("%Y-%m-%d"), last.strftime("%Y-%m-%d"))
+        n = hist.add_estimated(pts)
+        logger.info("equity_history_backfill", days=len(pts), inserted=n, first=str(first), last=str(last))
+    except Exception as e:  # noqa: BLE001 - an estimate must never break the metrics loop
+        logger.warning("equity_history_backfill_error", error=str(e)[:200])
+
+
 async def metrics_broadcast_loop():
     """Broadcast performance metrics every 2 seconds.
 
     Sends the MERGED view (trade DB all-time + live unrealized) so the UI never
-    resets to 0 after a service restart. state.equity/pnl feed /api/bot/status."""
+    resets to 0 after a service restart. state.equity/pnl feed /api/bot/status.
+    Also writes the mark-to-market equity history (one sample a minute)."""
     while True:
         try:
             if state.engine and state.running:
                 p = _merged_performance()
                 if p:
+                    try:
+                        from analytics.equity_history import get_equity_history
+                        get_equity_history().sample(time.time(), float(p["equity"]), float(p.get("realized_pnl") or 0.0),
+                                                    float(p.get("unrealized_pnl") or 0.0))
+                        if not _equity_backfill_done and getattr(state.engine, "trend_engine", None) is not None:
+                            asyncio.create_task(_backfill_equity_history())
+                    except Exception as e:  # noqa: BLE001
+                        logger.debug("equity_history_sample_error", error=str(e))
                     await state.channels.broadcast("trading", {
                         "type": "metrics",
                         "timestamp": time.time(),
@@ -1831,11 +1915,17 @@ async def get_portfolio():
     positions = _paper_position_rows(engine) if getattr(engine, "paper_sim", None) else []
     acct = _account_overview(engine)
     tcfg = engine.settings.trading
+    try:
+        from analytics.equity_history import get_equity_history
+        history = get_equity_history()
+    except Exception:  # noqa: BLE001
+        history = None
     out = compute_portfolio(
         trades, float(tcfg.initial_capital), positions, time.time(),
         equity=float(acct.get("equity") or 0.0), margin_used=float(acct.get("margin_used") or 0.0),
         unrealized_pnl=float(acct.get("unrealized_pnl") or 0.0),
         fees_taker=float(getattr(tcfg, "taker_fee", 0.0004)), fees_maker=float(getattr(tcfg, "maker_fee", 0.0002)),
+        equity_history=history,
     )
     # The 30-day drawdown is a realised chain; the account's live drawdown floors it, as the
     # all-time figure already is (the page read 0.00 % under a live 0.37 %, 2026-09-05).
