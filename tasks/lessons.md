@@ -1638,3 +1638,14 @@ qué controles la usaban como único punto de paso.
   eran razonables con el perfil conservador y un ruido garantizado con el agresivo (límite 39 %).
 - Un UNKNOWN del detector es "sin respuesta", no un régimen: dos consumidores (Activity y el motor) lo trataron como
   cambio y uno (`/api/regime`) no, y la UI mostró dos verdades. Regla: los valores "sin dato" no se propagan como estado.
+- Cuando se mueve un horario (run 00:05 → 04:05) hay que buscar el horario viejo en TODOS los consumidores, incluido el
+  monitor de operaciones: `TREND_DEADLINE_MIN = 20` generó una alerta falsa cada noche durante tres días y nadie la
+  cuestionó porque "el monitor siempre avisa de algo". Los plazos se derivan de la config viva, no se copian.
+- Un "Bridge started" a las 00:35Z dos segundos después de un gate fallido parecía culpa del deploy; el journal del host
+  dijo otra cosa (reboot programado por kernel nuevo, timer `mizu-reboot`). Antes de atribuir un reinicio al último
+  comando ejecutado, leer `last -x` y el journal del arranque anterior en el host.
+- Verificar en el navegador contra el bundle que se cree estar probando: `vite preview` sirvió el bundle anterior tras
+  reconstruir (caché de index.html) y dos "fixes" parecían no aplicar. Comprobar `document.scripts[].src` contra el hash
+  del último build antes de sacar conclusiones.
+- Con la ventana de Chrome maximizada `resize_window` no cambia el viewport: un iframe de 390 px dentro de la propia página
+  (mismo origen) reproduce los media queries y permite medir `scrollWidth` del documento embebido.
