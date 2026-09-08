@@ -2,9 +2,13 @@ import { useExchangeStore, type ExchangeId } from "@/stores/exchangeStore";
 import { cn } from "@/lib/utils";
 import { Chip } from "@/components/ui/Chip";
 
+// Strike first: it is the venue the bot runs on (settings.exchange_venue) and the one the engine
+// reports on /api/health. It was missing from this list altogether (2026-09-08). The fee figures
+// are the venues' published tier-0 schedules, taker per side.
 const EXCHANGES: { id: ExchangeId; name: string; fees: string; desc: string }[] = [
-  { id: "binance", name: "Binance", fees: "8 bps RT", desc: "Centralized · High liquidity · API keys" },
-  { id: "hyperliquid", name: "Hyperliquid", fees: "3-5 bps RT", desc: "Decentralized · Lower fees · Wallet auth" },
+  { id: "strike", name: "Strike Finance", fees: "taker 0.05 % · maker −0.005 %", desc: "Perpetuals CLOB · the bot's venue · 31 markets incl. metals, energy, indices" },
+  { id: "binance", name: "Binance", fees: "taker 0.04 %", desc: "Centralized · High liquidity · API keys" },
+  { id: "hyperliquid", name: "Hyperliquid", fees: "taker 0.035 %", desc: "Decentralized · Wallet auth" },
 ];
 
 export function ExchangeSelector() {

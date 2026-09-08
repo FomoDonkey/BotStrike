@@ -90,6 +90,8 @@ def test_activity_log_persists_and_maps_events(tmp_path):
     assert [r["title"] for r in again.list(limit=50)] == ["e5", "e4", "e3", "e2", "e1"]
     # event mapping
     assert act.build_event_row("regime_changed", {"symbol": "BTC-USD", "new": "RANGING", "old": "UNKNOWN"}) is None
+    # a transition INTO UNKNOWN is a data gap, not a regime: the feed must not end on it (2026-09-08)
+    assert act.build_event_row("regime_changed", {"symbol": "BTC-USD", "new": "UNKNOWN", "old": "TRENDING_DOWN"}) is None
     r = act.build_event_row("regime_changed", {"symbol": "BTC-USD", "new": "RANGING", "old": "BREAKOUT"})
     assert r["kind"] == "regime" and r["title"] == "Regime RANGING"
     r = act.build_event_row("trend_daily_run_ok", {"positions": 3, "targets": {"BTCUSDT": 0.118}})

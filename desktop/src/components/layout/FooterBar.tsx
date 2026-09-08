@@ -7,10 +7,12 @@ import { useMarketStore } from "@/stores/marketStore";
 import { useExchangeStore } from "@/stores/exchangeStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useNow } from "@/hooks/useNow";
-import { EXCHANGE_LABELS, SYMBOLS, SYMBOL_LABELS, DOCS_URL } from "@/lib/constants";
+import { EXCHANGE_LABELS, DOCS_URL } from "@/lib/constants";
+import { marketLabel } from "@/lib/market";
 import { cn, capitalize, formatAge, formatCompactUSD, formatPrice } from "@/lib/utils";
 import { useSymbolChanges } from "@/hooks/useSymbolChanges";
 import { useVenueMarkets } from "@/hooks/useVenueMarkets";
+import { useFavoriteSymbols } from "@/hooks/useFavoriteSymbols";
 import { SignedPct } from "@/components/shared/TradeChips";
 
 const TickerItem = memo(function TickerItem({ symbol, change }: { symbol: string; change: number | null }) {
@@ -19,7 +21,7 @@ const TickerItem = memo(function TickerItem({ symbol, change }: { symbol: string
   const price = byMarket.get(symbol)?.price || streamed;   // the venue's mark, as everywhere else
   return (
     <Link to="/trading" className="inline-flex items-center gap-1.5 px-3 whitespace-nowrap text-[12.5px] hover:bg-hover h-8">
-      <span className="font-semibold text-text">{SYMBOL_LABELS[symbol] ?? symbol}</span>
+      <span className="font-semibold text-text">{marketLabel(symbol)}</span>
       <span className="num font-medium text-text">{price > 0 ? formatPrice(price) : "---"}</span>
       <SignedPct value={change} className="text-[12px]" />
     </Link>
@@ -39,11 +41,13 @@ export function FooterBar({ className }: { className?: string }) {
   const exchange = useExchangeStore((s) => s.exchange);
   const setActivityOpen = useUiStore((s) => s.setActivityOpen);
   const activityOpen = useUiStore((s) => s.activityOpen);
-  const changes = useSymbolChanges(now / 1000);
+  // the held markets first, then the streamed ones — the same list as the favorites strip
+  const favorites = useFavoriteSymbols();
+  const changes = useSymbolChanges(now / 1000, favorites);
   const age = lastTickAt > 0 ? (now - lastTickAt) / 1000 : null;
   const live = bridgeConnected && (wsConnected || (age !== null && age < 30));
 
-  const items = SYMBOLS.map((s) => <TickerItem key={s} symbol={s} change={changes[s]} />);
+  const items = favorites.map((s) => <TickerItem key={s} symbol={s} change={changes[s] ?? null} />);
 
   return (
     <footer className={cn("items-center h-8 bg-bg border-t border-hairline shrink-0 text-[12.5px] select-none min-w-0", className)}>

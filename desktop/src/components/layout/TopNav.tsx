@@ -211,7 +211,9 @@ export function TopNav() {
 
       <div className="ml-auto flex items-center gap-2 sm:gap-3 min-w-0">
         <ConnectionStatus />
-        <RegimeChip regime={regime} />
+        {/* BTC's intraday classifier; the book trades on daily bars. Without saying so the chip
+            read as the bot's own state (2026-09-08). */}
+        <RegimeChip regime={regime} title={`BTC-USD intraday regime (15 m bars): ${regime}. Informational — the trend book decides on daily bars and does not read it.`} />
         <EquityChip />
         <span className="hidden lg:inline-flex"><SettingsPopover /></span>
         <span className="hidden lg:inline-flex"><BotMenu /></span>

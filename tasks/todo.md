@@ -1,5 +1,61 @@
 # BotStrike — Tasks
 
+## Sesión 2026-09-08 — Auditoría completa de la UI contra la API real (ronda 16)
+Edgar: "audita la UI al completo… que refleje la realidad… nada desfasado, obsoleto o mal… coherente" + "verifica toda la UI
+desde el navegador con la extensión de Chrome". Método: leer los 130 ficheros de `desktop/src` (15 k líneas), volcar los 31
+endpoints del CT a JSON y perseguir cada texto/número que no coincidiera con la API o con el diseño vigente.
+### Corregido en la UI (desktop/src, bundle reconstruido)
+- [x] Obsoleto "00:05 UTC" en 4 sitios (descripción de la estrategia, tabla Trend book vacía, toast y diálogo del nivel de
+  riesgo) → 04:05 UTC (`trend_execution_hour_utc=4` desde el 5 sep).
+- [x] Contradicción en Risk: la KPI Equity decía "el pico es equity realizada" con un subtexto "(mark-to-market)"; el pico ES
+  MTM y persistido desde la ronda 2 → tooltip corregido; "Session drawdown" → "Drawdown from peak"; la KPI Regime dice de qué
+  mercado es (BTC · 15 m · informativo) en vez de "3 trades all time"; la exposición por símbolo lista lo que el libro TIENE
+  (ETH-USD $0,00 aparecía antes que oro/petróleo/ZEC).
+- [x] Bot column: en un mercado sin estrategia (ETH) mostraba "Next order (estimate)" con sizing intradía ("$15 at risk",
+  liquidación estimada) bajo "No strategy is assigned" → ahora dice si es candidato del pool o está fuera, y la estimación es
+  siempre la del rebalanceo diario cuando la única estrategia viva es TREND_DAILY. "Long-only" sale de `trend_allow_shorts`
+  (el tooltip citaba MR/divergencia, retiradas).
+- [x] Order History: sintetizaba una fila ENTRY (lado invertido, fee $0) por cada fila EXIT/trim — mismo bug que el Journal
+  arrastró el 5 sep; con esquema v3 cada fill ya es su fila → solo para filas legacy sin `trade_type`.
+- [x] Journal: `buildEpisodes` sumaba la comisión de las filas ENTRY además de la de ida y vuelta que llevan las filas EXIT
+  (`models.cash_effect`) → habría contado dos veces la de entrada en cuanto cierre una posición abierta después del 5 sep.
+- [x] Alertas de drawdown: umbrales fijos 5 %/8 % de equity (cooldown 60 s) con un límite configurado del 39 % → ahora son
+  fracciones del límite (50 % aviso / 80 % crítico) y solo si el `risk_update` trae `max_drawdown_pct`.
+- [x] Favoritos / ticker del footer / pestaña Favorites del picker: eran los 4 crypto del motor; ahora primero los mercados
+  que el libro TIENE (venue `held`) y luego los 4 con stream (`useFavoriteSymbols`).
+- [x] Market Details: textos "About" con hechos (ETH ya no "opera en el libro de mean reversion"), pertenencia al pool desde
+  la lista del venue, "Execution/Type" siguen el modo real (no "paper" fijo), "Min dwell" leído de la config (no "30 min"
+  escrito), "Risk per trade" solo si hay estrategia intradía, sección Microstructure en una línea cuando está apagada.
+- [x] Trend daily panel: suelo de liquidez del venue (floors + los 12 del pool con volumen y estado), monitor de basis
+  (mark Strike / cierre de la fuente), adds bloqueados por riesgo, run tardío, killed; tooltip de Tracking (modelo vs papel).
+- [x] Overlay de conexión: el selector de exchange no tenía Strike (solo Binance/Hyperliquid, con comisiones viejas) y el
+  probe no sincronizaba `strike` → añadido primero, con las comisiones publicadas; texto del overlay coherente.
+- [x] Settings → Connection: el comando ssh de ayuda renderizaba `tr -d ''` (salto de línea JSX dentro del literal).
+- [x] System: "Framework Tauri v2" en el navegador → "Web build served by the bridge"; index.html con el navy antiguo
+  (#050810) como fondo/theme-color → #0A0A0A. Funding: copy con cifras escritas a mano (WTI −15,7 % ya era −16,1 %) →
+  calculado del `annualized_90d` del pool; intervalo sin fallback inventado (8 h en un sitio, 1 h en otro).
+- [x] Tooltips: liquidación explica cross margin; realised PnL = cadena de caja (salidas+trims−fees de entrada+funding);
+  régimen "informativo, el libro diario no lo lee"; chip de régimen de la barra superior dice que es BTC intradía; Signals
+  vacío dice que las intradía están retiradas; "30D return" → "30D realised".
+### Corregido en el servidor
+- [x] `analytics/activity.py`: un cambio de régimen HACIA UNKNOWN ya no se publica (Activity mostraba "Regime UNKNOWN · was
+  TRENDING_DOWN" en BTC a las 00:08Z mientras `/api/regime` decía TRENDING_DOWN; la vuelta se filtraba como arranque).
+- [x] `main.py`: un UNKNOWN transitorio del detector (frame corto) no cuenta como cambio: mantiene el último régimen
+  (el detector ya mantenía su confirmado; el motor no).
+- [x] `config/overrides.py`: ayuda de `exchange_venue` decía "el feed intradía sigue en Binance" → desde el 4 sep el
+  feed es `wss://api.strikefinance.org/ws/price`.
+### Comprobado y correcto (sin cambio)
+- [x] Cuenta: equity 1.015,11 = 1.000 + realizado 8,3516 + abierto 6,757; disponible 610,19 = equity − margen 404,92;
+  margin ratio 39,9 %; 3 ciclos + 2 trims en performance/portfolio/edge/journal; win rate 33 %, PF 3,04; fees 0,7828;
+  funding +0,0664 (340 filas); ventana 24 h del venue; hourly funding; chart 20/21 indicadores.
+- [x] Falsa alarma descartada: "Â·" en la descripción de la estrategia era mi `open()` en cp1252 al leer el JSON; los bytes
+  del servidor son `c2 b7` (UTF-8 correcto). Verificado con xxd antes de tocar nada.
+### Pendiente
+- [ ] Desplegar (commit + push + `host_deploy.sh`, aprobación Tailscale) y verificar en Chrome real cada página a 1440 y 390.
+- [ ] Observación de quant, no de UI: tracking modelo +3,1 % vs papel +0,9 % en 6 días (TE 27 %); el 7 sep modelo +3,64 %
+  vs papel +0,71 %. Revisar la definición de `paper_ret` (¿ventana 04:05→04:05 con marcas del venue?) antes de leerlo como
+  coste de ejecución.
+
 ## Sesión 2026-09-03 (6ª) — UI v2.17: escalera de salida, cierre manual, funding, nivel de riesgo — HECHO
 Contrato: `tasks/ui_operator_contract.md`. Edgar: "cuándo se cierran las operaciones... no había ni tp ni sl ni
 botón de cierre manual... tampoco veo el funding por operación ni el total" + "si algún usuario quiere aumentar

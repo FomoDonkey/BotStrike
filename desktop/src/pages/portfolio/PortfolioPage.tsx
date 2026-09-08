@@ -253,5 +253,5 @@ function TrendBookTable({ rows, loaded }: { rows: TrendPosition[]; loaded: boole
     { id: "opened", label: "Opened", align: "l", render: (r) => r.opened },
   ];
   if (!loaded) return <EmptyState>Loading trend book…</EmptyState>;
-  return <DataTable columns={columns} rows={rows} rowKey={(r) => r.symbol} minWidth="720px" emptyText="No trend positions" emptySub="The daily run opens positions at 00:05 UTC when the Donchian ensemble has targets" />;
+  return <DataTable columns={columns} rows={rows} rowKey={(r) => r.symbol} minWidth="720px" emptyText="No trend positions" emptySub="The daily run opens positions at 04:05 UTC when the Donchian ensemble has targets" />;
 }

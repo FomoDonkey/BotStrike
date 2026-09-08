@@ -200,8 +200,9 @@ GROUPS: List[Dict[str, Any]] = [
     ]},
     {"id": "execution", "label": "Execution", "fields": [
         _t("exchange_venue", "Venue", "select", restart=True,
-           help="Where orders execute. Strike is the target venue (config/settings.py knows it as 'strike'); "
-                "the intraday price feed stays on Binance either way.",
+           help="Where orders execute AND where the intraday price feed comes from: on Strike the engine "
+                "streams wss://api.strikefinance.org/ws/price (since 2026-09-04). The daily signal's history "
+                "still comes from Binance spot and Yahoo, because Strike lists only months of daily bars.",
            options=[{"value": "binance", "label": "Binance Futures"}, {"value": "strike", "label": "Strike Finance"},
                     {"value": "hyperliquid", "label": "Hyperliquid"}]),
         # A maker fee can be NEGATIVE on Strike: tier 0 pays a 0.005 % rebate. min=0 made the

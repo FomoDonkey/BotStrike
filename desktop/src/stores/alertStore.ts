@@ -24,9 +24,13 @@ export interface AlertRule {
   lastTriggered: number;
 }
 
+// The drawdown rules are SHARES OF THE CONFIGURED LIMIT, not fixed percentages: at 5 % / 8 % of
+// equity they would have fired every minute through an ordinary drawdown of the aggressive
+// profile, whose limit is 39 % and whose measured worst drawdown is 30 % (2026-09-08).
+// checkAndTrigger scales them by `max_drawdown_pct` when the risk update carries it.
 const DEFAULT_RULES: AlertRule[] = [
-  { id: "dd_warn", enabled: true, name: "Drawdown Warning", type: "drawdown_above", threshold: 0.05, level: "warning", cooldownSec: 300, lastTriggered: 0 },
-  { id: "dd_crit", enabled: true, name: "Drawdown Critical", type: "drawdown_above", threshold: 0.08, level: "critical", cooldownSec: 60, lastTriggered: 0 },
+  { id: "dd_warn", enabled: true, name: "Drawdown at half the limit", type: "drawdown_above", threshold: 0.5, level: "warning", cooldownSec: 3600, lastTriggered: 0 },
+  { id: "dd_crit", enabled: true, name: "Drawdown near the halt", type: "drawdown_above", threshold: 0.8, level: "critical", cooldownSec: 1800, lastTriggered: 0 },
   { id: "vpin_toxic", enabled: true, name: "VPIN Toxic", type: "vpin_above", threshold: 0.8, level: "warning", cooldownSec: 120, lastTriggered: 0 },
   { id: "hawkes", enabled: true, name: "Hawkes Spike", type: "hawkes_spike", threshold: 4.0, level: "info", cooldownSec: 60, lastTriggered: 0 },
 ];
@@ -41,7 +45,7 @@ interface AlertState {
   clearAll: () => void;
   toggleSound: () => void;
   updateRule: (id: string, updates: Partial<AlertRule>) => void;
-  checkAndTrigger: (data: { drawdown_pct?: number; vpin?: number; hawkes_mult?: number; price?: number; symbol?: string }) => void;
+  checkAndTrigger: (data: { drawdown_pct?: number; max_drawdown_pct?: number; vpin?: number; hawkes_mult?: number; price?: number; symbol?: string }) => void;
 }
 
 let _alertCounter = 0;
@@ -89,12 +93,16 @@ export const useAlertStore = create<AlertState>((set, get) => ({
       let message = "";
 
       switch (rule.type) {
-        case "drawdown_above":
-          if (data.drawdown_pct !== undefined && data.drawdown_pct >= rule.threshold) {
+        case "drawdown_above": {
+          // threshold = share of the configured max-drawdown limit; without a limit on the wire
+          // there is nothing to measure against, so the rule stays quiet
+          const limit = data.max_drawdown_pct;
+          if (data.drawdown_pct !== undefined && typeof limit === "number" && limit > 0 && data.drawdown_pct >= rule.threshold * limit) {
             match = true;
-            message = `Drawdown at ${(data.drawdown_pct * 100).toFixed(1)}% (threshold: ${(rule.threshold * 100).toFixed(0)}%)`;
+            message = `Drawdown ${(data.drawdown_pct * 100).toFixed(1)}% of equity — ${(data.drawdown_pct / limit * 100).toFixed(0)}% of the ${(limit * 100).toFixed(0)}% limit that halts the bot`;
           }
           break;
+        }
         case "vpin_above":
           if (data.vpin !== undefined && data.vpin >= rule.threshold) {
             match = true;

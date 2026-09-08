@@ -5,6 +5,7 @@ import { useEndpoint } from "@/hooks/useEndpoint";
 import { useNow } from "@/hooks/useNow";
 import { useSystemStore } from "@/stores/systemStore";
 import { useTradingStore } from "@/stores/tradingStore";
+import { useVenueMarkets } from "@/hooks/useVenueMarkets";
 import { TabBar } from "@/components/ui/TabBar";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { ListRow, ListSection, Signed } from "@/components/ui/ListRow";
@@ -56,10 +57,18 @@ export function BotColumn({ market, positions, className, tab: forcedTab, showAc
   // configured ceiling is 2x, and "2x" beside a 1x position read as a contradiction (2026-09-05).
   const held = positions.find((p) => p.symbol === market.symbol);
   const levLabel = held ? `${held.leverage ?? 1}x` : typeof lev === "number" ? `≤${lev}x` : "—";
+  // Long-only is a setting (trend_allow_shorts), not a slogan: read it, and say what the option
+  // does when it is on. The old tooltip cited MR and divergence, both retired (2026-09-08).
+  const cfgHeader = useEndpoint(() => api.config(), CONFIG_POLL_MS);
+  const shorts = cfgHeader.data?.trading.trend_allow_shorts === true;
+  const shortSize = Number(cfgHeader.data?.trading.trend_short_size ?? 0.5);
   const header = [
     { id: "mode", label: capitalize(mode.replace("_", " ")), title: "Execution mode" },
     { id: "lev", label: levLabel, title: held ? "Leverage of the open position on this symbol" : "Maximum leverage configured for this symbol (no open position)" },
-    { id: "dir", label: "Long-only", title: "Trend daily is long-only; MR / divergence may short when enabled" },
+    { id: "dir", label: shorts ? "Long / short" : "Long-only",
+      title: shorts
+        ? `The trend book may go short at ${Math.round(shortSize * 100)} % size (trend_allow_shorts ON)`
+        : "The trend book only buys: a negative signal means flat, never short (trend_allow_shorts OFF, the validated setting)" },
   ];
 
   return (
@@ -87,12 +96,15 @@ function BotTab({ market, positions }: { market: MarketView; positions: Position
   const equity = useTradingStore((s) => s.metrics.equity);
 
   const symPositions = useMemo(() => positions.filter((p) => p.symbol === symbol), [positions, symbol]);
+  const allStrategies = useMemo(() => strategies.data?.strategies ?? [], [strategies.data]);
   const onSymbol = useMemo(() => {
-    const list = strategies.data?.strategies ?? [];
     const base = baseAsset(symbol);
     const holding = new Set(symPositions.map((p) => p.strategy ?? ""));
-    return list.filter((s) => holding.has(s.type) || !s.symbols || s.symbols.length === 0 || s.symbols.some((x) => baseAsset(x) === base));
-  }, [strategies.data, symbol, symPositions]);
+    return allStrategies.filter((s) => holding.has(s.type) || !s.symbols || s.symbols.length === 0 || s.symbols.some((x) => baseAsset(x) === base));
+  }, [allStrategies, symbol, symPositions]);
+  // Where this market stands with the daily book: held, a candidate the run may buy, or outside
+  // its pool. Read from the venue list, which is the same list the picker tags (2026-09-08).
+  const venueRow = useVenueMarkets().byMarket.get(symbol);
   const pos = symPositions[0] ?? null;
   const trading = cfg.data?.trading ?? null;
   const sc = market.rest?.symbol_config ?? null;
@@ -111,8 +123,13 @@ function BotTab({ market, positions }: { market: MarketView; positions: Position
   const slip = trading ? trading.slippage_bps : null;
   const estLiqLong = estEntry > 0 && leverage > 1 ? estEntry * (1 - 1 / leverage + PAPER_MAINTENANCE_MARGIN) : null;
   const marginNext = riskUsd !== null && trading ? Math.min(riskUsd * 10, trading.max_total_exposure_pct * eq) / leverage : null;
-  // a book whose only strategy on this market is the daily trend: the estimate is the next rebalance
-  const trendOnly = onSymbol.length > 0 && onSymbol.every((s) => s.type === "TREND_DAILY");
+  // The intraday "Next order" estimate only makes sense when an INTRADAY strategy could actually
+  // fire on this market. When the book's only live strategy is the daily trend — on every market,
+  // including one it does not hold — the next thing that can happen here is the daily rebalance.
+  // Until 2026-09-08 a market with no strategy assigned showed "$15 at risk" and an estimated
+  // liquidation under "No strategy is assigned", which contradicted itself.
+  const intradayHere = onSymbol.some((s) => s.type !== "TREND_DAILY");
+  const trendOnly = !intradayHere && allStrategies.some((s) => s.type === "TREND_DAILY");
   const rebalDrift = useMemo(() => {
     const held = pos ? positionNotional(pos) : 0;
     const delta = typeof target === "number" ? target * eq - held : 0;
@@ -128,7 +145,11 @@ function BotTab({ market, positions }: { market: MarketView; positions: Position
         {!strategies.loaded ? (
           <p className="text-[12.5px] font-medium text-text py-1">Loading strategies…</p>
         ) : onSymbol.length === 0 ? (
-          <p className="text-[12.5px] font-medium text-text py-1">No strategy is assigned to {symbol}</p>
+          <p className="text-[12.5px] font-medium text-text py-1 leading-snug">
+            {venueRow?.pool
+              ? `Nothing holds ${symbol} today. It is in the trend book's candidate pool: the daily run may buy it at 04:05 UTC if its trend and the liquidity floor allow.`
+              : `No strategy trades ${symbol}: it is listed on the venue but outside the trend book's pool.`}
+          </p>
         ) : (
           <div className="flex flex-col gap-1.5 py-1">
             {onSymbol.map((s) => {
@@ -174,8 +195,8 @@ function BotTab({ market, positions }: { market: MarketView; positions: Position
         // (2026-09-05). Same arithmetic as the engine: target weight × equity against what is held,
         // executed only past the rebalance band or the venue minimum.
         <ListSection title="Next rebalance (estimate)">
-          <ListRow label="Runs" hint="The daily run: 04:05 UTC, after the TradFi daily bars settle (midnight New York)">{Number.isFinite(nextRunMs) ? `in ${formatDurationShort((nextRunMs - now) / 1000)}` : "---"}</ListRow>
-          <ListRow label="Target weight" hint="The model's weight for this market at the last run, as a share of equity">{typeof target === "number" ? formatPct(target, 1) : "none"}</ListRow>
+          <ListRow label="Runs" hint="The daily run at 04:05 UTC, once the previous day's TradFi bars have settled">{Number.isFinite(nextRunMs) ? `in ${formatDurationShort((nextRunMs - now) / 1000)}` : "---"}</ListRow>
+          <ListRow label="Target weight" hint="The model's weight for this market at the last run, as a share of equity. 'none' = not in the universe at the last run">{typeof target === "number" ? formatPct(target, 1) : venueRow?.pool ? "none · candidate" : "none · outside the pool"}</ListRow>
           <ListRow label="Target notional" hint="Target weight × current equity">{typeof target === "number" ? formatMoney(target * eq) : "---"}</ListRow>
           <ListRow label="Held" hint={HINTS.notional}>{pos ? formatMoney(positionNotional(pos)) : formatMoney(0)}</ListRow>
           <ListRow label="Drift" hint="Target notional minus what is held. A kept weight only trades past the rebalance band (20 % of the position) or the venue minimum; a changed weight always trades">

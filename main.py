@@ -601,8 +601,17 @@ class BotStrike:
         # 1. Detectar régimen
         regime = self.regime_detector.detect(df, symbol, sym_config)
 
-        # Log cambio de régimen
+        # UNKNOWN from the detector means "no answer this tick" (frame too short after a stream
+        # gap), not a new regime: the detector itself keeps its confirmed regime in that case, so
+        # the engine keeps its last one too. Treating it as a change logged "regime_changed
+        # new=UNKNOWN" on BTC at 00:08Z while /api/regime read TRENDING_DOWN, notified Telegram and
+        # left the Activity feed on a regime that never existed (2026-09-08).
         old_regime = self._last_regime.get(symbol, MarketRegime.UNKNOWN)
+        if regime == MarketRegime.UNKNOWN and old_regime != MarketRegime.UNKNOWN:
+            logger.debug("regime_unknown_transient", symbol=symbol, kept=old_regime.value)
+            regime = old_regime
+
+        # Log cambio de régimen
         if regime != old_regime:
             self.trading_logger.log_regime_change(symbol, old_regime, regime)
             logger.info("regime_changed", symbol=symbol,

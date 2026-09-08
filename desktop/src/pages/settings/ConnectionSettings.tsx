@@ -114,8 +114,9 @@ export function ConnectionSettings() {
               The value is <code className="text-text">BOTSTRIKE_AUTH_TOKEN</code> in the bridge&apos;s <code className="text-text">.env</code>.
               It is stored per browser and per address, so a new address needs it again. To copy it without
               displaying it, in Git Bash:{" "}
-              <code className="text-text break-all">ssh root@HOST &apos;pct exec CT -- grep BOTSTRIKE_AUTH_TOKEN /opt/botstrike/app/.env&apos; | cut -d= -f2 | tr -d &apos;
-&apos; | clip</code>
+              {/* one JS string: split across JSX lines the newline inside the quotes was collapsed
+                  and the command rendered as `tr -d ''` (2026-09-08) */}
+              <code className="text-text break-all">{"ssh root@HOST 'pct exec CT -- grep BOTSTRIKE_AUTH_TOKEN /opt/botstrike/app/.env' | cut -d= -f2 | tr -d '\\r\\n' | clip"}</code>
             </p>
           )}
         </label>

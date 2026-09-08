@@ -3,10 +3,11 @@ import { useShallow } from "zustand/shallow";
 import { Search, Star } from "lucide-react";
 import { useMarketStore } from "@/stores/marketStore";
 import { useVenueMarkets } from "@/hooks/useVenueMarkets";
+import { useFavoriteSymbols } from "@/hooks/useFavoriteSymbols";
 import { fundingDirection, fundingMeaning } from "@/lib/market";
 import { useNow } from "@/hooks/useNow";
 import { useSymbolChanges } from "@/hooks/useSymbolChanges";
-import { FAVORITE_SYMBOLS, SYMBOLS, SYMBOL_COLORS, SYMBOL_LABELS } from "@/lib/constants";
+import { SYMBOLS, SYMBOL_COLORS, SYMBOL_LABELS } from "@/lib/constants";
 import { cn, formatCompact, formatCompactUSD, formatPrice, formatSignedPct } from "@/lib/utils";
 import { Modal } from "@/components/ui/Modal";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
@@ -38,6 +39,8 @@ export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerPr
 
   const venue = useVenueMarkets(open);
   const byMarket = venue.byMarket;
+  // the held markets first, then the streamed ones — the same list as the strip and the ticker
+  const favorites = useFavoriteSymbols();
 
   const rows = useMemo(() => {
     const all: string[] = venue.list.length ? venue.list.map((v) => v.symbol) : [...SYMBOLS];
@@ -47,7 +50,7 @@ export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerPr
     // supports — you had to know to switch tabs first (Edgar, 2026-09-04). The tabs are for browsing;
     // a query is for finding.
     const base = q ? all
-      : tab === "favorites" ? all.filter((s) => FAVORITE_SYMBOLS.includes(s))
+      : tab === "favorites" ? all.filter((s) => favorites.includes(s))
       : tab === "live" ? all.filter((s) => byMarket.get(s)?.feed ?? SYMBOLS.includes(s as (typeof SYMBOLS)[number]))
       : all;
     const filtered = base.filter((s) => !q || s.toLowerCase().includes(q) || (SYMBOL_LABELS[s] ?? "").toLowerCase().includes(q));
@@ -57,7 +60,7 @@ export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerPr
       return v?.held ? 0 : v?.feed ? 1 : v?.pool ? 2 : 3;
     };
     return filtered.sort((x, y) => rank(x) - rank(y) || x.localeCompare(y));
-  }, [tab, query, venue.list, byMarket]);
+  }, [tab, query, venue.list, byMarket, favorites]);
 
   useEffect(() => {
     if (open) inputRef.current?.focus();
@@ -108,7 +111,7 @@ export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerPr
           </thead>
           <tbody>
             {rows.length === 0 && (
-              <tr><td colSpan={6} className="c text-text">No market on the venue matches “{query}”</td></tr>
+              <tr><td colSpan={6} className="c text-text">{query ? `No market on the venue matches “${query}”` : "No markets in this list yet"}</td></tr>
             )}
             {rows.map((s, i) => {
               // Every figure in this row is the VENUE's. Reading price/change/volume/OI off the
@@ -127,7 +130,7 @@ export function MarketPicker({ open, onClose, symbol, onSelect }: MarketPickerPr
                 >
                   <td className="l">
                     <span className="inline-flex items-center gap-2">
-                      <Star className={cn("w-3.5 h-3.5", FAVORITE_SYMBOLS.includes(s) ? "text-amber fill-amber" : "text-text-3")} />
+                      <Star className={cn("w-3.5 h-3.5", favorites.includes(s) ? "text-amber fill-amber" : "text-text-3")} />
                       <span className="w-2 h-2 rounded-full" style={{ backgroundColor: SYMBOL_COLORS[s] ?? "#FFFFFF" }} />
                       <span className="font-semibold text-text">{s}</span>
                       {s === symbol && <span className="text-[11px] font-medium text-mint">current</span>}

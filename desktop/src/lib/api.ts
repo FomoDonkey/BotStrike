@@ -263,20 +263,39 @@ export interface TrendTrackingRecord {
   date: string;
   model_ret: number;
   paper_ret: number;
-  slippage_bps: number;
+  slippage_bps?: number;
+  turnover?: number;
+}
+
+/** One pool market against the venue liquidity floors (`/api/trend.liquidity.markets`). */
+export interface TrendLiquidityMarket {
+  /** the venue's 24 h quote volume, null when the venue publishes none */
+  venue_24h: number | null;
+  /** currently in the universe */
+  member: boolean;
+  ok_enter: boolean;
+  ok_exit: boolean;
 }
 
 export interface TrendResponse {
   enabled: boolean;
+  killed?: boolean;
   allocation: number;
   mode: string;
   next_run_utc: string | null;
   last_run_utc: string | null;
   last_run_status: string;
   last_error: string;
+  /** the last run filled at the current price instead of the 04:05 open */
+  last_run_late?: boolean;
+  /** why the last run held its adds (risk limits), "" when it did not */
+  last_adds_blocked?: string;
   universe: string[];
   candidates: number;
+  /** the model's weights at the last run */
   targets: Record<string, number>;
+  /** the weights actually held after the dead-band */
+  weights?: Record<string, number>;
   positions: TrendPosition[];
   equity_basis: number;
   exposure: number;
@@ -288,6 +307,20 @@ export interface TrendResponse {
     records: TrendTrackingRecord[];
   };
   params: Record<string, ConfigScalar>;
+  /** Bridge ≥ 2.16 (2026-09-05): the venue liquidity floors and every pool market against them */
+  liquidity?: {
+    enter_floor: number;
+    exit_floor: number;
+    /** false → venue volumes could not be fetched: the pick fails CLOSED and keeps the universe */
+    available: boolean;
+    markets: Record<string, TrendLiquidityMarket>;
+  };
+  liquidity_note?: string;
+  /** Strike mark / last settled reference close − 1, per market (the daily signal's data source vs the venue) */
+  basis?: Record<string, number>;
+  basis_ts?: number;
+  /** ratio above which a basis is flagged */
+  basis_warn?: number;
 }
 
 export interface RiskResponse {

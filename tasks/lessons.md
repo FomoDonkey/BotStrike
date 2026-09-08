@@ -1620,3 +1620,21 @@ qué controles la usaban como único punto de paso.
   entre dos ejecuciones diarias.
 - Medir la intuición en vez de discutirla: asegurar el 25-50 % del máximo cuesta 4 puntos de CAGR;
   ahora está en la tabla y no hay que volver a debatirlo.
+
+## 2026-09-08 — auditar la UI "al completo" = leer cada texto, no solo cada número
+- Las rondas anteriores comparaban cifras con la API (correctas). Lo desfasado vivía en los TEXTOS: cuatro "00:05 UTC"
+  tres días después de mover el run a las 04:05, tooltips que citaban estrategias retiradas, un "About" que decía que ETH
+  opera en mean reversion, un selector de exchange sin el venue real, cifras de funding escritas a mano que ya no
+  coincidían. Regla: cuando cambie un hecho del sistema (hora del run, venue, estrategias vivas, rango validado), grep
+  del hecho viejo en `desktop/src` y `config/overrides.py` (los textos de ayuda del esquema también son UI).
+- Un número escrito en un texto es un número que caduca: si se puede calcular del payload (medianas de funding, rango
+  validado, dwell del régimen), se calcula.
+- Antes de anunciar un bug de codificación, mirar los bytes: el "Â·" era mi `open()` sin `encoding=` en Windows, no el
+  servidor. `xxd` en 10 segundos ahorró un fix inexistente.
+- El mismo bug se repite en lectores hermanos: la entrada fantasma por fila EXIT se arregló en el Journal el 5 sep y seguía
+  en Order History. Al corregir un lector de un esquema, grep de los demás lectores del mismo campo (`entry_ts`,
+  `entry_price` en filas EXIT) en el mismo commit.
+- Los umbrales de alerta del cliente deben derivarse de los límites configurados, no ser constantes: 5 %/8 % de drawdown
+  eran razonables con el perfil conservador y un ruido garantizado con el agresivo (límite 39 %).
+- Un UNKNOWN del detector es "sin respuesta", no un régimen: dos consumidores (Activity y el motor) lo trataron como
+  cambio y uno (`/api/regime`) no, y la UI mostró dos verdades. Regla: los valores "sin dato" no se propagan como estado.

@@ -9,7 +9,6 @@ import { Panel, PanelHeader } from "@/components/ui/Panel";
 import { ListRow, ListSection, Signed } from "@/components/ui/ListRow";
 import { KpiCard, ProgressBar } from "@/components/ui/KpiCard";
 import { Chip, RegimeChip, StrategyTag } from "@/components/ui/Chip";
-import { SYMBOLS } from "@/lib/constants";
 import { HINTS } from "@/lib/hints";
 import { cn, formatMoney, formatPct, formatSignedMoney } from "@/lib/utils";
 import { positionNotional } from "@/lib/market";
@@ -81,13 +80,15 @@ export function RiskPage() {
     },
   ];
 
+  // One row per market the book HOLDS, largest first. Seeding the list with the four intraday
+  // symbols printed "ETH-USD $0.00" above gold, oil and ZEC — the engine's short list shown as if
+  // it were the book's (2026-09-08; the coverage lesson of 2026-09-05).
   const exposure = useMemo(() => {
     const by: Record<string, number> = {};
     for (const p of positions) by[p.symbol] = (by[p.symbol] ?? 0) + positionNotional(p);
-    const rows: { symbol: string; notional: number; ratio: number }[] = SYMBOLS.map((s) => ({ symbol: s, notional: by[s] ?? 0, ratio: equity > 0 ? (by[s] ?? 0) / equity : 0 }));
-    const known = new Set<string>(SYMBOLS);
-    for (const [s, n] of Object.entries(by)) if (!known.has(s)) rows.push({ symbol: s, notional: n, ratio: equity > 0 ? n / equity : 0 });
-    return rows;
+    return Object.entries(by)
+      .map(([symbol, notional]) => ({ symbol, notional, ratio: equity > 0 ? notional / equity : 0 }))
+      .sort((a, b) => b.notional - a.notional);
   }, [positions, equity]);
   const totalExposure = exposure.reduce((a, r) => a + r.notional, 0);
   const maxExposurePct = risk.account?.max_total_exposure_pct ?? null;
@@ -121,16 +122,19 @@ export function RiskPage() {
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
         <KpiCard label="Circuit breaker" hint="Trips on the max-drawdown limit or an engine halt; no new entries while tripped" value={<span className={cn("inline-flex items-center gap-2", halted ? "text-rose" : "text-mint")}>{halted ? <CircleOff className="w-5 h-5" /> : <Shield className="w-5 h-5" />}{risk.circuit_breaker_active ? "TRIPPED" : risk.drawdown_halted ? "HALTED" : "NORMAL"}</span>} sub={risk.drawdown_halted ? "Halted by the drawdown limit" : "All limits inside budget"} />
-        {/* The risk manager's peak tracks REALISED equity — the basis the drawdown ladder measures
-            against. Printed as plain "Peak" under the live value it read as a peak below the current
-            equity, which looks like a bug (audit 2026-09-03). */}
-        <KpiCard label="Equity" hint="Live equity including open positions (same as the top bar). The peak below is the realised equity the drawdown ladder measures from."
+        {/* Since 2026-09-05 the peak is MARK-TO-MARKET (open positions included) and persisted in
+            data/risk_peak.json — the same peak the drawdown ladder measures from. The hint used to
+            say "realised" beside a sub-line saying "mark-to-market" (2026-09-08). */}
+        <KpiCard label="Equity" hint="Live equity including open positions (same as the top bar). The peak below is the highest mark-to-market equity seen, persisted across restarts; the drawdown ladder measures from it."
                  value={formatMoney(equity)}
                  sub={risk.peak_equity > 0 ? `Peak equity ${formatMoney(risk.peak_equity)} (mark-to-market)` : "Peak not reported yet"} />
-        <KpiCard label="Session drawdown" hint={HINTS.drawdown} value={<span className={cn(risk.drawdown_pct > 0 && "text-rose")}>{formatPct(risk.drawdown_pct)}</span>} sub={`All-time max ${formatPct(metrics.max_drawdown)} · limit ${formatPct(risk.max_drawdown_pct, 0)}`}>
+        {/* not "session": it is the distance from the all-time peak, whatever the session */}
+        <KpiCard label="Drawdown from peak" hint={HINTS.drawdown} value={<span className={cn(risk.drawdown_pct > 0 && "text-rose")}>{formatPct(risk.drawdown_pct)}</span>} sub={`All-time max ${formatPct(metrics.max_drawdown)} · limit ${formatPct(risk.max_drawdown_pct, 0)}`}>
           <ProgressBar ratio={risk.max_drawdown_pct > 0 ? risk.drawdown_pct / risk.max_drawdown_pct : 0} tone={tone(risk.max_drawdown_pct > 0 ? risk.drawdown_pct / risk.max_drawdown_pct : 0)} />
         </KpiCard>
-        <KpiCard label="Regime" hint={HINTS.regime} value={<RegimeChip regime={risk.regime} size="md" />} sub={`${metrics.total_trades} trades all time`} />
+        {/* which market this chip is about, and that the book does not trade on it — a bare chip
+            next to "3 trades all time" read as the book's own state (2026-09-08) */}
+        <KpiCard label="Regime" hint={HINTS.regime} value={<RegimeChip regime={risk.regime} size="md" title="BTC-USD intraday regime (15 m bars). Informational: the trend book decides on daily bars." />} sub="BTC-USD · 15 m classifier · informational" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">

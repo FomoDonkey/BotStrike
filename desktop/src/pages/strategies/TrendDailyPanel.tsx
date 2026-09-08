@@ -9,8 +9,9 @@ import { ListRow, Signed } from "@/components/ui/ListRow";
 import { ProgressBar } from "@/components/ui/KpiCard";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { marketName } from "@/lib/market";
+import { Hint } from "@/components/shared/Hint";
 import { CHART_GRID, CHART_TEXT, CHART_TOOLTIP_ITEM, CHART_TOOLTIP_LABEL, CHART_TOOLTIP_STYLE, COLOR_BLUE, COLOR_UP } from "@/lib/constants";
-import { cn, formatLocalDateTime, formatMoney, formatPct, formatPrice, formatRelative, formatSignedMoney, formatSize } from "@/lib/utils";
+import { cn, formatCompactUSD, formatLocalDateTime, formatMoney, formatPct, formatPrice, formatRelative, formatSignedMoney, formatSignedPct, formatSize } from "@/lib/utils";
 import { trimNumber } from "@/components/settings/schemaUtils";
 import type { TrendPosition } from "@/lib/api";
 
@@ -28,7 +29,7 @@ export function TrendDailyPanel() {
     for (const r of recs) {
       m *= 1 + (Number.isFinite(r.model_ret) ? r.model_ret : 0);
       p *= 1 + (Number.isFinite(r.paper_ret) ? r.paper_ret : 0);
-      out.push({ date: r.date, model: (m - 1) * 100, paper: (p - 1) * 100, slippage: r.slippage_bps });
+      out.push({ date: r.date, model: (m - 1) * 100, paper: (p - 1) * 100, slippage: r.slippage_bps ?? 0 });
     }
     return out;
   }, [trend]);
@@ -46,6 +47,15 @@ export function TrendDailyPanel() {
   const barScale = Math.max(1e-9, ...targets.map(([, w]) => Math.abs(w)));
   const tracking = trend.tracking;
   const statusKind = /^(ok|success|done)$/i.test(trend.last_run_status) ? "ok" : /(error|fail)/i.test(trend.last_run_status) ? "error" : "disabled";
+  // The venue liquidity floors (round 9, 2026-09-05): a member the venue no longer trades enough
+  // leaves the same day, and a pool that cannot be measured is never re-picked. Both were
+  // invisible on this page until 2026-09-08 — the panel showed the universe as if it were a pure
+  // signal decision.
+  const liq = trend.liquidity;
+  const liqRows = Object.entries(liq?.markets ?? {}).sort((a, b) => Number(b[1].member) - Number(a[1].member) || (b[1].venue_24h ?? -1) - (a[1].venue_24h ?? -1));
+  const basis = Object.entries(trend.basis ?? {});
+  const basisWarn = trend.basis_warn ?? 0.025;
+  const basisFlagged = basis.filter(([, b]) => Math.abs(b) >= basisWarn);
 
   const posColumns: Column<TrendPosition>[] = [
     { id: "symbol", label: "Symbol", align: "l", render: (p) => <span className="font-semibold">{p.ui_symbol ?? marketName(p.symbol)}</span> },
@@ -65,7 +75,7 @@ export function TrendDailyPanel() {
           <>
             <StatusChip status={trend.enabled ? "enabled" : "disabled"} size="xs" />
             <StatusChip status={trend.mode} size="xs" />
-            <span className="hidden sm:inline text-[12px] font-medium text-text-2">alloc <span className="text-text font-semibold">{formatPct(trend.allocation, 0)}</span> · exposure <span className="text-text font-semibold">{formatPct(trend.exposure ?? 0, 0)}</span> · basis <span className="text-text font-semibold">{formatMoney(trend.equity_basis ?? 0)}</span></span>
+            <span className="hidden sm:inline text-[12px] font-medium text-text-2">alloc <span className="text-text font-semibold">{formatPct(trend.allocation, 0)}</span> · exposure <span className="text-text font-semibold">{formatPct(trend.exposure ?? 0, 0)}</span> · <Hint title="The equity the last run sized on (initial capital + realised + open PnL at 04:05 UTC). The account's live equity moves with the marks until the next run.">sized on</Hint> <span className="text-text font-semibold">{formatMoney(trend.equity_basis ?? 0)}</span></span>
           </>
         }
       />
@@ -73,8 +83,10 @@ export function TrendDailyPanel() {
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-2 h-7 flex items-center">Schedule</p>
           <ListRow label="Next run">{formatLocalDateTime(trend.next_run_utc)}{Number.isFinite(nextMs) && <span className="text-text-2 font-medium"> · {formatRelative(nextMs, now)}</span>}</ListRow>
-          <ListRow label="Last run"><span className="inline-flex items-center gap-2">{formatLocalDateTime(trend.last_run_utc)} <StatusChip status={statusKind} label={trend.last_run_status || "never"} size="xs" /></span></ListRow>
+          <ListRow label="Last run"><span className="inline-flex items-center gap-2">{formatLocalDateTime(trend.last_run_utc)} <StatusChip status={statusKind} label={trend.last_run_status || "never"} size="xs" />{trend.last_run_late && <Chip tone="amber" size="xs" title="The run happened after its slot and filled at the current price, not at the 04:05 open">late</Chip>}</span></ListRow>
           {trend.last_error && <p className="text-[12.5px] font-medium text-rose break-words mt-1">{trend.last_error}</p>}
+          {trend.last_adds_blocked && <p className="text-[12.5px] font-medium text-amber break-words mt-1" title="The risk limits held the book's adds at the last run; exits always execute">Adds held by risk: {trend.last_adds_blocked}</p>}
+          {trend.killed && <p className="text-[12.5px] font-medium text-rose mt-1">Killed by the edge monitor — the book is closed and no run opens positions.</p>}
           <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-2 h-7 flex items-center mt-2">
             Universe <span className="ml-1 normal-case tracking-normal font-medium">({trend.universe?.length ?? 0} of {trend.candidates} candidates)</span>
           </p>
@@ -123,9 +135,66 @@ export function TrendDailyPanel() {
         </div>
       </div>
 
+      {liq && (
+        <div className="px-4 py-3 border-t border-hairline">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2 text-[12.5px] font-medium">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-2">
+              <Hint title="Every pool market against the venue's own 24 h volume. A market must trade at least the ENTER floor to be picked and at least the EXIT floor to stay; a member below the exit floor leaves at the next run. Without venue volumes the pick fails closed and the universe is kept.">Venue liquidity</Hint>
+            </span>
+            <span className="text-text-2">enter ≥ <span className="text-text font-semibold num">{formatCompactUSD(liq.enter_floor)}</span></span>
+            <span className="text-text-2">exit ≥ <span className="text-text font-semibold num">{formatCompactUSD(liq.exit_floor)}</span></span>
+            <span className="text-text-2">per 24 h on the venue</span>
+            {!liq.available && <Chip tone="amber" size="xs" title="The venue's volumes could not be fetched: the universe is kept as it is until they can">volumes unavailable · pick held</Chip>}
+            {trend.liquidity_note && <span className="text-amber">{trend.liquidity_note}</span>}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {liqRows.map(([sym, r]) => {
+              const bad = r.member ? !r.ok_exit : !r.ok_enter;
+              const title = r.venue_24h === null
+                ? `${sym}: the venue publishes no 24 h volume — cannot be entered or exited by the floor`
+                : r.member
+                  ? `${sym} is in the universe · ${formatCompactUSD(r.venue_24h)} / 24 h on the venue · ${r.ok_exit ? "above the exit floor" : "BELOW the exit floor: leaves at the next run"}`
+                  : `${sym} is a candidate · ${formatCompactUSD(r.venue_24h)} / 24 h on the venue · ${r.ok_enter ? "above the enter floor" : "below the enter floor: cannot be picked today"}`;
+              return (
+                <span key={sym} title={title}
+                      className={cn("inline-flex items-baseline gap-1 rounded-[6px] px-2 py-1 bg-panel-2 text-[12px]", r.member && "ring-1 ring-hairline-strong")}>
+                  <span className="font-semibold text-text">{marketName(sym)}</span>
+                  <span className={cn("num font-semibold", bad ? "text-rose" : "text-text-2")}>{r.venue_24h === null ? "no volume" : formatCompactUSD(r.venue_24h)}</span>
+                  {r.member && <span className="text-[11px] text-mint">held</span>}
+                  {bad && <span className="text-[11px] text-rose">{r.member ? "exits" : "too thin"}</span>}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {basis.length > 0 && (
+        <div className="px-4 py-3 border-t border-hairline">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2 text-[12.5px] font-medium">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-2">
+              <Hint title="Strike's mark against the last settled close of the daily data source the signal is computed from (Binance spot for crypto, Yahoo futures for metals, energy and indices). The intraday move since that close is expected; a gap that persists means the two prices have parted.">Basis vs signal source</Hint>
+            </span>
+            <span className="text-text-2">warn at <span className="text-text font-semibold num">{formatPct(basisWarn, 1)}</span></span>
+            {basisFlagged.length > 0 && <Chip tone="amber" size="xs">{basisFlagged.length} flagged</Chip>}
+            {typeof trend.basis_ts === "number" && trend.basis_ts > 0 && <span className="text-text-2">measured {formatRelative(trend.basis_ts * 1000, now)}</span>}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {basis.map(([sym, b]) => (
+              <span key={sym} className="inline-flex items-baseline gap-1 rounded-[6px] px-2 py-1 bg-panel-2 text-[12px]" title={`${sym}: Strike mark / last settled source close − 1`}>
+                <span className="font-semibold text-text">{marketName(sym)}</span>
+                <span className={cn("num font-semibold", Math.abs(b) >= basisWarn ? "text-amber" : "text-text-2")}>{formatSignedPct(b, 2)}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="px-4 py-3 border-t border-hairline">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2 text-[12.5px] font-medium">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-2">Tracking</span>
+          <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-2">
+            <Hint title="Model = the strategy's own return from the daily source bars (close to close). Paper = what the paper book made over the same day at the venue's marks. The gap is execution: 04:05 fills instead of the close, Strike marks instead of Binance/Yahoo, the rebalance dead-band, fees and funding. TE = annualised tracking error of the daily differences.">Tracking</Hint>
+          </span>
           <span className="text-text-2"><span className="text-text font-semibold">{tracking?.days ?? 0}</span> days</span>
           <span className="text-text-2">model <span className="font-semibold" style={{ color: COLOR_BLUE }}>{formatPct(tracking?.model_return ?? 0)}</span></span>
           <span className="text-text-2">paper <span className="font-semibold" style={{ color: COLOR_UP }}>{formatPct(tracking?.paper_return ?? 0)}</span></span>

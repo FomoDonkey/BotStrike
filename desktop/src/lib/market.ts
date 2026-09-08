@@ -1,9 +1,10 @@
 // Derived market / position maths shared by the terminal, Dashboard and Performance.
 // Everything here is a pure function of bridge payloads; when a ≥ 2.15 field is present it
 // wins, otherwise the value is derived and the caller labels it as such.
-import type { ExitLadder, ExitLadderLevel, PositionData, TradeRecord } from "@/lib/api";
+import type { ExitLadder, ExitLadderLevel, FundingRate, PositionData, TradeRecord } from "@/lib/api";
 import type { Candle } from "@/stores/marketStore";
 import { SYMBOL_LABELS } from "@/lib/constants";
+import { formatPct, formatSignedPct } from "@/lib/utils";
 
 /** "BTC" from "BTC-USD" — works for the non-crypto markets of the multi-asset pool too. */
 export function marketLabel(symbol: string): string {
@@ -294,4 +295,25 @@ export function fundingDirection(rate: number | null | undefined): string {
 export function fundingMeaning(rate: number | null | undefined): string {
   if (typeof rate !== "number" || rate === 0) return "the book neither pays nor is paid";
   return rate > 0 ? "the book pays" : "the book is paid";
+}
+
+/**
+ * "Measured on the venue over 90 days, the pool's longs paid a median 8.1 %/yr of notional: from
+ * XAG at +15.1 % down to WTI at −16.1 %, where the longs are the ones being paid." — computed from
+ * the live 90-day medians of the pool (held + candidate markets). The sentence used to carry
+ * numbers typed in on 2026-09-03; WTI had already moved from −15.7 % to −16.1 % (2026-09-08).
+ */
+export function fundingHistoryCopy(rates: Record<string, FundingRate> | undefined): string | null {
+  const rows = Object.entries(rates ?? {})
+    .filter(([, r]) => (r.held || r.candidate) && typeof r.annualized_90d === "number")
+    .map(([sym, r]) => ({ sym: marketLabel(sym), v: r.annualized_90d as number }))
+    .sort((a, b) => b.v - a.v);
+  if (rows.length < 2) return null;
+  const vals = rows.map((r) => r.v);
+  const mid = Math.floor(vals.length / 2);
+  const median = vals.length % 2 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2;
+  const hi = rows[0];
+  const lo = rows[rows.length - 1];
+  const tail = lo.v < 0 ? ", where the longs are the ones being paid" : "";
+  return `Measured on the venue over 90 days, the pool's longs ${median >= 0 ? "paid" : "were paid"} a median ${formatPct(Math.abs(median), 1)}/yr of notional: from ${hi.sym} at ${formatSignedPct(hi.v, 1)} down to ${lo.sym} at ${formatSignedPct(lo.v, 1)}${tail}.`;
 }

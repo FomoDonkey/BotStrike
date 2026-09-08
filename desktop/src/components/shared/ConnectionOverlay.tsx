@@ -27,9 +27,8 @@ export function ConnectionOverlay() {
     probeBridge(getBridgeUrl())
       .then((h) => {
         if (cancelled) return;
-        if (h.exchange === "binance" || h.exchange === "hyperliquid") {
-          useExchangeStore.getState().setExchange(h.exchange);
-        }
+        // whatever the engine reports (strike included — it was skipped here until 2026-09-08)
+        useExchangeStore.getState().syncFromEngine(h.exchange);
         startWebSockets();
         setPhase("dismissed");
       })
@@ -79,7 +78,7 @@ export function ConnectionOverlay() {
         {phase === "setup" && (
           <>
             <h2 className="text-[24px] font-bold text-text mb-1">BotStrike</h2>
-            <p className="text-[13px] font-medium text-text-2 mb-2">Select your exchange to get started</p>
+            <p className="text-[13px] font-medium text-text-2 mb-2">The bridge did not answer. Pick the venue to start the engine on, or fix the address below.</p>
             <p className="text-[12.5px] font-medium text-text-2 mb-6">
               Bridge <span className="num text-text">{hostLabel}</span>{modeBadge}
               <button type="button" onClick={goSettings} className="ml-2 text-mint underline">change</button>

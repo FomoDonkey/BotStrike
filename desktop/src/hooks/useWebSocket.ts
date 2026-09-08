@@ -123,6 +123,8 @@ export function useWebSocketBridge() {
           useRiskStore.getState().onUpdate(riskData);
           useAlertStore.getState().checkAndTrigger({
             drawdown_pct: typeof msg.drawdown_pct === "number" ? msg.drawdown_pct : undefined,
+            // the rules are shares of the configured limit (alertStore); the update carries it
+            max_drawdown_pct: typeof msg.max_drawdown_pct === "number" ? msg.max_drawdown_pct : useRiskStore.getState().max_drawdown_pct,
           });
         }
       } catch (e) {

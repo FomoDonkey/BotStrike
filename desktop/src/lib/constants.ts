@@ -60,7 +60,9 @@ export const STRATEGY_DESCRIPTIONS: Record<string, string> = {
   // The two halves, in one line, because they are genuinely different venues: the SIGNAL is fitted
   // on ten years of Binance and Yahoo daily bars (Strike lists 168 days), the POSITION lives on
   // Strike. Saying only "on Binance spot" made a Strike terminal look mislabelled.
-  TREND_DAILY: "Daily Donchian ensemble: long the strongest trends, rebalanced at 00:05 UTC. Signal from Binance/Yahoo daily bars, positions on Strike.",
+  // 04:05 UTC, not 00:05: the run moved on 2026-09-05 so the TradFi daily bars are settled first
+  // (trend_execution_hour_utc). The engine's own description in /api/strategies wins when present.
+  TREND_DAILY: "Daily Donchian ensemble: long the strongest trends, rebalanced daily at 04:05 UTC. Signal from Binance/Yahoo daily bars, positions on Strike.",
   DIVERGENCE: "RSI divergence between confirmed pivots, entered on the structure break with MACD confirmation.",
 };
 
@@ -118,7 +120,11 @@ export const CHART_TOOLTIP_STYLE = {
 export const CHART_TOOLTIP_LABEL = { color: "rgba(255,255,255,0.80)" } as const;
 export const CHART_TOOLTIP_ITEM = { color: "#FFFFFF" } as const;
 
-/** Favorites strip / market picker: which symbols are pinned (all four for now). */
+/**
+ * Favorites strip / market picker / footer ticker: the markets pinned when the venue list is not
+ * in yet. Once it is, `useFavoriteSymbols` puts the markets the book HOLDS first — the strip used
+ * to show four crypto while the book held gold, oil and ZEC (2026-09-08).
+ */
 export const FAVORITE_SYMBOLS: readonly string[] = ["BTC-USD", "ETH-USD", "SOL-USD", "ADA-USD"];
 export const DOCS_URL = "https://github.com/FomoDonkey/BotStrike#readme";
 

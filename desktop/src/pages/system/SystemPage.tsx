@@ -10,7 +10,7 @@ import { PulsingDot } from "@/components/shared/PulsingDot";
 import { useSystemStore } from "@/stores/systemStore";
 import { useMarketStore } from "@/stores/marketStore";
 import { useExchangeStore } from "@/stores/exchangeStore";
-import { useBridgeConfig } from "@/lib/config";
+import { useBridgeConfig, SERVED_FROM_BRIDGE } from "@/lib/config";
 import { useEndpoint } from "@/hooks/useEndpoint";
 import { useNow } from "@/hooks/useNow";
 import { useBotControl, type BotAction } from "@/components/layout/useBotControl";
@@ -33,6 +33,8 @@ function factValue(v: unknown): string {
   }
   return String(v);
 }
+
+const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export function SystemPage() {
   const now = useNow();
@@ -144,7 +146,8 @@ export function SystemPage() {
             <ListRow label={`${EXCHANGE_LABELS[exchange] ?? exchange} feed`}><StatusChip status={system.wsConnected || (feedAge !== null && feedAge < 30) ? "online" : "offline"} size="xs" /></ListRow>
             <ListRow label="Last tick">{formatAge(feedAge)}{feedAge !== null ? " ago" : ""}</ListRow>
             <ListRow label="Endpoint">{exchange === "hyperliquid" ? "api.hyperliquid.xyz" : exchange === "strike" ? "api.strikefinance.org/ws/price" : "fstream.binance.com"}</ListRow>
-            <ListRow label="Framework">Tauri v2 · React 19</ListRow>
+            {/* the same bundle runs inside Tauri and served by the bridge; say which one this is */}
+            <ListRow label="Client">{inTauri ? "Tauri v2 · React 19" : `Web build served by ${SERVED_FROM_BRIDGE ? "the bridge" : "a dev server"} · React 19`}</ListRow>
           </ListSection>
         </Panel>
       </div>

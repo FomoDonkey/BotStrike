@@ -36,6 +36,7 @@ export interface Episode {
   /** realised PnL (Σ exit pnl); open episodes add `unrealized` on top for display */
   pnl: number;
   unrealized: number;
+  /** venue fees: the round-trip fee of every exit and trim, plus (open episodes) the entry fee accrued on what is still held */
   fees: number;
   fills: EpisodeFill[];
   exitReason: string | null;
@@ -84,7 +85,12 @@ export function buildEpisodes(fills: TradeData[], positions: PositionData[], now
       st.entryQty += f.quantity; st.entryCost += f.quantity * f.price;
       st.ep.entryPrice = st.entryQty > 0 ? st.entryCost / st.entryQty : f.price;
       st.ep.qty = Math.max(st.ep.qty, st.size);
-      st.ep.fees += f.fee || 0;
+      // The entry fee is NOT added here. An EXIT or trim row carries the ROUND-TRIP fee of the
+      // quantity that left (trade_database/models.py: `fee` on an EXIT is both legs; the entry
+      // share already debited at the fill rides in `entry_fee_charged`), so summing the ENTRY
+      // rows' fees as well would count that share twice as soon as a position opened after
+      // 2026-09-05 closes. While the position is open, the entry fee accrued on what is still held
+      // is `fees_paid` on the position, added below (2026-09-08).
     } else if (st.ep) {
       const after = st.size - f.quantity;
       const reason = String(f.exit_reason ?? "").toUpperCase();
@@ -124,6 +130,7 @@ export function buildEpisodes(fills: TradeData[], positions: PositionData[], now
       openEp.feeDebited = Number(p.entry_fee_debited ?? 0) || 0;
     } else {
       const openTs = Number(p.opened_ts ?? 0) || nowSec;
+      // (an open position whose fills are older than the loaded window)
       out.push({
         id: `${k}|pos|${openTs}`, symbol: p.symbol, strategy: p.strategy, long: isLong(p.side),
         openTs, closeTs: null, open: true, entryPrice: p.entry_price, exitPrice: null, qty: Math.abs(Number(p.size) || 0),

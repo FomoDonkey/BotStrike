@@ -59,7 +59,7 @@ export function RiskProfileCards() {
       addAlert({
         level: "info",
         title: `Risk level: ${capitalize(name)}`,
-        message: `${r.status}${r.restart_required ? " · restart required" : " · live at the next daily run (00:05 UTC)"}`,
+        message: `${r.status}${r.restart_required ? " · restart required" : " · loss limits live now · sizing at the next daily run (04:05 UTC)"}`,
       });
       await refreshRiskIntoStore();
     } catch (e) {
@@ -124,6 +124,7 @@ export function RiskProfileCards() {
             canApply={canApply}
             disabledReason={disabledReason}
             busy={busy}
+            range={[range[0] ?? 0.1, range[1] ?? 0.3]}
             onApply={() => setPending(p)}
           />
         ))}
@@ -169,7 +170,7 @@ export function RiskProfileCards() {
                 <dd>{formatPct(pending.limits.max_daily_loss_pct, 0)} / {formatPct(pending.limits.max_weekly_loss_pct, 0)}</dd>
               </dl>
               <p className="text-[13px] font-medium text-text leading-relaxed">
-                The new target volatility takes effect at the next daily run (00:05 UTC); the loss limits apply
+                The new target volatility takes effect at the next daily run (04:05 UTC); the loss limits apply
                 immediately. {RISK_LEVEL_COPY}
               </p>
             </div>
@@ -180,12 +181,14 @@ export function RiskProfileCards() {
   );
 }
 
-function ProfileCard({ p, selected, canApply, disabledReason, busy, onApply }: {
+function ProfileCard({ p, selected, canApply, disabledReason, busy, range, onApply }: {
   p: RiskProfileInfo;
   selected: boolean;
   canApply: boolean;
   disabledReason?: string;
   busy: boolean;
+  /** the validated target-vol range, from the bridge — never typed in here */
+  range: [number, number];
   onApply: () => void;
 }) {
   return (
@@ -260,9 +263,9 @@ function ProfileCard({ p, selected, canApply, disabledReason, busy, onApply }: {
         <div className="flex items-start gap-2 rounded-[6px] border border-amber/40 bg-amber/10 px-2 py-1.5">
           <AlertTriangle className="w-3.5 h-3.5 text-amber shrink-0 mt-0.5" />
           <p className="text-[12px] font-medium text-text leading-snug">
-            Outside the validated range. The research covers 10–30 % target volatility; this level was
-            chosen deliberately. Same strategy and nearly the same Sharpe — the extra return is a
-            bigger position, and the drawdown and the time spent under water grow with it.
+            Outside the validated range. The research covers {formatPct(range[0], 0)}–{formatPct(range[1], 0)} target
+            volatility; this level was chosen deliberately. Same strategy and nearly the same Sharpe — the extra
+            return is a bigger position, and the drawdown and the time spent under water grow with it.
           </p>
         </div>
       )}

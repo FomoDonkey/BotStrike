@@ -12,17 +12,20 @@ import { useVenueMarkets } from "./useVenueMarkets";
  * because the stream is Binance and the two exchanges close their day on different prints
  * (audit 2026-09-04).
  */
-export function useSymbolChanges(nowSec: number): Record<string, number | null> {
+export function useSymbolChanges(nowSec: number, symbols: readonly string[] = SYMBOLS): Record<string, number | null> {
   const candles = useMarketStore(useShallow((s) => s.candles));
   const prices = useMarketStore(useShallow((s) => s.prices));
   const { byMarket } = useVenueMarkets();
   const minute = Math.floor(nowSec / 60);
+  // the list is usually a stable constant; join it so a fresh array with the same content does
+  // not recompute
+  const key = symbols.join(",");
   return useMemo(() => {
     const out: Record<string, number | null> = {};
-    for (const sym of SYMBOLS) {
+    for (const sym of key.split(",").filter(Boolean)) {
       const venue = byMarket.get(sym)?.change_24h_pct;
       out[sym] = typeof venue === "number" ? venue : change24h(stats24h(candles[sym], minute * 60), prices[sym] || 0);
     }
     return out;
-  }, [candles, prices, byMarket, minute]);
+  }, [candles, prices, byMarket, minute, key]);
 }

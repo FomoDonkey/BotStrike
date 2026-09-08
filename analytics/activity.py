@@ -127,8 +127,12 @@ def build_event_row(event: str, ev: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Map a whitelisted structlog event to an activity row (kind/title/detail). None = ignore."""
     sym = ev.get("symbol")
     if event == "regime_changed":
-        if str(ev.get("old")) == "UNKNOWN":
-            return None                                      # startup, not a change
+        # UNKNOWN is the absence of a classification (start-up, or the detector's frame briefly too
+        # short), not a market regime. A transition INTO it used to post "Regime UNKNOWN · was
+        # TRENDING_DOWN" while /api/regime still said TRENDING_DOWN, and the way back was hidden as
+        # "start-up", so the feed's last word on BTC was a regime that never existed (2026-09-08).
+        if str(ev.get("old")) == "UNKNOWN" or str(ev.get("new")) == "UNKNOWN":
+            return None
         return {"kind": "regime", "title": f"Regime {ev.get('new')}", "detail": f"was {ev.get('old')}", "symbol": sym}
     if event == "trend_daily_run_ok":
         pos = ev.get("positions")

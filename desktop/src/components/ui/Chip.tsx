@@ -76,11 +76,11 @@ export function StatusChip({ status, label, className, size, title }: { status: 
 }
 
 /** Regime chip — RANGING blue · TRENDING_UP mint · TRENDING_DOWN rose · BREAKOUT amber · UNKNOWN white. */
-export function RegimeChip({ regime, className, size = "sm", suffix }: { regime: string | undefined | null; className?: string; size?: ChipProps["size"]; suffix?: ReactNode }) {
+export function RegimeChip({ regime, className, size = "sm", suffix, title }: { regime: string | undefined | null; className?: string; size?: ChipProps["size"]; suffix?: ReactNode; title?: string }) {
   const r = regime || "UNKNOWN";
   const tone: ChipTone = r === "RANGING" ? "blue" : r === "TRENDING_UP" ? "mint" : r === "TRENDING_DOWN" ? "rose" : r === "BREAKOUT" ? "amber" : "neutral";
   return (
-    <Chip tone={tone} size={size} className={className} title={`Regime ${r}`}>
+    <Chip tone={tone} size={size} className={className} title={title ?? `Regime ${r}`}>
       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: REGIME_COLORS[r] ?? REGIME_COLORS.UNKNOWN }} />
       {r.replace(/_/g, " ")}
       {suffix}

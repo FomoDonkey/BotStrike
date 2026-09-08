@@ -53,8 +53,12 @@ function orderRows(trades: TradeRecord[]): OrderRow[] {
         slippageBps: t.slippage_bps, spreadBps: t.spread_bps, regime: t.regime, strategy: t.strategy, fee: t.fee || 0, pnl: t.pnl,
         trigger: t.trigger, exitReason: t.exit_reason,
       });
-      // the entry fill of the same round-trip
-      if (t.entry_price > 0 && (t.entry_ts || t.entry_time)) {
+      // The entry fill of the same round trip — ONLY for a legacy row without a trade_type, which
+      // carried both legs. Since schema v3 every fill is its own row, so an EXIT row's entry
+      // fields describe the position's average entry, not a fill: synthesising one from each EXIT
+      // printed a phantom "ENTRY · BUY · fee $0.00" per trim and per exit, at the size of the exit,
+      // beside the real ENTRY rows (2026-09-08; the Journal had the same bug on 2026-09-05).
+      if (!t.trade_type && t.entry_price > 0 && (t.entry_ts || t.entry_time)) {
         out.push({
           key: `e-${t.id ?? t.trade_id ?? ""}-${t.entry_ts ?? t.entry_time}`,
           ts: t.entry_ts || t.entry_time,

@@ -54,7 +54,7 @@ export function AccountPanel({ positions, className, actions = true }: AccountPa
           <Signed value={acct.weekly_pnl} format={formatSignedMoney} />
           {risk.weeklyLimit > 0 && <span className="text-text-2 font-medium"> / -{formatMoney(risk.weeklyLimit, 0)}</span>}
         </ListRow>
-        <ListRow label="Realized PnL" hint="Closed-trade PnL net of fees (all-time)"><Signed value={acct.realized_pnl} format={formatSignedMoney} /></ListRow>
+        <ListRow label="Realized PnL" hint={HINTS.realized}><Signed value={acct.realized_pnl} format={formatSignedMoney} /></ListRow>
         <ListRow label="Fees today" hint={HINTS.feesToday}>{Number.isFinite(acct.fees_today) ? formatMoney(acct.fees_today) : "---"}</ListRow>
         <ListRow label="Peak equity">{acct.peak_equity > 0 ? formatMoney(acct.peak_equity) : "---"}</ListRow>
         <ListRow label="Drawdown" hint={HINTS.drawdown}><span className={acct.drawdown_pct > 0 ? "text-rose" : ""}>{formatPct(acct.drawdown_pct)}</span></ListRow>

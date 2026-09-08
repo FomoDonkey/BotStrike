@@ -5,16 +5,15 @@ import { useNow } from "@/hooks/useNow";
 import { Panel, PanelHeader } from "./Panel";
 import { ListRow, ListSection, Signed } from "./ListRow";
 import { ProgressBar } from "./KpiCard";
-import { marketLabel } from "@/lib/market";
+import { fundingHistoryCopy, marketLabel } from "@/lib/market";
 import { HINTS } from "@/lib/hints";
 import { cn, formatClock, formatMoney, formatPct, formatSignedMoney } from "@/lib/utils";
 
-/** Why funding exists and what it has cost historically — operator contract §3. */
+/** Why funding exists — operator contract §3. The measured figures are computed from the live
+ *  payload (`fundingHistoryCopy` in lib/market.ts), not typed in: the 90-day medians move every day. */
 export const FUNDING_COPY =
   "Perpetuals charge funding on a fixed clock — hourly on Strike. A long position pays when the " +
-  "rate is positive. Measured on " +
-  "Strike over 90 days, longs paid a median 8.1 %/yr of notional: from XAG at +15.1 % down to WTI " +
-  "at −15.7 %, where the longs are the ones being paid.";
+  "rate is positive and is paid when it is negative.";
 
 /**
  * Trade → Account tab block (§3): cumulative funding, the countdown to the next settlement and
@@ -27,17 +26,18 @@ export function FundingBlock({ funding }: { funding: EndpointState<FundingRespon
   const rates = Object.entries(f?.rates ?? {}).sort(
     (a, b) => Number(b[1].held ?? false) - Number(a[1].held ?? false) || a[0].localeCompare(b[0]));
   const left = secondsToSettlement(f?.next_settlement_utc, now);
-  const interval = f?.interval_hours ?? 8;
+  // the venue's cadence is a server fact: no guess (the block used to assume 8 h, the card 1 h)
+  const interval = typeof f?.interval_hours === "number" ? f.interval_hours : null;
 
   return (
     <ListSection title="Funding" right={f?.enabled === false ? "off" : undefined}>
       <ListRow label="Funding paid" hint={HINTS.fundingTotal}>
         <Signed value={typeof f?.total_paid === "number" ? f.total_paid : undefined} format={(v) => formatSignedMoney(v, 4)} />
       </ListRow>
-      <ListRow label="Next settlement" hint={`Funding settles every ${interval} h on the UTC clock. Strike settles hourly; Binance-style venues every 8 h.`}>
+      <ListRow label="Next settlement" hint={`Funding settles ${interval !== null ? `every ${interval} h` : "on the venue's clock"} (UTC). Strike settles hourly; Binance-style venues every 8 h.`}>
         {left === null ? "---" : formatClock(left)}
       </ListRow>
-      <ListRow label="Interval">{`${interval} h`}</ListRow>
+      <ListRow label="Interval">{interval !== null ? `${interval} h` : "---"}</ListRow>
       {rates.length === 0 ? (
         <p className="text-[12.5px] font-medium text-text py-1">
           {funding.missing ? "Live rates need bridge ≥ 2.16" : funding.loaded ? "No live funding rate yet" : "Loading funding…"}
@@ -97,7 +97,8 @@ export function FundingCostCard({ funding, className }: { funding: EndpointState
   let peak = 0;
   for (const [, v] of bySymbol) peak = Math.max(peak, Math.abs(v));
   const left = secondsToSettlement(f?.next_settlement_utc, now);
-  const interval = f?.interval_hours ?? 1;
+  const interval = typeof f?.interval_hours === "number" ? f.interval_hours : null;
+  const measured = fundingHistoryCopy(f?.rates);
 
   return (
     <Panel className={cn("flex flex-col", className)}>
@@ -118,7 +119,7 @@ export function FundingCostCard({ funding, className }: { funding: EndpointState
         </div>
         {bySymbol.length === 0 ? (
           <p className="text-[12.5px] font-medium text-text">
-            {funding.missing ? "GET /api/funding needs bridge ≥ 2.16" : `No funding settled yet — the first charge lands at the next ${interval} h mark.`}
+            {funding.missing ? "GET /api/funding needs bridge ≥ 2.16" : `No funding settled yet — the first charge lands at the next ${interval !== null ? `${interval} h ` : ""}settlement.`}
           </p>
         ) : (
           <div className="flex flex-col gap-2">
@@ -132,7 +133,7 @@ export function FundingCostCard({ funding, className }: { funding: EndpointState
             ))}
           </div>
         )}
-        <p className="text-[12px] font-medium text-text-2 leading-snug">{FUNDING_COPY}</p>
+        <p className="text-[12px] font-medium text-text-2 leading-snug">{FUNDING_COPY}{measured ? ` ${measured}` : ""}</p>
         {typeof f?.total_paid === "number" && f.total_paid !== 0 && (
           <p className="text-[12px] font-medium text-text-2 leading-snug">
             Paid so far: <span className="num text-text font-semibold">{formatMoney(Math.abs(f.total_paid), 4)}</span> — rose bars are markets the book paid, mint ones paid the book.

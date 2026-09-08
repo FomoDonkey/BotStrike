@@ -5,20 +5,31 @@ import { useEndpoint } from "@/hooks/useEndpoint";
 import { useMicroStore } from "@/stores/microStore";
 import { useExchangeStore } from "@/stores/exchangeStore";
 import { useMarketStore } from "@/stores/marketStore";
+import { useSystemStore } from "@/stores/systemStore";
+import { useVenueMarkets } from "@/hooks/useVenueMarkets";
 import { ListRow, ListSection } from "@/components/ui/ListRow";
 import { StrategyTag } from "@/components/ui/Chip";
 import { HINTS } from "@/lib/hints";
 import { EXCHANGE_LABELS, STRATEGY_DESCRIPTIONS, SYMBOL_LABELS } from "@/lib/constants";
-import { cn, formatCompact, formatCompactUSD, formatPct, formatPrice, formatSignedPct, formatUSD } from "@/lib/utils";
+import { capitalize, cn, formatCompact, formatCompactUSD, formatPct, formatPrice, formatSignedPct, formatUSD } from "@/lib/utils";
 import { formatCountdown, PAPER_MAINTENANCE_MARGIN, positionNotional, fundingDirection, fundingMeaning, fundingTone} from "@/lib/market";
 
 const CONFIG_POLL_MS = 60_000;
 
+// Facts about the asset only. The old text said ETH "trades in the same trend and mean-reversion
+// books as BTC": mean reversion was retired on 2026-08-31 and which markets the trend book holds
+// is decided by the daily run — that is said below from the venue list, never hard-coded (2026-09-08).
 const ABOUT: Record<string, string> = {
-  "BTC-USD": "Bitcoin perpetual. The largest and most liquid crypto market; the bot's regime reference symbol. Priced and executed on Strike.",
-  "ETH-USD": "Ether perpetual. Second by liquidity; trades in the same trend and mean-reversion books as BTC. Priced and executed on Strike.",
-  "SOL-USD": "Solana perpetual. Higher beta than BTC/ETH — wider ATR stops and smaller sizes. Priced and executed on Strike.",
-  "ADA-USD": "Cardano perpetual. Lower price, larger contract sizes; same risk rules as the other symbols. Priced and executed on Strike.",
+  "BTC-USD": "Bitcoin perpetual. The largest and most liquid crypto market and the intraday regime's reference symbol.",
+  "ETH-USD": "Ether perpetual. Second by liquidity; usually left out of the universe by the correlation cap against BTC.",
+  "SOL-USD": "Solana perpetual. Higher beta than BTC and ETH, so the vol-targeted sizing holds less of it per unit of weight.",
+  "ADA-USD": "Cardano perpetual. Low unit price, so the contract counts are large; sized like every other market, by its own volatility.",
+  "XAU-USD": "Gold perpetual. The metal of the pool; its daily bars come from Yahoo (futures), the price and the position live on Strike.",
+  "XAG-USD": "Silver perpetual. Thinner than gold on the venue: the liquidity floor is what decides whether the book may hold it.",
+  "WTI-USD": "WTI crude perpetual. The energy market of the pool; daily bars from Yahoo, position on Strike.",
+  "SP500-USD": "S&P 500 perpetual. Left the universe on 2026-09-06: it trades too little on the venue to be exited safely.",
+  "NAS100-USD": "Nasdaq 100 perpetual. In the candidate pool; the venue liquidity floor decides if it can be held.",
+  "ZEC-USD": "Zcash perpetual. Crypto member of the pool since the 2026-09-06 re-pick.",
 };
 
 /** Details tab (spec §3.1): About · Order size rules · Funding & fees · Price protection · Regime parameters. */
@@ -27,6 +38,8 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
   const ob = useMarketStore((s) => s.orderbooks[symbol]);
   const micro = useMicroStore((s) => s.snapshots[symbol]);
   const exchange = useExchangeStore((s) => s.exchange);
+  const mode = useSystemStore((s) => s.mode);
+  const venueRow = useVenueMarkets().byMarket.get(symbol);
   const cfg = useEndpoint(() => api.config(), CONFIG_POLL_MS);
   const symCfg = useMemo(() => cfg.data?.symbols.find((s) => s.symbol === symbol) ?? null, [cfg.data, symbol]);
   const trading = cfg.data?.trading ?? null;
@@ -39,24 +52,37 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
   const maker = sc?.maker_fee ?? trading?.maker_fee ?? null;
   const mm = sc?.maintenance_margin ?? PAPER_MAINTENANCE_MARGIN;
   const strategies = sc?.strategies ?? (symCfg && Array.isArray(symCfg.strategies) ? (symCfg.strategies as string[]) : null);
+  // "Risk per trade" is the intraday sizing rule; on a book whose only strategy is the daily trend
+  // it described nothing that runs (2026-09-08)
+  const intraday = (strategies ?? []).some((s) => s !== "TREND_DAILY");
+  const microOn = trading ? trading.microstructure_enabled === true : typeof micro?.risk_score === "number";
+  const minDwell = typeof trading?.regime_min_dwell_min === "number" ? trading.regime_min_dwell_min : null;
   const openNotional = positions.filter((p) => p.symbol === symbol).reduce((a, p) => a + positionNotional(p), 0);
   const base = SYMBOL_LABELS[symbol] ?? symbol.split("-")[0];
+  const modeLabel = capitalize(mode.replace("_", " "));
+  const membership = venueRow?.held ? "open position in the trend book"
+    : venueRow?.pool ? "in the trend book's candidate pool — the daily run may buy it"
+    : venueRow ? "listed on the venue, not in the trend book's pool"
+    : null;
 
   return (
     <div className="flex-1 min-h-0 overflow-auto">
       <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-x-6">
         <div className="min-w-0 md:col-span-2 2xl:col-span-3">
           <ListSection title={`About ${symbol}`} first>
-            <p className="text-[13px] font-medium text-text leading-relaxed">{ABOUT[symbol] ?? `${base} perpetual on ${EXCHANGE_LABELS[exchange] ?? exchange}.`}</p>
+            <p className="text-[13px] font-medium text-text leading-relaxed">
+              {ABOUT[symbol] ?? `${base} perpetual on ${EXCHANGE_LABELS[exchange] ?? exchange}.`}
+              {membership && <span className="text-text-2"> {capitalize(membership)}.</span>}
+            </p>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[12.5px]">
               {/* This is where the PRICES come from. Execution is Strike; calling the feed "Venue"
                   on a page about a market the bot trades elsewhere reads as the wrong claim. */}
               {/* One venue for both, since 2026-09-04. The daily bars the signal is computed from
                   still come from Binance and Yahoo, because Strike's history is 168 days deep. */}
               <span className="font-medium text-text-2">Live data <span className="text-text font-semibold">{EXCHANGE_LABELS[exchange] ?? exchange}</span></span>
-              <span className="font-medium text-text-2">Execution <span className="text-text font-semibold">Strike · paper</span></span>
+              <span className="font-medium text-text-2">Execution <span className="text-text font-semibold">Strike · {modeLabel}</span></span>
               <span className="font-medium text-text-2" title="Strike lists 168 days of daily bars for BTC and 19 for the S&P; the Donchian ensemble is fitted on ten years, so its daily history comes from Binance and Yahoo">Signal history <span className="text-text font-semibold">Binance · Yahoo</span></span>
-              <span className="font-medium text-text-2">Type <span className="text-text font-semibold">Perpetual · paper</span></span>
+              <span className="font-medium text-text-2">Type <span className="text-text font-semibold">Perpetual · {modeLabel}</span></span>
               <span className="font-medium text-text-2">Base / quote <span className="text-text font-semibold">{base} / USD</span></span>
               {strategies && strategies.length > 0 ? (
                 <span className="inline-flex items-center gap-2 font-medium text-text-2">Strategies {strategies.map((s) => <StrategyTag key={s} strategy={s} />)}</span>
@@ -78,8 +104,8 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
               {maxPos !== null ? formatUSD(maxPos) : <span className="text-text-2">No per-market cap</span>}
             </ListRow>
             <ListRow label="Min notional" hint="Smallest order the paper book accepts">{minNotional !== null ? formatUSD(minNotional) : <span title="symbol_config.min_notional_usd needs bridge ≥ 2.16">---</span>}</ListRow>
-            <ListRow label="Risk per trade" hint="Fraction of equity risked between entry and stop on each signal">{trading ? formatPct(trading.risk_per_trade_pct, 2) : "---"}</ListRow>
-            <ListRow label="Max total exposure" hint="Sum of open notionals / equity allowed">{trading ? formatPct(trading.max_total_exposure_pct, 0) : "---"}</ListRow>
+            {intraday && <ListRow label="Risk per trade" hint="Fraction of equity risked between entry and stop on each intraday signal">{trading ? formatPct(trading.risk_per_trade_pct, 2) : "---"}</ListRow>}
+            <ListRow label="Max total exposure" hint="Cap on the sum of open notionals: equity × this share × max leverage (the account-wide limit the risk manager enforces)">{trading ? formatPct(trading.max_total_exposure_pct, 0) : "---"}</ListRow>
             <ListRow label="Open on this symbol" hint={HINTS.notional}>{formatUSD(openNotional)}</ListRow>
           </ListSection>
 
@@ -173,7 +199,8 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
         <div className="min-w-0">
           <ListSection title="Regime parameters">
             <ListRow label="Detection frame" hint={HINTS.regime}>{m.regimeTf} min bars</ListRow>
-            <ListRow label="Min dwell" hint="A new regime must hold this long before it is confirmed">30 min</ListRow>
+            {/* the configured value (trading.regime_min_dwell_min), not a number typed in here */}
+            <ListRow label="Min dwell" hint="A new regime must hold this long before it is confirmed (trading.regime_min_dwell_min)">{minDwell !== null ? `${minDwell} min` : "---"}</ListRow>
             <ListRow label="Current regime">{m.regime.replace(/_/g, " ")}</ListRow>
             <ListRow label="Candidate" hint="Regime the detector is leaning to, not yet confirmed">{m.rest?.regime_candidate || "---"}</ListRow>
             <ListRow label="Since">{m.regimeSince > 0 ? new Date(m.regimeSince * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "---"}</ListRow>
@@ -182,18 +209,28 @@ export function MarketDetails({ market: m, positions }: { market: MarketView; po
 
         <div className="min-w-0">
           <ListSection title="Microstructure">
-            <ListRow label="VPIN" hint="Volume-synchronised probability of informed trading — order-flow toxicity">
-              {micro?.vpin ? <span className={cn(micro.vpin.is_toxic && "text-rose")}>{(micro.vpin.vpin * 100).toFixed(0)}%{micro.vpin.is_toxic ? " · toxic" : ""}</span> : "---"}
-            </ListRow>
-            <ListRow label="Hawkes" hint="Self-exciting intensity of trade arrivals vs baseline">
-              {micro?.hawkes ? <span className={cn(micro.hawkes.is_spike && "text-rose")}>{micro.hawkes.multiplier.toFixed(1)}x{micro.hawkes.is_spike ? " · spike" : ""}</span> : "---"}
-            </ListRow>
-            <ListRow label="Kyle λ" hint="Price impact per unit of signed volume">{micro?.kyle_lambda ? `${micro.kyle_lambda.lambda_bps.toFixed(2)} bps` : "---"}</ListRow>
-            <ListRow label="Adverse selection">{micro?.kyle_lambda ? `${micro.kyle_lambda.adverse_selection_bps.toFixed(2)} bps` : "---"}</ListRow>
-            <ListRow label="Risk score" hint="Composite 0–1 microstructure risk used to scale position sizing">
-              {typeof micro?.risk_score === "number" ? <span className={cn(micro.risk_score > 0.6 && "text-amber")}>{micro.risk_score.toFixed(2)}</span> : <span title="Microstructure is disabled on this bridge (trading.microstructure_enabled)">off</span>}
-            </ListRow>
-            {strategies && (
+            {/* Five rows of "---" for a switched-off feature read as five missing values. One line
+                says what it is (2026-09-08). */}
+            {!microOn ? (
+              <p className="text-[12.5px] font-medium text-text-2 py-1 leading-snug">
+                Off (trading.microstructure_enabled). VPIN, Hawkes and Kyle λ were inputs of the retired intraday strategies; the daily trend book does not use them.
+              </p>
+            ) : (
+              <>
+                <ListRow label="VPIN" hint="Volume-synchronised probability of informed trading — order-flow toxicity">
+                  {micro?.vpin ? <span className={cn(micro.vpin.is_toxic && "text-rose")}>{(micro.vpin.vpin * 100).toFixed(0)}%{micro.vpin.is_toxic ? " · toxic" : ""}</span> : "---"}
+                </ListRow>
+                <ListRow label="Hawkes" hint="Self-exciting intensity of trade arrivals vs baseline">
+                  {micro?.hawkes ? <span className={cn(micro.hawkes.is_spike && "text-rose")}>{micro.hawkes.multiplier.toFixed(1)}x{micro.hawkes.is_spike ? " · spike" : ""}</span> : "---"}
+                </ListRow>
+                <ListRow label="Kyle λ" hint="Price impact per unit of signed volume">{micro?.kyle_lambda ? `${micro.kyle_lambda.lambda_bps.toFixed(2)} bps` : "---"}</ListRow>
+                <ListRow label="Adverse selection">{micro?.kyle_lambda ? `${micro.kyle_lambda.adverse_selection_bps.toFixed(2)} bps` : "---"}</ListRow>
+                <ListRow label="Risk score" hint="Composite 0–1 microstructure risk used to scale position sizing">
+                  {typeof micro?.risk_score === "number" ? <span className={cn(micro.risk_score > 0.6 && "text-amber")}>{micro.risk_score.toFixed(2)}</span> : "---"}
+                </ListRow>
+              </>
+            )}
+            {strategies && strategies.length > 0 && (
               <ListRow label="Strategy notes">
                 <span className="text-[12px] font-medium text-text-2 whitespace-normal text-right">{strategies.map((s) => STRATEGY_DESCRIPTIONS[s]?.split(":")[0] ?? s).join(" · ")}</span>
               </ListRow>
