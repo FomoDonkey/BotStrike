@@ -1649,3 +1649,15 @@ qué controles la usaban como único punto de paso.
   del último build antes de sacar conclusiones.
 - Con la ventana de Chrome maximizada `resize_window` no cambia el viewport: un iframe de 390 px dentro de la propia página
   (mismo origen) reproduce los media queries y permite medir `scrollWidth` del documento embebido.
+
+## 2026-09-08 — "sigo pensando que no se contabiliza bien": rehacer el libro desde las filas, no releer identidades
+- Las 11 identidades anteriores eran verdad y aun así había algo mal: la sensación venía de un número que NO estaba en
+  ninguna identidad — el precio de entrada de las filas ENTRY (referencia de la señal, no el fill). Regla: cuando el
+  usuario desconfía sin poder señalar el fallo, reconstruir TODO desde los datos crudos (`scripts/reconcile_accounting.py`)
+  y comparar cada columna que él ve, no solo los totales.
+- Un mismo campo con dos semánticas por tipo de fila (`entry_price` = referencia en ENTRY, = media de la posición en EXIT)
+  acaba en la UI como "la entrada no cuadra con la posición". Si la DB no se puede migrar, el serializador debe servir un
+  solo significado y poner el otro en un campo con su nombre (`expected_price`).
+- Dos cadencias de refresco para "la misma" cifra en una pantalla (2 s / 5 s / 10 s) son una discrepancia visible aunque
+  la contabilidad sea exacta. Una cifra cabecera = una fuente; el resto de la pantalla puede ser un snapshot, pero no la
+  cabecera.
