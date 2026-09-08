@@ -78,8 +78,21 @@ endpoints del CT a JSON y perseguir cada texto/número que no coincidiera con la
   Journal a 390 px (iframe de 390 px: sin desbordes, `scrollWidth == clientWidth` en todas). 0 errores de consola.
 - [x] Tercera pasada: Activity dice "Trimmed LONG X · rebalance" para un trim (decía "Closed LONG" con la posición aún
   abierta al lado); leyenda del Journal oculta bajo 640 px (se cortaba a 390).
+### Ronda 17 — "sigo pensando que no se contabiliza bien" (2026-09-08 12:00Z)
+- [x] Reconciliación independiente desde las filas crudas (`scratchpad/reconcile.py`, 60 identidades): equity = capital +
+  Σ cash_effect (fills, fees, 395 filas de funding) + Σ PnL abierto; realizado, funding por mercado, fees cobradas,
+  tamaños y PnL abierto de las 6 posiciones recalculados desde los fills, cada fila EXIT = qty×(salida−entrada) − fee ida y
+  vuelta, estadísticas sobre ciclos, tabla diaria y win days, drawdown. TODO cuadra al céntimo.
+- [x] Lo que sí estaba mal: las filas ENTRY de la DB guardan el precio de REFERENCIA en `entry_price` (`main.py` pasa
+  `expected_price`) y el fill real en `price`/`exit_price`; `/api/trades` servía la referencia → Order History "Fill price",
+  marcadores del chart y la entrada VWAP del Journal quedaban 1,5–4 bps por debajo de la media que lleva la posición
+  ("Entry 79.285,80" no cuadraba con las entradas listadas). Corregido en el serializador (fill = `entry_price`,
+  referencia en `expected_price`, `exit_price` 0 en entradas). Test.
+- [x] Dos equities en la misma pantalla (barra superior por el frame `metrics` de 2 s; Portfolio por `/api/portfolio` de
+  10 s; Account por `risk_update` de 5 s): hasta 26 céntimos de diferencia a la vez. Ahora una sola fuente (la cuenta del
+  risk loop, 5 s) en barra superior, Portfolio y Account.
 ### Pendiente
-- [ ] Nada de UI. Observación de quant (no UI): tracking modelo vs papel (7 días: modelo +1,1 %, papel −0,2 %, TE 26 %).
+- [ ] Observación de quant (no UI): tracking modelo vs papel (7 días: modelo +1,1 %, papel −0,2 %, TE 26 %).
 - [ ] Observación de quant, no de UI: tracking modelo +3,1 % vs papel +0,9 % en 6 días (TE 27 %); el 7 sep modelo +3,64 %
   vs papel +0,71 %. Revisar la definición de `paper_ret` (¿ventana 04:05→04:05 con marcas del venue?) antes de leerlo como
   coste de ejecución.
