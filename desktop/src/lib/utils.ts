@@ -164,11 +164,14 @@ export function formatDateTime(ts: number | string | null | undefined): string {
   return new Date(ms).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-/** "Sep 7" from epoch seconds/milliseconds (day-level labels: estimated-until, day-ends). */
-export function formatDate(ts: number | null | undefined): string {
+/**
+ * "Sep 7" from epoch seconds/milliseconds. `utc` for UTC-day labels (the book's days end at
+ * 23:59:59Z, which a local clock in Madrid would print as 01:59 the NEXT day).
+ */
+export function formatDate(ts: number | null | undefined, utc = false): string {
   const ms = toMs(ts);
   if (!ms) return "---";
-  return new Date(ms).toLocaleDateString([], { month: "short", day: "numeric" });
+  return new Date(ms).toLocaleDateString([], { month: "short", day: "numeric", ...(utc ? { timeZone: "UTC" } : {}) });
 }
 
 /** Money with thousands separators: 1003.42 → "$1,003.42"; negatives "-$0.20". */

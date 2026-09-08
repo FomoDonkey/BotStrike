@@ -133,7 +133,7 @@ export function PortfolioChart({ days, missing, todayIso, curve, history, peak, 
   };
 
   const note = tab === "value" && hasEst
-    ? `Dashed = estimated${estUntil ? ` up to ${formatDate(estUntil)}` : ""}: fills valued at each day's source close (Binance / Yahoo), not the venue's mark. Solid = the account sampled every minute${realSince ? ` since ${formatDateTime(realSince)}` : ""}.`
+    ? `Dashed = estimated${estUntil ? ` through ${formatDate(estUntil, true)} (UTC day)` : ""}: fills valued at each day's source close (Binance / Yahoo), not the venue's mark. Solid = the account sampled every minute${realSince ? ` since ${formatDateTime(realSince)}` : ""}.`
     : tab === "value" && valueData.length >= 2 && history?.samples
       ? "Marked equity, one sample a minute (analytics/equity_history)."
       : tab === "pnl" && dayData.some((d) => d.pnl_mtm !== undefined)

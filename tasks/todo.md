@@ -103,6 +103,18 @@ endpoints del CT a JSON y perseguir cada texto/número que no coincidiera con la
   MTM del día; fila "Realised equity"; sparkline/Max DD de la estrategia MTM; `Freshness` ("updated Xs ago" / "refresh
   failed") en Portfolio, Trend panel, niveles de riesgo y Ops monitor.
 - [x] `tasks/audit_metrics_2026-09-08.md`: cada métrica de la UI con fuente, cadencia, definición y estado.
+- [x] Desplegado (c643617, 509 tests, PASS 12:20Z). API tras el arranque: estimados 2, 3, 4 y 6 sep (1.003,85 → 1.015,14 →
+  1.010,63 → 1.038,81) y muestras reales desde 12:21Z; pico 1.038,87 = el persistido. Faltaban el 5 (sábado) y el 7 sep:
+  la reconstrucción saltaba el día si un mercado TradFi tenido no tenía vela diaria en la caché.
+- [x] `close_on_or_before()` (2c5ecf6, 509 tests, PASS 12:26Z): el día sin vela toma el último cierre asentado (≤ 4 días).
+  Serie completa 2–7 sep: 1.003,85 · 1.015,14 · 1.010,63 · 1.010,80 · 1.038,81 · 1.017,06 → reales 1.012,x.
+- [x] **Los paneles con polling se congelaban con la ventana tapada** (2777e8d, 510 tests, PASS 12:45Z): Chrome en Windows
+  marca `visibilityState = hidden` a una ventana OCLUIDA (terminal delante), `usePolling` saltaba cada tick y el lateral de
+  Portfolio se quedaba en "updated 60 s ago · stale" mientras el WS movía la cabecera — medido en Chrome: 0 fetches en
+  25 s con `hasFocus() = true`. Ahora el polling no se pausa nunca (el navegador ya estrangula la pestaña oculta de verdad).
+  Con la pestaña visible: `/api/portfolio` a t=6 s y 16 s (cada 10 s), `/api/trades` a 11 s.
+- [x] Nota del gráfico Account Value recortada por la altura del panel (copia más corta + `shrink-0`, min-h 200); fila Sharpe
+  desbordaba con la razón entera y "30.0" → "n/a · 7/30 days" (razón en el tooltip; `sharpe_days`/`sharpe_min_days` en la API).
 ### Pendiente
 - [ ] Observación de quant (no UI): tracking modelo vs papel (7 días: modelo +1,1 %, papel −0,2 %, TE 26 %).
 - [ ] Observación de quant, no de UI: tracking modelo +3,1 % vs papel +0,9 % en 6 días (TE 27 %); el 7 sep modelo +3,64 %

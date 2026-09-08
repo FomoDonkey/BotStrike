@@ -1661,3 +1661,28 @@ qué controles la usaban como único punto de paso.
 - Dos cadencias de refresco para "la misma" cifra en una pantalla (2 s / 5 s / 10 s) son una discrepancia visible aunque
   la contabilidad sea exacta. Una cifra cabecera = una fuente; el resto de la pantalla puede ser un snapshot, pero no la
   cabecera.
+
+## 2026-09-08 — "el máximo del gráfico es el actual": si no hay histórico marcado, no hay histórico
+Edgar vio la cuenta en +25/+38 y el gráfico de Portfolio con el máximo en "ahora". Tenía razón: el bot no guardaba
+NINGUNA serie mark-to-market; todo lo histórico salía de la cadena de caja, que con seis posiciones abiertas es plana,
+y solo el punto de hoy llevaba el PnL abierto. Un pico que el propio risk manager persiste (1.038,87) no aparecía en
+ninguna gráfica. **Regla:** toda superficie "histórica" (curva, drawdown, días ganados, racha, Sharpe, sparkline) lee
+una serie MTM muestreada (`analytics/equity_history.py`, 1/min) y, para los días anteriores al muestreo, una
+reconstrucción ESTIMADA marcada como tal y dibujada distinta. Un estimado se declara en pantalla; no se disfraza.
+Detalle que costó un despliegue más: la reconstrucción saltaba sábados y el último día TradFi sin vela en caché —
+"sin cierre ese día" se resuelve con el último cierre asentado, no saltando el día.
+
+## 2026-09-08 — "hay métricas que no se actualizan solas": medir el polling, no leer el código
+El código decía "se refresca cada 10 s" y el panel decía "updated 60 s ago · stale". Chrome en Windows marca como
+`hidden` una ventana OCLUIDA (la terminal delante del navegador), y `usePolling` saltaba cada tick oculto: 0 fetches en
+25 s con `document.hasFocus() = true`. El WS seguía moviendo la cabecera, así que el lateral parecía "obsoleto" al lado
+de números vivos — exactamente lo que Edgar describía. **Regla:** ante "no se actualiza", medir con
+`performance.getEntriesByType('resource')` cuántos fetches salen en N segundos y en qué estado de visibilidad; y no
+pausar polling por visibilidad — el navegador ya estrangula la pestaña oculta de verdad, y la ocluida no es oculta
+para quien la mira. Cada panel con polling lleva ahora su "updated Xs ago" para que esto se vea, no se suponga.
+
+## 2026-09-08 — una nota bajo un gráfico en un panel de altura fija se recorta sin avisar
+`overflow-hidden` en el panel + `min-h` del gráfico + una nota de dos líneas = la segunda línea desaparece y nadie
+lo ve salvo en una captura real. Medirlo: `getBoundingClientRect().bottom` de la nota contra la del contenedor.
+Copia corta y `shrink-0` en el pie; el gráfico es lo que cede altura.
+
