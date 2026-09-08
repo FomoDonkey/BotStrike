@@ -124,7 +124,7 @@ export function StrategiesPage() {
     { id: "pnl", label: "All-time PnL", sortValue: (r) => r.pf?.pnl ?? r.edge?.net_pnl ?? null, render: (r) => <Signed value={r.pf?.pnl ?? r.edge?.net_pnl ?? null} format={formatSignedMoney} /> },
     { id: "realized", label: "Realized", sortValue: (r) => r.pf?.realized ?? null, render: (r) => <Signed value={r.pf?.realized ?? null} format={formatSignedMoney} /> },
     { id: "volume", label: "Volume", sortValue: (r) => r.pf?.volume ?? null, render: (r) => <span className="num">{r.pf ? formatMoney(r.pf.volume) : "---"}</span> },
-    { id: "trades", label: "Trades", sortValue: (r) => r.pf?.trades ?? r.edge?.n ?? null, render: (r) => <span className="num">{r.pf?.trades ?? r.edge?.n ?? "---"}</span> },
+    { id: "trades", label: "Round trips", sortValue: (r) => r.pf?.trades ?? r.edge?.n ?? null, render: (r) => <span className="num">{r.pf?.trades ?? r.edge?.n ?? "---"}</span> },
     { id: "fees", label: "Fees", sortValue: (r) => r.pf?.fees ?? r.edge?.fees ?? null, render: (r) => <span className="num">{typeof (r.pf?.fees ?? r.edge?.fees) === "number" ? formatMoney((r.pf?.fees ?? r.edge?.fees) as number) : "---"}</span> },
     { id: "wr", label: "Win rate", sortValue: (r) => r.pf?.win_rate ?? r.edge?.win_rate ?? null, render: (r) => <span className="num">{typeof (r.pf?.win_rate ?? r.edge?.win_rate) === "number" ? formatPct((r.pf?.win_rate ?? r.edge?.win_rate) as number, 0) : "---"}</span> },
     { id: "sharpe", label: "Sharpe", sortValue: (r) => r.pf?.sharpe ?? null, render: (r) => <span className="num">{typeof r.pf?.sharpe === "number" ? r.pf.sharpe.toFixed(2) : "n/a"}</span> },

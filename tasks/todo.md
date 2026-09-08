@@ -115,6 +115,10 @@ endpoints del CT a JSON y perseguir cada texto/número que no coincidiera con la
   Con la pestaña visible: `/api/portfolio` a t=6 s y 16 s (cada 10 s), `/api/trades` a 11 s.
 - [x] Nota del gráfico Account Value recortada por la altura del panel (copia más corta + `shrink-0`, min-h 200); fila Sharpe
   desbordaba con la razón entera y "30.0" → "n/a · 7/30 days" (razón en el tooltip; `sharpe_days`/`sharpe_min_days` en la API).
+- [x] **"Trade History pone 3 pero hay más trades"** (Edgar, 15:20Z): el badge de la pestaña contaba round trips (3) y la
+  tabla listaba 6 salidas (3 round trips + 3 trims). Un badge cuenta LAS FILAS de su pestaña: ahora 6 en Trade y en
+  Portfolio, y la línea de cabecera dice "6 exits listed: 3 round trips closed + 3 rebalance trims … statistics count 3".
+  La tarjeta y el leaderboard de Strategies dicen "Round trips" en vez de "Trades". Filas en la API: 6 EXIT (comprobado).
 ### Pendiente
 - [ ] Observación de quant (no UI): tracking modelo vs papel (7 días: modelo +1,1 %, papel −0,2 %, TE 26 %).
 - [ ] Observación de quant, no de UI: tracking modelo +3,1 % vs papel +0,9 % en 6 días (TE 27 %); el 7 sep modelo +3,64 %

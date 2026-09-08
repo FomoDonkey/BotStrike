@@ -41,7 +41,7 @@ export function TradeHistoryTable({ trades, loading, error, symbol, limit = 150 
     <div className="overflow-auto flex-1 min-h-0">
       {trims > 0 && (
         <div className="px-3 py-1.5 border-b border-hairline text-[12px] font-medium text-text-2 sticky left-0">
-          <span className="text-text font-semibold">{roundTrips}</span> round trip{roundTrips === 1 ? "" : "s"} closed · <span className="text-text font-semibold">{trims}</span> rebalance trim{trims === 1 ? "" : "s"} (REBAL) — a trim realises money but is not a trade
+          <span className="text-text font-semibold">{trades.length}</span> exit{trades.length === 1 ? "" : "s"} listed: <span className="text-text font-semibold">{roundTrips}</span> round trip{roundTrips === 1 ? "" : "s"} closed + <span className="text-text font-semibold">{trims}</span> rebalance trim{trims === 1 ? "" : "s"} (REBAL) — a trim realises money but is not a trade, so statistics count {roundTrips}
         </div>
       )}
       <table className="term-table" style={{ minWidth: 1240 }}>

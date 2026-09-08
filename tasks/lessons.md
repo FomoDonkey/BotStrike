@@ -1686,3 +1686,11 @@ para quien la mira. Cada panel con polling lleva ahora su "updated Xs ago" para 
 lo ve salvo en una captura real. Medirlo: `getBoundingClientRect().bottom` de la nota contra la del contenedor.
 Copia corta y `shrink-0` en el pie; el gráfico es lo que cede altura.
 
+## 2026-09-08 — un badge cuenta lo que hay dentro de su pestaña, no una definición
+"Trade History 3" sobre una tabla de 6 filas. La definición (un trade = un round trip; un trim no es un trade) era
+correcta y estaba escrita en la cabecera de la tabla, pero el número de la pestaña y el número de filas eran distintos,
+y eso se lee como "mal contabilizado" — con razón. **Regla:** el número de una pestaña, un contador o un título es el
+número de filas que se ven al abrirla; las definiciones finas (round trips vs trims) van en la línea de cabecera y en
+las estadísticas, con la palabra exacta ("Round trips", no "Trades"). Y comprobar cada pareja badge/tabla en el
+navegador, no solo cada número contra la API.
+

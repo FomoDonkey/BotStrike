@@ -114,7 +114,7 @@ export function StrategyCard({ s, pf, edge, allocField, busy, expanded, onToggle
         {/* realised round trips of the last 30 days over the initial capital — NOT the mark-to-market
             figure beside it, which includes the open positions (2026-09-08) */}
         <ListRow label="30D realised" hint="Net PnL of the round trips closed in the last 30 days, as a share of the initial capital. Open positions are not in it; the all-time figure above includes them."><Signed value={pf ? pf.return_30d : null} format={(v) => `${v > 0 ? "+" : ""}${(v * 100).toFixed(2)}%`} /></ListRow>
-        <ListRow label="Trades">{pf ? pf.trades : edge ? edge.n : "---"}</ListRow>
+        <ListRow label="Round trips" hint="Positions opened and flattened. Rebalance trims realise money but are not counted (Trade History lists both)">{pf ? pf.trades : edge ? edge.n : "---"}</ListRow>
         <ListRow label="Win rate">{pf ? formatPct(pf.win_rate, 0) : edge ? formatPct(edge.win_rate, 0) : "---"}</ListRow>
         <ListRow label="PF" hint="Profit factor = gross wins / gross losses. Infinite until the first loss.">{pf ? profitFactor(pf.profit_factor) : edge ? profitFactor(edge.profit_factor) : "---"}</ListRow>
         <ListRow label="Sharpe">{pf && typeof pf.sharpe === "number" ? num(pf.sharpe) : "n/a"}</ListRow>
