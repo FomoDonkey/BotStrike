@@ -1043,9 +1043,8 @@ async def _backfill_equity_history() -> None:
     engine = state.engine
     try:
         from datetime import datetime, timedelta, timezone
-        from analytics.equity_history import get_equity_history, reconstruct_daily_mtm
+        from analytics.equity_history import close_on_or_before, get_equity_history, reconstruct_daily_mtm
         from strategies.trend_daily import to_ui_symbol
-        import pandas as pd
         hist = get_equity_history()
         repo = getattr(engine, "trade_repo", None)
         te = getattr(engine, "trend_engine", None)
@@ -1068,15 +1067,7 @@ async def _backfill_equity_history() -> None:
 
         def close_fn(ui_symbol: str, day: str):
             df = frames.get(ui2pool.get(ui_symbol, ui_symbol))
-            if df is None:
-                return None
-            ts = pd.Timestamp(day)
-            if ts not in df.index:
-                return None
-            try:
-                return float(df.loc[ts, "close"])
-            except Exception:  # noqa: BLE001
-                return None
+            return None if df is None else close_on_or_before(df, day)
 
         pts = reconstruct_daily_mtm(trades, float(engine.settings.trading.initial_capital), close_fn,
                                     first.strftime("%Y-%m-%d"), last.strftime("%Y-%m-%d"))

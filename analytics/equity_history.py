@@ -281,6 +281,26 @@ def reconstruct_daily_mtm(trades: List[Any], initial_capital: float, close_fn: C
     return out
 
 
+def close_on_or_before(df: Any, day: str, max_gap_days: int = 4) -> Optional[float]:
+    """The daily source close for `day`, or the last settled close before it when that day has no
+    bar — a weekend or a holiday on a TradFi market, or the newest TradFi day not cached yet — as
+    long as it is not more than `max_gap_days` old. Without this the reconstruction skipped every
+    Saturday and the last Monday of the book (2026-09-08)."""
+    try:
+        import pandas as pd
+        ts = pd.Timestamp(day)
+        sub = df.loc[:ts]
+        if sub.empty:
+            return None
+        last_ts = sub.index[-1]
+        if (ts - last_ts).days > max_gap_days:
+            return None
+        v = float(sub["close"].iloc[-1])
+        return v if v > 0 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 _HISTORY: Optional[EquityHistory] = None
 _HISTORY_LOCK = threading.Lock()
 

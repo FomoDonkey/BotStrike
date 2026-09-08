@@ -87,6 +87,17 @@ def test_reconstruct_daily_mtm_prices_open_positions_at_the_day_close():
     assert [p["ts"] for p in pts2] == [pts[0]["ts"], pts[2]["ts"]]
 
 
+def test_close_on_or_before_carries_the_last_settled_close_over_a_weekend():
+    pd = pytest.importorskip("pandas")
+    df = pd.DataFrame({"close": [100.0, 104.0, 110.0]},
+                      index=pd.to_datetime(["2026-09-03", "2026-09-04", "2026-09-08"]))
+    assert eh.close_on_or_before(df, "2026-09-04") == 104.0
+    assert eh.close_on_or_before(df, "2026-09-05") == 104.0            # Saturday → Friday's settle
+    assert eh.close_on_or_before(df, "2026-09-07") == 104.0            # Monday not cached yet → Friday
+    assert eh.close_on_or_before(df, "2026-09-02") is None             # nothing before the first bar
+    assert eh.close_on_or_before(df, "2026-09-20") is None             # 12 days without a bar: not an estimate
+
+
 def test_portfolio_surfaces_read_the_mark_to_market_history(tmp_path):
     h = eh.EquityHistory(str(tmp_path / "eq.json"))
     # 09-02 close 1005 (est) · 09-03 close 1030 (est) · 09-04: real samples 1020 → 1038 → 1010

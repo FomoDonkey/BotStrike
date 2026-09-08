@@ -91,6 +91,18 @@ endpoints del CT a JSON y perseguir cada texto/número que no coincidiera con la
 - [x] Dos equities en la misma pantalla (barra superior por el frame `metrics` de 2 s; Portfolio por `/api/portfolio` de
   10 s; Account por `risk_update` de 5 s): hasta 26 céntimos de diferencia a la vez. Ahora una sola fuente (la cuenta del
   risk loop, 5 s) en barra superior, Portfolio y Account.
+### Ronda 18 — "el máximo del gráfico es el actual aunque la cuenta estuvo en +25" (2026-09-08 13:30Z)
+- [x] Causa raíz: NO existía histórico mark-to-market; todo lo histórico salía de la cadena de caja (plana con
+  posiciones abiertas). `analytics/equity_history.py`: 1 muestra/min persistida (`data/equity_history.json`, 120 d)
+  + reconstrucción estimada de los días anteriores (fills al cierre diario de la fuente, marcada `est`).
+- [x] `/api/performance.equity_curve_ts` = serie MTM (la de caja en `equity_curve_realised_ts`), max DD = peor
+  pico-valle de la serie; `/api/portfolio`: equity diaria MTM (`equity_realised`, `equity_est`, `pnl_mtm`), win days
+  y racha MTM, drawdown 30D MTM, Sharpe 30D sobre retornos MTM (n/a hasta 30 días), Max DD MTM en la estrategia que
+  es todo el libro. 7 tests nuevos (`tests/test_equity_history.py`).
+- [x] UI: gráfico Account Value = serie MTM con prefijo estimado discontinuo, línea del pico y nota; barras PNL = movimiento
+  MTM del día; fila "Realised equity"; sparkline/Max DD de la estrategia MTM; `Freshness` ("updated Xs ago" / "refresh
+  failed") en Portfolio, Trend panel, niveles de riesgo y Ops monitor.
+- [x] `tasks/audit_metrics_2026-09-08.md`: cada métrica de la UI con fuente, cadencia, definición y estado.
 ### Pendiente
 - [ ] Observación de quant (no UI): tracking modelo vs papel (7 días: modelo +1,1 %, papel −0,2 %, TE 26 %).
 - [ ] Observación de quant, no de UI: tracking modelo +3,1 % vs papel +0,9 % en 6 días (TE 27 %); el 7 sep modelo +3,64 %
