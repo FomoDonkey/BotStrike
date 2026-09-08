@@ -359,6 +359,8 @@ export interface TradeRecord {
   /** Epoch seconds (UTC) — timezone-proof chart markers (bridge ≥ 2.13). */
   entry_ts?: number;
   exit_ts?: number;
+  /** ENTRY rows (2026-09-08): the reference price the fill was measured against; `entry_price` is the FILL */
+  expected_price?: number;
   regime: string;
   /** Bridge ≥ 2.15 (tasks/ui_live_trading_contract.md §2) — all optional for older bridges */
   pnl_bps?: number;

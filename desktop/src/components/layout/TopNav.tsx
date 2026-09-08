@@ -46,9 +46,15 @@ function ConnectionStatus() {
 }
 
 function EquityChip({ className }: { className?: string }) {
-  const equity = useTradingStore((s) => s.metrics.equity);
+  // ONE equity for the whole screen: the account overview the risk loop marks every 5 s (the same
+  // number the Account panel, the Risk page and Portfolio show). This chip used to read the 2 s
+  // metrics frame while the page beside it read a 10 s snapshot, so two figures a few cents apart
+  // sat on one screen at the same instant (Edgar, 2026-09-08).
+  const metricsEquity = useTradingStore((s) => s.metrics.equity);
+  const accountEquity = useRiskStore((s) => s.account?.equity ?? 0);
+  const equity = accountEquity > 0 ? accountEquity : metricsEquity;
   return (
-    <span className={cn("inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg bg-panel-2 text-[13px] whitespace-nowrap", className)} title="Account equity (all-time)">
+    <span className={cn("inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg bg-panel-2 text-[13px] whitespace-nowrap", className)} title="Account equity: initial capital + realised cash + open PnL at the venue's marks (refreshed every 5 s)">
       <span className="font-medium text-text-2">Equity</span>
       <AnimatedNumber value={equity} format={(v) => formatMoney(v)} className="num font-semibold text-text" />
     </span>

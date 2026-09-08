@@ -67,10 +67,14 @@ export function PortfolioPage() {
   const now = useNow();
 
   // Real numbers only: /api/portfolio when it exists, otherwise the pieces the 2.15 endpoints carry.
-  const equity = p?.equity ?? acct.equity;
-  const cash = p?.cash ?? acct.available;
-  const unreal = p?.unrealized_pnl ?? acct.unrealized_pnl;
-  const alltimePnl = p?.alltime_pnl ?? perf.data?.pnl ?? metrics.pnl;
+  // Equity, cash and open PnL come from the SAME 5 s account overview the top bar and the Account
+  // panel read, so one screen never shows two equities (the 10 s /api/portfolio snapshot lagged the
+  // top bar by up to 26 cents at the same instant, 2026-09-08). /api/portfolio keeps everything only
+  // it computes: volumes, fees, win days, analysis, the daily table.
+  const equity = acct.equity > 0 ? acct.equity : (p?.equity ?? 0);
+  const cash = acct.equity > 0 ? acct.available : (p?.cash ?? acct.available);
+  const unreal = acct.equity > 0 ? acct.unrealized_pnl : (p?.unrealized_pnl ?? acct.unrealized_pnl);
+  const alltimePnl = acct.equity > 0 && acct.initial_capital > 0 ? acct.equity - acct.initial_capital : (p?.alltime_pnl ?? perf.data?.pnl ?? metrics.pnl);
   const fees = p?.fees_paid ?? perf.data?.total_fees ?? metrics.total_fees;
   const leverage = p?.leverage ?? acct.leverage_effective;
   const marginUsage = p?.margin_usage ?? acct.margin_ratio;

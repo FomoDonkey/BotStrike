@@ -3263,7 +3263,15 @@ def _trade_row(r) -> dict:
         exit_reason = "rebalance"
     else:
         exit_reason = ""
-    entry_px = getattr(r, "entry_price", None) or r.price
+    # An ENTRY row stores the signal's REFERENCE price in `entry_price` (main.py passes
+    # `trade.expected_price`) and the fill — reference moved by the paper slippage — in `price`.
+    # Serving the reference as "entry_price" made Order History's fill price, the chart's entry
+    # markers and the Journal's entry VWAP sit 1.5–4 bps below the average the position carries,
+    # so "Entry 79,285.80" on the position never matched the entries listed for it (2026-09-08).
+    # The fill is the entry; the reference rides in `expected_price` for the slippage column.
+    ttype = getattr(r, "trade_type", None) or ""
+    expected_px = float(getattr(r, "entry_price", None) or 0.0) if ttype == "ENTRY" else 0.0
+    entry_px = (r.price if ttype == "ENTRY" and r.price else None) or getattr(r, "entry_price", None) or r.price
     notional = float(entry_px or 0) * float(r.quantity or 0)
     lev = 1
     try:
@@ -3279,7 +3287,9 @@ def _trade_row(r) -> dict:
         "trade_type": getattr(r, "trade_type", None) or "",
         "strategy": r.strategy,
         "entry_price": entry_px,
-        "exit_price": getattr(r, "exit_price", None) or (r.price if getattr(r, "trade_type", None) == "EXIT" else 0),
+        "expected_price": expected_px,
+        # an entry has no exit: the DB column carries the fill there, which is `entry_price` above
+        "exit_price": 0.0 if ttype == "ENTRY" else (getattr(r, "exit_price", None) or (r.price if ttype == "EXIT" else 0)),
         "quantity": r.quantity,
         "pnl": r.pnl,
         "fee": r.fee,

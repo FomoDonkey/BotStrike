@@ -48,6 +48,23 @@ def test_limit_counts_fills_and_keeps_the_funding_inside_their_window(tmp_path, 
     assert stamps == sorted(stamps, reverse=True)
 
 
+def test_entry_rows_serve_the_fill_as_entry_price_and_the_reference_apart(tmp_path, monkeypatch):
+    """An ENTRY row stores the signal's reference price in `entry_price` and the fill in `price`.
+    The API must serve the FILL as entry_price (what the position's average is made of) and the
+    reference as expected_price; an entry has no exit_price (2026-09-08)."""
+    repo = TradeRepository(str(tmp_path / "t.db"))
+    adapter = TradeDBAdapter(repo, source="paper")
+    adapter.start_session()
+    _fill(adapter, T0, trade_type="ENTRY")                     # price 80,000 (fill) · entry_price 79,000 (reference)
+    _fill(adapter, T0 + 600, pnl=1.0, trade_type="EXIT")       # exit at 80,000 of a position entered at 79,000
+    monkeypatch.setattr(bridge.state, "engine", SimpleNamespace(trade_repo=repo))
+    rows = asyncio.run(bridge.get_trades(limit=10))["trades"]
+    entry = next(r for r in rows if r["trade_type"] == "ENTRY")
+    exit_ = next(r for r in rows if r["trade_type"] == "EXIT")
+    assert entry["entry_price"] == 80_000.0 and entry["expected_price"] == 79_000.0 and entry["exit_price"] == 0.0
+    assert exit_["entry_price"] == 79_000.0 and exit_["exit_price"] == 80_000.0 and exit_["expected_price"] == 0.0
+
+
 def test_repository_exclusion_keeps_legacy_rows_without_a_type(tmp_path):
     repo = TradeRepository(str(tmp_path / "t.db"))
     adapter = TradeDBAdapter(repo, source="paper")
