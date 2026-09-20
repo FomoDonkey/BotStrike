@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { TradeRecord } from "@/lib/api";
 import { HINTS } from "@/lib/hints";
 import { Chip, SideChip, StrategyTag } from "@/components/ui/Chip";
@@ -89,10 +89,15 @@ interface OrderHistoryTableProps {
 
 /** Order History (spec §3.1): ENTRY / EXIT rows with order type, slippage, spread, regime. */
 export function OrderHistoryTable({ trades, symbol, loading, filter }: OrderHistoryTableProps) {
-  const rows = useMemo(() => {
+  // Strike settles funding EVERY HOUR: 1,655 settlement rows buried the 52 orders (2026-09-20).
+  // They stay one click away, with their count, so the money is never hidden - only the noise.
+  const [showFunding, setShowFunding] = useState(false);
+  const { rows, fundingRows } = useMemo(() => {
     const all = orderRows(trades);
-    return filter ? all.filter(filter) : all;
-  }, [trades, filter]);
+    const scoped = filter ? all.filter(filter) : all;
+    const fundingRows = scoped.filter((r) => r.kind === "FUNDING").length;
+    return { rows: showFunding ? scoped : scoped.filter((r) => r.kind !== "FUNDING"), fundingRows };
+  }, [trades, filter, showFunding]);
 
   const columns: Column<OrderRow>[] = [
     { id: "time", label: "Time", align: "l", render: (r) => formatDateTime(r.ts) },
@@ -118,6 +123,13 @@ export function OrderHistoryTable({ trades, symbol, loading, filter }: OrderHist
   ];
 
   return (
+    <div className="flex flex-col flex-1 min-h-0">
+      {fundingRows > 0 && (
+        <div className="px-3 py-1.5 border-b border-hairline text-[12px] font-medium text-text-2 flex items-center gap-2">
+          <span>{fundingRows.toLocaleString()} funding settlement{fundingRows === 1 ? "" : "s"} {showFunding ? "shown" : "hidden"} (hourly on Strike · already in realised PNL)</span>
+          <button type="button" className="text-mint hover:underline" onClick={() => setShowFunding((v) => !v)}>{showFunding ? "Hide" : "Show"}</button>
+        </div>
+      )}
     <DataTable
       columns={columns}
       rows={rows}
@@ -127,5 +139,6 @@ export function OrderHistoryTable({ trades, symbol, loading, filter }: OrderHist
       emptyText={loading ? "Loading order history…" : "No orders found"}
       emptySub={loading ? undefined : "Every paper fill (entry and exit) is listed here once the engine trades"}
     />
+    </div>
   );
 }

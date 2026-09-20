@@ -2456,3 +2456,13 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
 - [ ] UI: "NEXT REBALANCE (ESTIMATE)" usa targets del último run; tras un cambio de config avisar "config changed since".
 - [ ] UI: "Funding paid +$4.12" cuando es un cobro neto → "Funding (net)".
 - [ ] Order History mezcla 1.655 filas FUNDING con 52 órdenes (hay filtro Type; valorar ocultarlas por defecto).
+### Mejoras aplicadas tras la autorización de Edgar (2026-09-20 ~06:20Z)
+- [x] DB: 4 filas históricas reetiquetadas (backup `backups/trade_database.2026-09-20_pre_reason_fix.db`): ETH/SP500/XAG
+  → `trend_universe_`, ZEC → `trend_manual_`. Estadísticas honestas: 0 round trips de la estrategia · 5 forzados · 15 trims.
+- [x] Escalera de salida en precio Strike (`_ladder_in_venue_prices`: mark/close fuente; distancias intactas; `price_source`
+  y `basis` en el registro; pie "Strike prices"). El gráfico y las fichas ya no pintan el stop encima del mark.
+- [x] `params_at_run` persistido + `params_changed_since_run` en /api/trend; el panel "Next rebalance (estimate)" avisa
+  cuando la config cambió después del run que calculó los targets.
+- [x] "Funding paid" → "Funding (net)" con signo explicado. Order History: settlements de funding ocultos por defecto
+  con contador y botón Show/Hide.
+- [ ] Investigación chandelier (trailing ceñido por ATR) en curso: se cambia SOLO si gana con claridad.

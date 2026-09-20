@@ -158,7 +158,7 @@ export function ExitLadderCell({ ladder, entry, className }: { ladder: ExitLadde
           <div className="flex items-baseline gap-2 mb-1.5">
             <span className="text-[12.5px] font-semibold text-text">Exit ladder</span>
             <span className="text-[12px] font-medium text-text-2">
-              {ladder.active}/{ladder.total} legs · {ladder.short ? "short · " : ""}worst {formatSignedPct(ladder.worst_case_pct ?? 0, 1)} from here
+              {ladder.active}/{ladder.total} legs · {ladder.price_space === "venue" ? "Strike prices · " : ""}{ladder.short ? "short · " : ""}worst {formatSignedPct(ladder.worst_case_pct ?? 0, 1)} from here
             </span>
           </div>
           <ExitLadderDetail ladder={ladder} entry={entry} />

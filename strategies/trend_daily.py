@@ -216,6 +216,33 @@ _CLOSE_KINDS: Dict[str, Tuple[str, str]] = {
 }
 
 
+def _ladder_in_venue_prices(lad: Dict[str, Any], venue_mark: Optional[float]) -> Dict[str, Any]:
+    """The model decides on the daily SOURCE close (Binance / Yahoo) but the operator looks at the
+    VENUE mark, and the two differ by the basis - up to -6 % on Strike's ZEC and -3.6 % on WTI. Shown
+    side by side, a source-price stop sat ABOVE the venue mark on WTI and XAU and the chart drew the
+    ZEC ladder 6 % too high (2026-09-20). Every price of the ladder is therefore re-expressed at the
+    venue with the ratio mark / source close; the distances are ratios and do not change. The source
+    close and the basis stay on the record."""
+    price = float(lad.get("price") or 0.0)
+    if not venue_mark or price <= 0:
+        lad["price_space"] = "source"
+        return lad
+    f = float(venue_mark) / price
+    lad["price_source"] = price
+    lad["basis"] = round(f - 1.0, 5)
+    lad["price"] = float(venue_mark)
+    for lv in lad.get("levels") or []:
+        if lv.get("stop") is not None:
+            lv["stop_source"] = lv["stop"]
+            lv["stop"] = round(float(lv["stop"]) * f, 8)
+    for key in ("first_exit", "full_exit"):
+        if lad.get(key) is not None:
+            lad[key + "_source"] = lad[key]
+            lad[key] = round(float(lad[key]) * f, 8)
+    lad["price_space"] = "venue"
+    return lad
+
+
 def _close_kind(reason: str, full_exit: bool) -> Tuple[str, str]:
     """A partial close is always a rebalance trim; a full close is named after its cause."""
     if reason in _CLOSE_KINDS:
@@ -296,6 +323,9 @@ class TrendState:
     last_adds_blocked: str = ""          # why the last run held its adds (risk gate), else ""
     liquidity_note: str = ""             # why the universe was not (re)picked this run, else ""
     candidates: int = 0
+    # the model parameters the last run's targets were computed with: the UI's "next rebalance"
+    # estimate reads those targets, and after a config change it must say they are stale
+    params_at_run: Dict[str, Any] = field(default_factory=dict)
     # sym -> [[YYYY-MM-DD, 24 h quote volume], ...]: the last VENUE_VOL_DAYS informative readings,
     # one per day; the liquidity floors read their median (see _effective_venue_volumes)
     venue_volume_log: Dict[str, List[List[Any]]] = field(default_factory=dict)
@@ -312,7 +342,7 @@ class TrendState:
             st.positions[k] = BookPosition(**{f: v.get(f, 0.0) for f in BookPosition.__dataclass_fields__})
         for k in ("weights", "universe", "universe_month", "universe_key", "targets", "last_run_date", "last_run_ts",
                   "last_run_status", "last_error", "equity_basis", "opens_prev", "tracking", "candidates",
-                  "last_run_late", "last_adds_blocked", "liquidity_note", "venue_volume_log"):
+                  "last_run_late", "last_adds_blocked", "liquidity_note", "venue_volume_log", "params_at_run"):
             if k in d:
                 setattr(st, k, d[k])
         # One tracking row per day. Files written before 2026-09-05 hold a row per RUN — a restart
@@ -725,6 +755,7 @@ class TrendDailyEngine:
             st.last_run_ts = now
             st.last_run_status = "ok"
             st.last_error = ""
+            st.params_at_run = self._model_params_dict(params)
             self.save_state()
             logger.info("trend_daily_run_ok", date=today_key, universe=st.universe,
                         targets=st.targets, positions=len(st.positions),
@@ -1134,6 +1165,23 @@ class TrendDailyEngine:
                 pos.mark_price = m
                 self.last_marks[sym] = m
 
+    @staticmethod
+    def _model_params_dict(p: TrendParams) -> Dict[str, Any]:
+        """The parameters that shape the targets (not the execution clock or order minimum)."""
+        return {"lookbacks": ",".join(str(x) for x in p.lookbacks), "target_vol": float(p.target_vol),
+                "vol_window": int(p.vol_window), "n_assets": int(p.n_assets),
+                "leverage_cap": float(p.leverage_cap), "rebalance_threshold": float(p.rebalance_threshold)}
+
+    def params_changed_since_run(self) -> List[str]:
+        """Model parameters that differ between the live config and the last run: Edgar clicked a
+        risk level after the 04:05 run and the estimate kept saying 'inside band' on targets sized
+        at the old vol (2026-09-20). Empty until a run has recorded its parameters."""
+        at_run = self.state.params_at_run or {}
+        if not at_run:
+            return []
+        live = self._model_params_dict(TrendParams.from_config(self.config))
+        return [k for k, v in live.items() if str(at_run.get(k)) != str(v)]
+
     def exit_ladders(self) -> Dict[str, Dict[str, Any]]:
         """Exit ladder per held market: the price levels at which each Donchian sub-strategy drops
         out and how much of the position leaves with it. A trend book has no single stop; this is
@@ -1155,7 +1203,9 @@ class TrendDailyEngine:
         for sym, df in data.items():
             try:
                 pos = self.state.positions.get(sym)
-                out[sym] = exit_ladder(df["close"], params, short=bool(pos and pos.is_short))
+                out[sym] = _ladder_in_venue_prices(
+                    exit_ladder(df["close"], params, short=bool(pos and pos.is_short)),
+                    self._venue_mark_of(sym))
             except Exception as e:  # noqa: BLE001
                 logger.warning("trend_exit_ladder_failed", symbol=sym, error=str(e)[:120])
         return out
@@ -1277,6 +1327,7 @@ class TrendDailyEngine:
             "positions": positions, "equity_basis": round(equity, 4),
             "exposure": round(exposure / equity, 4) if equity > 0 else 0.0,
             "tracking": self.tracking_summary(),
+            "params_changed_since_run": self.params_changed_since_run(),
             "params": {
                 "lookbacks": tc.trend_lookbacks, "target_vol": tc.trend_target_vol,
                 "vol_window": tc.trend_vol_window, "n_assets": tc.trend_n_assets,

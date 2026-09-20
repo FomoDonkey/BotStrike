@@ -31,7 +31,7 @@ export function FundingBlock({ funding }: { funding: EndpointState<FundingRespon
 
   return (
     <ListSection title="Funding" right={f?.enabled === false ? "off" : undefined}>
-      <ListRow label="Funding paid" hint={HINTS.fundingTotal}>
+      <ListRow label="Funding (net)" hint={HINTS.fundingTotal}>
         <Signed value={typeof f?.total_paid === "number" ? f.total_paid : undefined} format={(v) => formatSignedMoney(v, 4)} />
       </ListRow>
       <ListRow label="Next settlement" hint={`Funding settles ${interval !== null ? `every ${interval} h` : "on the venue's clock"} (UTC). Strike settles hourly; Binance-style venues every 8 h.`}>

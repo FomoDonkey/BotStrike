@@ -15,7 +15,7 @@ export const HINTS = {
   tp: "Take-profit level and its distance from mark.",
   fees: "Entry fee of this position, debited at the fill (a position opened before 5 Sep 2026 pays it at the close). Funding has its own column.",
   fundingPaid: "Perpetual funding accrued on this position since it opened. Negative = the book paid; positive = it was received.",
-  fundingTotal: "Every funding settlement the account has paid or received since the bot started, across all markets. Already included in realised PNL.",
+  fundingTotal: "Net of every funding settlement since the bot started, across all markets: positive = received (the perp traded below its index and the shorts paid the longs), negative = paid. Already included in realised PNL.",
   exitLadder: "This position exits in steps. Each Donchian lookback has its own trailing stop that never falls; when price closes below one, that share leaves. There is no take profit: trend returns come from letting winners run.",
   exitLegs: "Sub-strategies of the Donchian ensemble still holding, out of the total — how committed the position still is.",
   trigger: "The condition that fired the entry (e.g. donchian_ensemble, zscore_entry, structure_break).",

@@ -226,6 +226,8 @@ export interface StrategyInfo {
   enabled?: boolean; // allocation > 0
   description?: string;
   params?: Record<string, ConfigScalar>;
+  /** model parameters that changed since the last run: its targets (and the rebalance estimate) are stale */
+  params_changed_since_run?: string[];
   symbols?: string[];
   edge?: EdgeStats;
   /** Bridge ≥ 2.15 — Settings tab holding this strategy's params */
@@ -283,6 +285,8 @@ export interface TrendLiquidityMarket {
 }
 
 export interface TrendResponse {
+  /** model parameters that changed since the last run: its targets (and the rebalance estimate) are stale */
+  params_changed_since_run?: string[];
   enabled: boolean;
   killed?: boolean;
   allocation: number;
@@ -428,6 +432,11 @@ export interface ExitLadder {
   worst_case_pct: number;
   /** true when the ladder belongs to a SHORT: its stops sit above the price */
   short?: boolean;
+  /** "venue": every price above is expressed at the venue mark (bridge ≥ 2026-09-20); "source": the daily source close */
+  price_space?: "venue" | "source";
+  /** the daily source close the model decided on, and the venue's basis against it (mark / close − 1) */
+  price_source?: number;
+  basis?: number;
 }
 
 /**

@@ -195,6 +195,11 @@ function BotTab({ market, positions }: { market: MarketView; positions: Position
         // (2026-09-05). Same arithmetic as the engine: target weight × equity against what is held,
         // executed only past the rebalance band or the venue minimum.
         <ListSection title="Next rebalance (estimate)">
+          {(trend.data?.params_changed_since_run?.length ?? 0) > 0 && (
+            <div className="px-3 py-1.5 text-[11px] leading-snug text-amber" title="The targets below were computed by the last daily run with the parameters in force then. The next run re-sizes every position with the live parameters.">
+              Config changed since the last run ({trend.data!.params_changed_since_run!.join(", ")}) — this estimate uses the last run's targets; the next run re-sizes the book.
+            </div>
+          )}
           <ListRow label="Runs" hint="The daily run at 04:05 UTC, once the previous day's TradFi bars have settled">{Number.isFinite(nextRunMs) ? `in ${formatDurationShort((nextRunMs - now) / 1000)}` : "---"}</ListRow>
           <ListRow label="Target weight" hint="The model's weight for this market at the last run, as a share of equity. 'none' = not in the universe at the last run">{typeof target === "number" ? formatPct(target, 1) : venueRow?.pool ? "none · candidate" : "none · outside the pool"}</ListRow>
           <ListRow label="Target notional" hint="Target weight × current equity">{typeof target === "number" ? formatMoney(target * eq) : "---"}</ListRow>

@@ -177,3 +177,30 @@ def test_alltime_statistics_skip_forced_exits_but_keep_their_cash():
     # with no strategy exit at all the counters are still reported
     q = compute_alltime_performance(SimpleNamespace(get_trades=lambda **kw: rows[:6]), 1000.0, source="paper")
     assert q["total_trades"] == 0 and q["forced_exits"] == 2 and q["rebalance_trims"] == 1
+
+
+# ── 3. what the operator sees is in venue prices; a stale estimate says so ──────────────────────
+def test_exit_ladder_is_re_expressed_at_the_venue_mark():
+    from strategies.trend_daily import _ladder_in_venue_prices
+    lad = {"price": 100.30, "active": 2, "total": 5, "first_exit": 98.66, "full_exit": 87.19, "worst_case_pct": -0.1307,
+           "levels": [{"lookback": 10, "stop": 98.66, "distance_pct": -0.0164}, {"lookback": 60, "stop": 87.19, "distance_pct": -0.1307}]}
+    out = _ladder_in_venue_prices(dict(lad), 96.66)          # Strike's WTI mark, basis -3.6 %
+    assert out["price_space"] == "venue" and out["price"] == 96.66 and out["price_source"] == 100.30
+    assert out["basis"] == pytest.approx(96.66 / 100.30 - 1, abs=1e-5)
+    assert out["first_exit"] == pytest.approx(98.66 * 96.66 / 100.30, rel=1e-9)   # now BELOW the mark
+    assert out["first_exit"] < 96.66 and out["levels"][0]["stop_source"] == 98.66
+    assert out["levels"][0]["distance_pct"] == -0.0164                            # ratios are untouched
+    # no venue mark -> the source ladder, and it says so
+    assert _ladder_in_venue_prices(dict(lad), None)["price_space"] == "source"
+
+
+def test_params_changed_since_run_lists_what_moved(tmp_path):
+    eng, _, s = _engine(tmp_path, {"UPUSDT": _frame("up")}, trend_n_assets=1)
+    assert eng.params_changed_since_run() == []                # nothing recorded yet
+    asyncio.run(eng.run_once())
+    assert eng.state.params_at_run["target_vol"] == s.trading.trend_target_vol
+    assert eng.params_changed_since_run() == []
+    s.trading.trend_target_vol = 0.30                           # the operator clicks another risk level
+    s.trading.trend_lookbacks = "10,20,30,60,90"
+    assert eng.params_changed_since_run() == ["lookbacks", "target_vol"]
+    assert eng.status()["params_changed_since_run"] == ["lookbacks", "target_vol"]
