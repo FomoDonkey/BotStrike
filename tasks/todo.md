@@ -2491,3 +2491,9 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
   (`basis_log`), `/api/trend.basis_guard`, aviso en el panel Trend daily. Test e2e. Primera decisión posible el 25-sep.
 - [ ] Futuro: archivar cada día la vela diaria de Strike por mercado (dataset propio) y, con ≥ 12-18 meses, validar
   una variante "Strike-nativa" con las mismas 11 puertas antes de plantear el cambio.
+### Investigación "otra estrategia" (2026-09-20 ~07:40Z) — tasks/research_signal_engines_2026-09-20.md
+- [x] 8 motores de señal en el mismo harness (LIVE, EWMAC-Carver, TSMOM, ciclos Harvey, cruce EMA 20/100 con y sin
+  confirmación de volumen, amortiguado, combinado). Ninguno gana al Donchian ensemble (Sharpe 1,46 · IS 1,16 · OOS 2,09).
+  La confirmación de volumen es el PEOR (1,12 / OOS 1,46). COMBO (LIVE+EWMAC) = mismo Sharpe y DD a riesgo igual con
+  un tercio menos de turnover (t = −0,81, indistinguible) → opción para cuando el turnover sea la restricción.
+- [ ] Si algún día se plantea COMBO: pasarlo por las 11 puertas y por 60 días de paper antes de sustituir.

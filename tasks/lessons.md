@@ -1781,3 +1781,10 @@ necesita 92 y la regla de universo 365), un tercio de los días del oro sin ning
 que generan breakouts falsos; y aun así las piernas coinciden 91-100 % de los días con la fuente. Regla: la señal se
 calcula en la serie más larga y limpia sobre la que está validada; el venue manda en la EJECUCIÓN; y la brecha entre
 ambas (basis) se mide, se registra y se acota con un guardia — no se elimina cambiando de serie.
+
+## 2026-09-20 — "otra estrategia mejor" se contesta con ocho motores en el mismo harness, no con una opinión
+La pregunta llegaba con sus candidatos favoritos (medias móviles, liquidez). Probados con el mismo universo, sizing y
+costes: ninguno mejora el Sharpe del motor validado y el filtro de volumen es el peor. Reglas: (1) los indicadores de
+tendencia son UNA familia (Levine-Pedersen) — cambiar de indicador no crea alpha, solo cambia pesos; (2) lo que sí
+mueve el resultado es sizing, diversificación y costes; (3) toda candidata se mide contra la actual a riesgo igual,
+año a año y con un t-test antes de llamarla "mejor"; (4) documentar el resultado negativo vale tanto como el positivo.
