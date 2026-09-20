@@ -298,7 +298,7 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
             # the entry share, funding settles): 8.28 vs the account's 8.16 was the ADA/ZEC entry fees
             "realized": round(sum(cash_effect(t) for t in srows), 4), "unrealized": round(s_unreal, 4),
             "pnl": round(sum(cash_effect(t) for t in srows) + s_unreal, 4), "funding": round(s_funding, 6),
-            "trims": len(sc_all) - len(sc),
+            "trims": sum(1 for t in sc_all if is_rebalance_row(t)), "forced": sum(1 for t in sc_all if is_non_strategy_exit(t)),
             "volume": round(sum(_f(t.price) * _f(t.quantity) for t in srows), 2),
             "fees": round(sum(_f(getattr(t, "fee", 0.0)) for t in srows), 4),
             "win_rate": round(sum(1 for p in pnls if p > 0) / len(pnls), 4) if pnls else 0.0,
