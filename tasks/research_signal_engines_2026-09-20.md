@@ -339,3 +339,22 @@ runs at each bar close + 5 min, universe pick unchanged (daily/monthly), trackin
 basis guard and venue floors unchanged. Then: the 11 gates on the research panel's crypto legs at
 the new clock, 60 days of paper beside the daily book, and only then a switch. **Not implemented
 tonight**: the book is hours from its first run at the Balanced size.
+
+### Delay audit (4 h clock, same day-lookbacks; execution k bars after the decision)
+
+| delay | Sharpe | MaxDD | OOS Sh |
+|---|---|---|---|
+| 0 bars | 1.61 | −18.3 % | 1.49 |
+| 1 bar (4 h) | 1.59 | −22.4 % | 1.46 |
+| 2 bars (8 h) | 1.53 | −24.0 % | 1.41 |
+| 3 bars (12 h) | 1.53 | −23.5 % | 1.42 |
+| 6 bars (24 h) | 1.59 | −20.2 % | 1.28 |
+| 12 bars (48 h) | 1.49 | −24.4 % | 1.21 |
+
+No look-ahead artefact: a one-bar delay keeps 1.59 (a leak would collapse it). OOS Sharpe and MaxDD
+decay with delay as a lag effect should; the full-sample Sharpe is noisier (the 24 h-delay row sits
+above the daily engine's 1.42), which says part of the gain is **evaluation granularity** — a stop
+checked on six closes a day catches intraday breaks the daily close never sees — and part is lag.
+Both are real properties of the same rule on a finer clock; neither is a new signal. Confidence:
+moderate (t = 1.75 over six years); enough to make it the next validated project, not enough to
+switch the live book on a Sunday night.

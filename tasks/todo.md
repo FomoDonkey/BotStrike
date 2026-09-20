@@ -2529,7 +2529,7 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
 - [x] **HALLAZGO**: la misma regla diaria evaluada cada 12/8/4/1 h: Sharpe 1,42 → 1,61-1,73, MaxDD −22,5 → −18 %,
   OOS 1,40 → 1,50-1,61, turnover igual (9/año), costes ×2 aguanta (1,57), vecinos 1,56-1,63, 5/7 años, t = +1,75.
   Mecanismo: menos retraso entre la ruptura y la ejecución (no una señal más rápida).
-- [ ] Auditoría de retraso (ejecución k barras después de la decisión) — en curso al cerrar la sesión.
+- [x] Auditoría de retraso: sin look-ahead (retraso 1 barra mantiene 1,59); OOS y DD empeoran con el retraso; parte del efecto es granularidad de evaluación (stop visto en 6 cierres/día).
 - [ ] PRÓXIMO PROYECTO (no esta noche): reloj sub-diario para los mercados crypto (12 h como primer candidato: dos
   runs/día, 04:05 y 16:05Z) — abstracción de clave de barra, store `12h`/`4h`, lookbacks × barras/día, tracking por
   barra; TradFi sigue diario. Validar con las 11 puertas sobre las piernas crypto + 60 días de paper en paralelo.
