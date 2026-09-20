@@ -2401,3 +2401,19 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
 - [ ] UI: la escalera de salida está en precio de la FUENTE (Yahoo/Binance) y el mark en precio Strike → en WTI/XAU el
   "Exit 98,66" aparece POR ENCIMA del mark 96,85 (basis −3,6 %). Hay que dibujar la escalera en espacio venue
   (stop × mark/source) o etiquetar el espacio de precio. También en el overlay del gráfico (ZEC: líneas 6 % altas).
+### Run 2026-09-20 04:05Z (antes del clic Balanced) y perfil aplicado
+- [x] El run echó a XAU del universo por `trend_universe_illiquid volumes={'XAU-USD': 144}` — 144 $ de volumen de 24 h en
+  Strike un DOMINGO (sesión CME cerrada desde el viernes) → salida forzada −2,86 $ (etiquetada `universe`, fix OK) y
+  BNB entró por un pico puntual (15 k → 27,6 k, suelo 26 k). Falso positivo del suelo de liquidez por fin de semana.
+- [x] Fix: `_effective_venue_volumes` — mediana de las últimas 7 lecturas informativas (`venue_volume_log` persistido);
+  las lecturas TradFi de domingo/lunes 04:05Z no se registran; sin lectura informativa = no entra (fail-closed) y no
+  se expulsa (una sesión cerrada no es evidencia). 7 tests (`tests/test_trend_venue_liquidity_median.py`).
+  Semilla del log en el CT con las lecturas del sábado (sesión del viernes) para que el re-pick de mañana pueda
+  readmitir XAU.
+- [x] Primera fila honesta de tracking (2026-09-20): motor −0,015933 == replay con pesos previos; el código viejo habría
+  escrito −0,012338.
+- [x] Perfil: Edgar pulsó Balanced (vol 0,45 · 23/8/11 %) tras el run; overrides añadidos por API: cap 2,0 ·
+  lookbacks 10,20,30,60,90 · n 8 · max_dd 0,30. 11/11 puertas del proyecto en las tres variantes (Sharpe 1,83,
+  maxDD 16,1 %, 25 bps → 1,62). Efecto en el run del lunes 21-sep 04:05Z: ~45 % menos de tamaño por posición +
+  re-pick (n 8) → esperar trims REBAL grandes y hasta 2 entradas nuevas (XAU de vuelta si su mediana pasa el suelo).
+- [ ] Mañana: verificar el run (tamaños ≈ 0,45/0,8 de hoy, XAU readmitido, sin `universe` falsos), tracking, UI.

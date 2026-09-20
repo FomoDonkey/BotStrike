@@ -1724,3 +1724,15 @@ Señal y stop viven en el cierre de la fuente (Yahoo/Binance); el mark vive en S
 En WTI el stop (98,66) se pintaba por encima del mark (96,85). Los números eran correctos y aun así la pantalla
 mentía. Regla: todo nivel que se muestre junto a un precio debe estar en el MISMO espacio de precio que ese precio,
 o llevar la etiqueta del suyo.
+
+## 2026-09-20 — un suelo de liquidez de "24 h" no sabe que es domingo
+El volumen de 24 h de un perp TradFi en Strike es ~0 cuando la sesión subyacente lleva cerrada desde el viernes; el
+suelo lo leyó como "el mercado se ha secado" y vendió oro con pérdida un domingo, con efecto de un mes (el universo
+solo se re-elige en octubre). Regla: cualquier umbral sobre una medida de ventana corta se decide sobre una MEDIANA
+de varias lecturas informativas, y "informativa" se define por el calendario del activo, no por el del bot. Y un dato
+ausente no es cero: sin lectura, no se entra y no se expulsa.
+
+## 2026-09-20 — un cambio de config "vivo" se materializa en el siguiente run, no al pulsar
+Balanced quedó guardado y `/api/trend.params` lo mostró al instante, pero los pesos no cambian hasta las 04:05Z
+siguientes. Decirlo antes de que el usuario lo busque en pantalla; y no forzar un segundo run el mismo día para
+"verlo ya": dos rebalanceos en una hora es pagar spread dos veces por impaciencia.

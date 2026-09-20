@@ -59,6 +59,20 @@ HEAL_DAYS = 5               # cached bars re-read on every refresh so late revis
 # Venue mark vs the last settled reference close: warn when the perp sits further from its
 # reference than this (thin book, stale reference, wrong mapping). A monitor, never a gate.
 BASIS_WARN = 0.025
+# Venue liquidity is judged on the MEDIAN of the last N informative 24 h readings, not on one tick.
+# One reading dropped gold from the universe on Sunday 2026-09-20 04:05Z (144 $ of 24 h volume: the
+# CME session had been closed since Friday) and let BNB in on a single spike that crossed the floor
+# by 6 %. A market that really faded still leaves - after N/2 readings, like the S&P did in Sept.
+VENUE_VOL_DAYS = 7
+
+
+def _venue_reading_informative(pool_symbol: str, ts: "pd.Timestamp") -> bool:
+    """A 24 h venue window ending at the daily run tells nothing about a TradFi market when the
+    session was closed for (almost) all of it: the window ending Sunday 04:05Z holds no session and
+    the one ending Monday 04:05Z holds ~5 h. Crypto trades every hour, so every reading counts."""
+    if asset_class(pool_symbol) == "crypto":
+        return True
+    return ts.weekday() not in (6, 0)          # Sunday, Monday
 SPOT_KLINES_URL = "https://api.binance.com/api/v3/klines"
 
 
@@ -282,6 +296,9 @@ class TrendState:
     last_adds_blocked: str = ""          # why the last run held its adds (risk gate), else ""
     liquidity_note: str = ""             # why the universe was not (re)picked this run, else ""
     candidates: int = 0
+    # sym -> [[YYYY-MM-DD, 24 h quote volume], ...]: the last VENUE_VOL_DAYS informative readings,
+    # one per day; the liquidity floors read their median (see _effective_venue_volumes)
+    venue_volume_log: Dict[str, List[List[Any]]] = field(default_factory=dict)
 
     def to_json(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -295,7 +312,7 @@ class TrendState:
             st.positions[k] = BookPosition(**{f: v.get(f, 0.0) for f in BookPosition.__dataclass_fields__})
         for k in ("weights", "universe", "universe_month", "universe_key", "targets", "last_run_date", "last_run_ts",
                   "last_run_status", "last_error", "equity_basis", "opens_prev", "tracking", "candidates",
-                  "last_run_late", "last_adds_blocked", "liquidity_note"):
+                  "last_run_late", "last_adds_blocked", "liquidity_note", "venue_volume_log"):
             if k in d:
                 setattr(st, k, d[k])
         # One tracking row per day. Files written before 2026-09-05 hold a row per RUN — a restart
@@ -504,6 +521,30 @@ class TrendDailyEngine:
     def pool(self) -> List[str]:
         return [s.strip().upper() for s in str(self.config.trend_pool).split(",") if s.strip()]
 
+    def _effective_venue_volumes(self, raw: Dict[str, float], now: float, today_key: str) -> Dict[str, float]:
+        """Median of the last VENUE_VOL_DAYS informative readings per market, updating the log.
+
+        Today's reading is appended once per day (a re-run replaces it) and only when it says
+        something (`_venue_reading_informative`). A market with no informative reading at all is
+        absent from the result: the ENTER floor then refuses it (fail closed) and the EXIT check
+        leaves it alone (a closed session is not evidence of a faded market).
+        """
+        st = self.state
+        log = st.venue_volume_log
+        ts = pd.Timestamp(now, unit="s", tz="UTC")
+        for sym, vol in (raw or {}).items():
+            if not _venue_reading_informative(sym, ts):
+                continue
+            rows = [r for r in (log.get(sym) or []) if r and str(r[0]) != today_key]
+            rows.append([today_key, float(vol)])
+            log[sym] = rows[-VENUE_VOL_DAYS:]
+        out: Dict[str, float] = {}
+        for sym in set(raw or {}) | set(log):
+            rows = log.get(sym) or []
+            if rows:
+                out[sym] = float(np.median([float(r[1]) for r in rows]))
+        return out
+
     def _venue_volumes(self, symbols: List[str]) -> Dict[str, float]:
         """24 h quote volume per market AT THE VENUE, used as the liquidity floor for mixed pools.
 
@@ -564,18 +605,22 @@ class TrendDailyEngine:
             params.position_notional = (eq_now * float(params.leverage_cap)
                                         / max(int(params.n_assets), 1))
             mixed = len({asset_class(x) for x in data}) > 1
-            venue_vol = self._venue_volumes(list(data)) if mixed else {}
+            venue_vol_raw = self._venue_volumes(list(data)) if mixed else {}
+            venue_vol = self._effective_venue_volumes(venue_vol_raw, now, today_key) if mixed else {}
             enter_floor, exit_floor = venue_floors(params)
             repick = st.universe_month != month_key or not st.universe or st.universe_key != universe_key
             # A member that stopped trading at the venue leaves the SAME day, not at the month's
             # re-pick: the S&P perp printed 788 $ of volume in 24 h while the book held 416 $ of
             # it - 53 % of the venue's day - because the pick had run without volumes (2026-09-05).
             if venue_vol and st.universe:
-                illiquid = [x for x in st.universe if float(venue_vol.get(x, 0.0)) < exit_floor]
+                # a member with no informative reading yet (TradFi on a Sunday/Monday, empty log)
+                # is not judged today - it can only leave on evidence, never on a closed session
+                illiquid = [x for x in st.universe if x in venue_vol and float(venue_vol[x]) < exit_floor]
                 if illiquid:
                     logger.warning("trend_universe_illiquid", dropped=[to_ui_symbol(x) for x in illiquid],
                                    exit_floor=round(exit_floor),
-                                   volumes={to_ui_symbol(x): round(float(venue_vol.get(x, 0.0))) for x in illiquid})
+                                   volumes={to_ui_symbol(x): round(float(venue_vol.get(x, 0.0))) for x in illiquid},
+                                   raw_today={to_ui_symbol(x): round(float(venue_vol_raw.get(x, 0.0))) for x in illiquid})
                     st.universe = [x for x in st.universe if x not in illiquid]
                     repick = True
             if repick:
