@@ -2466,3 +2466,13 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
 - [x] "Funding paid" → "Funding (net)" con signo explicado. Order History: settlements de funding ocultos por defecto
   con contador y botón Show/Hide.
 - [ ] Investigación chandelier (trailing ceñido por ATR) en curso: se cambia SOLO si gana con claridad.
+- [x] Chandelier (trailing ceñido por ATR) probado en el pool Strike con la config viva: 5/4/3 ATR = mismo Sharpe
+  (1,42-1,44) y peor OOS; 2 ATR = DD −16,6 % pero CAGR −3 pp y Sharpe 1,36. **No se cambia el ratchet Donchian.**
+- [x] Verificado en Chrome (bundle Cg1EBtII): escalera en precio Strike (todos los primeros stops por debajo del mark),
+  Trade History "0 round trips · 5 forzados · 15 trims", Order History 52 filas + 1.655 funding ocultos, "Funding (net)".
+- [x] Portfolio: "Win rate 0,0 %" con 0 round trips → "---".
+- [ ] `params_changed_since_run` se rellena a partir del run del 21-sep (el de hoy fue anterior a la función).
+- [ ] PRE-REAL (diseño, no código): stop de catástrofe en el exchange — una orden stop-market reduce-only por posición
+  al nivel `full_exit` de la escalera (en precio venue), re-colocada tras cada run y tras cada trim/add; el bot sigue
+  mandando (el stop del exchange solo actúa si el bot no está). Requiere `trend_live_executor` con órdenes
+  condicionales y reconciliación al arrancar. No se implementa mientras `BOTSTRIKE_ALLOW_LIVE=0`.

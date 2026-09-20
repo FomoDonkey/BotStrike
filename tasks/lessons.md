@@ -1763,3 +1763,14 @@ consumidores la importan; la UI enseña los conteos apartados (round trips / for
 Regla: las ventanas temporales de un gráfico se anclan a los DATOS (última muestra), no al reloj; y nunca se pintan
 más puntos que píxeles (downsample por buckets, extremos conservados). Medirlo: `document.readyState` y si un
 `setTimeout(1500)` tarda 1,5 s de verdad.
+
+## 2026-09-20 — "sí a todo" no significa cambiar la estrategia: significa PROBAR antes de tocar
+Autorizado a "aplicar todas las mejoras", la tentación era ceñir el trailing (chandelier) porque "devuelve mucho".
+El backtest en el pool real dijo que no añade Sharpe y empeora fuera de muestra. Regla: cualquier cambio a una regla
+validada pasa primero por el mismo harness que la validó; si no gana con claridad (Sharpe +0,1 y DD menor, IS y OOS),
+no se toca, y se documenta el resultado negativo para no repetir la pregunta.
+
+## 2026-09-20 — el nivel que se muestra al lado de un precio se expresa en el espacio de ese precio, en el servidor
+La conversión fuente→venue (mark / cierre fuente) se hizo UNA vez en `exit_ladders()` y todos los consumidores
+(tabla, ficha, gráfico, journal) quedaron coherentes sin tocar cada uno. Las distancias son ratios y no cambian;
+el precio fuente y el basis se conservan en el registro para poder auditar la decisión del modelo.
