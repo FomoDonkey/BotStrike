@@ -2497,3 +2497,13 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
   La confirmación de volumen es el PEOR (1,12 / OOS 1,46). COMBO (LIVE+EWMAC) = mismo Sharpe y DD a riesgo igual con
   un tercio menos de turnover (t = −0,81, indistinguible) → opción para cuando el turnover sea la restricción.
 - [ ] Si algún día se plantea COMBO: pasarlo por las 11 puertas y por 60 días de paper antes de sustituir.
+### Segunda estrategia — investigada (2026-09-20 ~08:30Z), tasks/research_signal_engines_2026-09-20.md parte 2
+- [x] Carry de funding L/S en crypto = anti-tendencia (Sharpe −0,77, corr −0,81); solo largo ≈ liquidez (exposición 4 %).
+- [x] Momentum relativo (XS) sobre 7 mercados: 1,02 con rebalanceo diario pero 0,17/−0,17/0,47 al mover un mes la
+  ventana o el rebalanceo; ninguna mezcla supera al trend fuera de muestra (1,40). Inestable → no.
+- [x] Amplitud con NEAR (6 años, 1,2 M$/día en Strike): Sharpe 1,42 → 1,39/1,43. Nada.
+- [x] Veredicto: hoy no hay segunda estrategia defendible en este venue. Palancas reales: el motor validado bien
+  dimensionado, la ejecución (guardia de basis, escalera venue, stop en exchange pre-real) y amplitud por CLASE de
+  activo cuando el venue tenga TradFi líquido. Revisar XS momentum solo con ≥ 15-20 crypto líquidos y ≥ 2 años.
+- [ ] Tailscale SSH al host denegó la conexión ("Permission denied" al conectar; el host aparece en `tailscale status`)
+  → reintentar antes de verificar el run del 21-sep 04:05Z.

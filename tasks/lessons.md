@@ -1788,3 +1788,9 @@ costes: ninguno mejora el Sharpe del motor validado y el filtro de volumen es el
 tendencia son UNA familia (Levine-Pedersen) — cambiar de indicador no crea alpha, solo cambia pesos; (2) lo que sí
 mueve el resultado es sizing, diversificación y costes; (3) toda candidata se mide contra la actual a riesgo igual,
 año a año y con un t-test antes de llamarla "mejor"; (4) documentar el resultado negativo vale tanto como el positivo.
+
+## 2026-09-20 — una candidata que cambia de 1,0 a −0,2 de Sharpe al mover un mes la ventana no es una estrategia
+El momentum relativo parecía el complemento perfecto (corr 0,10, mezcla 1,65) hasta que se probó con rebalanceo
+mensual y lookbacks vecinos. Regla: antes de llamar "descorrelacionada y rentable" a una segunda estrategia, barrer
+las especificaciones vecinas; si el signo del Sharpe depende del día de rebalanceo, es ruido sobre pocos nombres.
+Y el carry de funding en crypto es anti-tendencia por construcción: el funding alto ES el mercado alcista.

@@ -86,3 +86,64 @@ t = −0.81 (indistinguishable).
   https://people.duke.edu/~charvey/Research/Published_Papers/P158_Momentum_turning_points.pdf
 - Carver, EWMAC forecast scaling and rule combination — https://qoppac.blogspot.com/2025/06/quickies-1-overfitting-and-ewmac.html
 - Baltas & Kosowski, *Time series momentum and volatility scaling* — https://www.researchgate.net/publication/303846490_Time_series_momentum_and_volatility_scaling
+
+---
+
+# Part 2 — a SECOND book next to the trend: is any of them feasible? (2026-09-20, later)
+
+Edgar: "so it is not feasible — which one would be, apart from the one running?" A second strategy
+only earns its place if it is (a) positive on its own, (b) nearly uncorrelated with the trend book,
+(c) stable across trivially different specifications, (d) tradeable on the venue. Crypto perps only
+(Strike's TradFi funding history is five months); Binance USDT-M funding every 8 h 2019/20 → today
+for 7 markets; the trend book's sizing; open-to-open; 9.9 bps/turnover; and the FUNDING CASH FLOW of
+every position (a long pays, a short receives). Scripts `/tmp/bs/carry_research.py`, `xs_variants.py`,
+`near_test.py`.
+
+| book | CAGR | vol | Sharpe | MaxDD | turn/y | IS Sh | OOS Sh | corr trend |
+|---|---|---|---|---|---|---|---|---|
+| TREND (crypto only, with funding) | 27.2 % | 18.1 % | 1.42 | −22.5 % | 9.0 | 1.43 | 1.40 | 1.00 |
+| CARRY long/short (funding carry) | −14.6 % | 18.3 % | **−0.77** | −67.1 % | 8.7 | −0.90 | −0.56 | **−0.81** |
+| CARRY long-only | 4.1 % | 4.6 % | 0.90 | −5.5 % | 2.9 | 1.18 | 0.39 | 0.21 |
+| XS momentum L/S (90 d, daily) | 12.1 % | 11.9 % | 1.02 | −14.7 % | 22.3 | 1.30 | 0.69 | **0.10** |
+| XS momentum long-only tilt | 24.3 % | 18.3 % | 1.28 | −25.8 % | 10.6 | 1.43 | 1.07 | 0.72 |
+| TREND + XS L/S (50/50 risk) | 23.6 % | 13.4 % | 1.65 | −14.5 % | | 1.83 | 1.40 | |
+
+Cross-sectional momentum looked like the candidate (corr 0.10, blend Sharpe 1.65, MaxDD −14.5 %) —
+until the specification was moved by one notch:
+
+| XS variant | Sharpe | IS | OOS | blend OOS Sh | blend OOS DD |
+|---|---|---|---|---|---|
+| 90 d, daily rebalance | 1.02 | 1.30 | 0.69 | 1.40 | −10.9 % |
+| 90 d, monthly | 0.17 | 0.53 | −0.28 | 0.85 | −11.6 % |
+| 60 d, monthly | −0.17 | 0.00 | −0.38 | 0.75 | −12.3 % |
+| 120 d, monthly | 0.47 | 0.66 | 0.21 | 1.24 | −10.0 % |
+| 180 d, monthly | 0.07 | 0.08 | 0.07 | 1.09 | −9.1 % |
+| 120 d, monthly, skip 5 d | 0.39 | 0.92 | −0.31 | 0.82 | −12.6 % |
+| 120 d, monthly, top/bottom 2 | 0.50 | 0.58 | 0.40 | 1.41 | −7.2 % |
+
+TREND alone OOS: Sharpe 1.40, MaxDD −15.5 %. No blend beats it out of sample in Sharpe; the drawdown
+relief comes from diluting with a leg of ~zero mean (the same relief cash would give).
+
+Breadth: adding NEAR (Strike's second most liquid crypto, 6 years of history) to the trend pool —
+Sharpe 1.42 → 1.39 (n 8) / 1.43 (n 9): nothing. The diversification the book earned came from asset
+CLASSES (metal, energy, index), and those are the venue's illiquid markets.
+
+## Verdict
+
+1. **Funding carry is not a book in crypto: it is anti-trend.** High positive funding coincides with
+   strong uptrends, so "short when the longs pay" shorts the bull market (Sharpe −0.77, corr −0.81).
+   Long-only carry is cash with a hobby (gross exposure 4 %).
+2. **Cross-sectional momentum on 7 markets is not robust**: its Sharpe swings from 1.0 to −0.2 by
+   changing the rebalance day or the lookback by a month. That is the signature of noise on too few
+   names; the literature runs it on dozens to hundreds. Revisit only when the venue offers ≥ 15-20
+   liquid crypto with ≥ 2 years of history — today it offers ~8.
+3. **Breadth with more of the same asset class adds nothing** (NEAR). Breadth by asset class would —
+   and that is a venue question (liquid TradFi perps), not a strategy question.
+4. **Therefore: no second strategy is defensible on this venue today.** The book's return will come
+   from (a) the one validated engine, sized to survive (Balanced), (b) execution quality (basis
+   guard, venue-price ladder, an exchange-side stop before real money), (c) breadth by asset class
+   whenever the venue's liquidity allows it. Everything else tested today would have subtracted.
+
+Sources for part 2: Koijen, Moskowitz, Pedersen & Vrugt, *Carry* (JFE 2018); Liu, Tsyvinski & Wu,
+*Common Risk Factors in Cryptocurrency* (JF 2022) — momentum and size factors in crypto; the funding
+data is Binance USDT-M `fapi/v1/fundingRate`.
