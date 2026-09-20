@@ -2417,3 +2417,15 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
   maxDD 16,1 %, 25 bps → 1,62). Efecto en el run del lunes 21-sep 04:05Z: ~45 % menos de tamaño por posición +
   re-pick (n 8) → esperar trims REBAL grandes y hasta 2 entradas nuevas (XAU de vuelta si su mediana pasa el suelo).
 - [ ] Mañana: verificar el run (tamaños ≈ 0,45/0,8 de hoy, XAU readmitido, sin `universe` falsos), tracking, UI.
+### Cierre de sesión 2026-09-20 (~04:40Z) — estado final aplicado y verificado
+- [x] Perfil final vivo en el CT: **Balanced exacto** (vol 0,45 · cap 3 · DD 23 % · día 8 % · semana 11 %) + overrides
+  `trend_lookbacks 10,20,30,60,90` y `trend_n_assets 8`. Bridge `current: balanced`; UI Risk muestra "Balanced ·
+  CURRENT · In use" (sin banner Custom). 11/11 puertas para (0,45 · cap 3 · lb 10-90 · n 8): Sharpe 1,86, maxDD 16,7 %,
+  25 bps → 1,61.
+- [x] CORRECCIÓN: cap 2 vs cap 3 es ruido a vol 0,45 — grid del pool Strike: cap 2 ligeramente mejor; panel de
+  investigación (14 mkts, funding): cap 3 ligeramente mejor (1,89 vs 1,84, mismo maxDD 17,6 %). No se redefine el
+  perfil validado; mi "mejora gratis" del informe inicial estaba sobrevendida.
+- [x] Semilla `venue_volume_log` cargada con la secuencia correcta (stop → sembrar → start): 12 mercados, XAU 71.634.
+- [ ] Lunes 21-sep 04:05Z: verificar tamaños ≈ 0,45/0,8 (trims REBAL), re-pick con n 8 (XAU debería volver; hasta 2
+  entradas), ningún `universe` falso, fila de tracking, UI.
+- [ ] UI pendiente: escalera de salida en espacio de precio Strike (o etiquetar "precio fuente").

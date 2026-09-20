@@ -1736,3 +1736,13 @@ ausente no es cero: sin lectura, no se entra y no se expulsa.
 Balanced quedó guardado y `/api/trend.params` lo mostró al instante, pero los pesos no cambian hasta las 04:05Z
 siguientes. Decirlo antes de que el usuario lo busque en pantalla; y no forzar un segundo run el mismo día para
 "verlo ya": dos rebalanceos en una hora es pagar spread dos veces por impaciencia.
+
+## 2026-09-20 — editar un fichero de estado bajo un proceso vivo no sirve: el proceso lo pisa al apagarse
+Sembré `venue_volume_log` en `trend_daily_state.json` con el bridge corriendo y desplegué; el proceso viejo guardó su
+estado en memoria (sin el campo) al recibir SIGTERM (`main.py` shutdown → `trend.save_state()`) y borró la semilla.
+Regla: stop → editar → start, y verificar leyendo el estado con el código NUEVO tras el arranque.
+
+## 2026-09-20 — dos evidencias que discrepan = "ruido", no "elijo la que me gusta"
+Dije "cap 2 gana en las 20 celdas" (pool Strike, sin funding) y era verdad; el panel del proyecto (14 mercados, con
+funding) dijo lo contrario por un margen igual de pequeño. Cuando dos backtests razonables discrepan en 0,05 de
+Sharpe, la conclusión es que el parámetro no importa a ese nivel — y entonces se deja el valor VALIDADO, no el mío.
