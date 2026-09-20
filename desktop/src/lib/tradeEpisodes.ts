@@ -27,6 +27,8 @@ export interface Episode {
   openTs: number;
   closeTs: number | null;
   open: boolean;
+  /** closed by the operator / a universe drop / a risk halt rather than by the strategy's exit rule */
+  forced: boolean;
   /** volume-weighted average entry */
   entryPrice: number;
   /** volume-weighted average exit (closed episodes) */
@@ -57,6 +59,17 @@ export function isTrim(t: { exit_reason?: string | null; order_id?: string | nul
   return reason === "REBALANCE" || String(t.order_id ?? "").startsWith("trend_rebalance_");
 }
 
+/** A close the strategy did not decide: the operator, a market leaving the universe, a risk halt.
+ *  It flattens the episode and realises money, but it is not evidence about the exit rule, so the
+ *  round-trip statistics (win rate, PF, hold) leave it out and say how many there were. */
+const FORCED_REASONS = new Set(["MANUAL", "UNIVERSE", "HALT", "RISK_HALT"]);
+const FORCED_PREFIXES = ["trend_manual_", "trend_universe_", "trend_halt_"];
+export function isForced(t: { exit_reason?: string | null; order_id?: string | null }): boolean {
+  const reason = String(t.exit_reason ?? "").toUpperCase();
+  const oid = String(t.order_id ?? "");
+  return FORCED_REASONS.has(reason) || FORCED_PREFIXES.some((p) => oid.startsWith(p));
+}
+
 function key(symbol: string, strategy: string | null | undefined): string {
   return `${symbol}|${strategy ?? ""}`;
 }
@@ -75,7 +88,7 @@ export function buildEpisodes(fills: TradeData[], positions: PositionData[], now
       if (!st.ep || st.size <= EPS) {
         st.ep = {
           id: `${k}|${f.timestamp}`, symbol: f.symbol, strategy: f.strategy, long: isLong(f.side),
-          openTs: f.timestamp, closeTs: null, open: true, entryPrice: f.price, exitPrice: null, qty: 0,
+          openTs: f.timestamp, closeTs: null, open: true, forced: false, entryPrice: f.price, exitPrice: null, qty: 0,
           pnl: 0, unrealized: 0, fees: 0, fills: [], exitReason: null, feeDebited: 0,
         };
         st.size = 0; st.entryQty = 0; st.entryCost = 0; st.exitQty = 0; st.exitCost = 0;
@@ -108,6 +121,7 @@ export function buildEpisodes(fills: TradeData[], positions: PositionData[], now
         st.ep.open = false;
         st.ep.closeTs = f.timestamp;
         st.ep.exitReason = f.exit_reason ?? null;
+        st.ep.forced = isForced(f);
         st.size = 0;
       }
     }
@@ -134,7 +148,7 @@ export function buildEpisodes(fills: TradeData[], positions: PositionData[], now
       // (an open position whose fills are older than the loaded window)
       out.push({
         id: `${k}|pos|${openTs}`, symbol: p.symbol, strategy: p.strategy, long: isLong(p.side),
-        openTs, closeTs: null, open: true, entryPrice: p.entry_price, exitPrice: null, qty: Math.abs(Number(p.size) || 0),
+        openTs, closeTs: null, open: true, forced: false, entryPrice: p.entry_price, exitPrice: null, qty: Math.abs(Number(p.size) || 0),
         pnl: 0, unrealized: Number(p.unrealized_pnl ?? 0) || 0, fees: Number(p.fees_paid ?? 0) || 0, fills: [], exitReason: null,
         feeDebited: Number(p.entry_fee_debited ?? 0) || 0,
         position: p, ladder: p.exit_ladder ?? null, truncated: true,
@@ -145,8 +159,11 @@ export function buildEpisodes(fills: TradeData[], positions: PositionData[], now
 }
 
 export interface EpisodeStats {
+  /** round trips the STRATEGY closed (its trailing ladder); statistics are computed on these */
   closed: number;
   open: number;
+  /** episodes flattened by the operator, a universe drop or a risk halt: realised, not statistics */
+  forced: number;
   /** rebalance trims across every episode (realised money, not round trips) */
   trims: number;
   /** realised PnL of every exit and trim, closed or still open */
@@ -167,7 +184,9 @@ export interface EpisodeStats {
 }
 
 export function episodeStats(episodes: Episode[]): EpisodeStats {
-  const closed = episodes.filter((e) => !e.open);
+  const flattened = episodes.filter((e) => !e.open);
+  const closed = flattened.filter((e) => !e.forced);
+  const forcedEps = flattened.filter((e) => e.forced);
   const open = episodes.filter((e) => e.open);
   let wins = 0, net = 0, gw = 0, gl = 0, hold = 0, fees = 0;
   let best: Episode | null = null, worst: Episode | null = null;
@@ -178,12 +197,13 @@ export function episodeStats(episodes: Episode[]): EpisodeStats {
     if (!best || e.pnl > best.pnl) best = e;
     if (!worst || e.pnl < worst.pnl) worst = e;
   }
+  for (const e of forcedEps) { net += e.pnl; fees += e.fees; }
   for (const e of open) fees += e.fees;
   const trims = episodes.reduce((a, e) => a + e.fills.filter((f) => f.kind === "trim").length, 0);
   const realised = episodes.reduce((a, e) => a + e.pnl, 0);
   const feeDebited = open.reduce((a, e) => a + e.feeDebited, 0);
   return {
-    closed: closed.length, open: open.length, trims, realised, feeDebited, wins,
+    closed: closed.length, open: open.length, forced: forcedEps.length, trims, realised, feeDebited, wins,
     winRate: closed.length ? wins / closed.length : null,
     net, grossWins: gw, grossLosses: gl,
     profitFactor: gl > 0 ? gw / gl : (gw > 0 ? null : null),

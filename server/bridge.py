@@ -1686,12 +1686,9 @@ async def put_config(body: dict = {}):
     cfg_overrides.save_overrides(merged)
     if state.engine is not None:
         _after_live_config_change(applied)
+    # The activity feed builds its row from this log event (analytics/activity.py); adding a second
+    # one here by hand printed every config change twice (2026-09-20).
     logger.info("config_updated", applied=applied, restart_required=restart_now)
-    try:
-        get_activity_log().add("config", "Config changed", ", ".join(map(str, applied))[:240]
-                               + (" · restart required" if restart_now else ""))
-    except Exception:  # noqa: BLE001
-        pass
     payload = _config_payload()
     return {"status": "ok", "applied": applied,
             "restart_required": bool(restart_now or payload.get("restart_required")),

@@ -147,3 +147,33 @@ def test_edge_statistics_skip_forced_exits():
     assert is_non_strategy_exit(T("trend_manual_1")) and is_non_strategy_exit(T("trend_universe_1"))
     assert is_non_strategy_exit(T("trend_halt_1"))
     assert not is_non_strategy_exit(T("trend_exit_1")) and not is_rebalance_row(T("trend_exit_1"))
+
+
+def test_alltime_statistics_skip_forced_exits_but_keep_their_cash():
+    """A manual close / universe drop / risk halt realises money (it is in the all-time PnL) but is
+    not a round trip of the strategy: it must not move win rate, PF or the trade count."""
+    from types import SimpleNamespace
+    from analytics.alltime import compute_alltime_performance
+
+    def row(ts, ttype, pnl, oid):
+        return SimpleNamespace(timestamp=ts, symbol="ZEC-USD", side="SELL" if ttype == "EXIT" else "BUY",
+                               trade_type=ttype, pnl=pnl, fee=0.0, price=100.0, quantity=1.0, strategy="TREND_DAILY",
+                               duration_sec=3600.0, regime="", order_id=oid, trade_id="t", entry_price=100.0,
+                               exit_price=100.0, equity_after=0.0, session_id="s", source="paper", fee_asset="USD",
+                               mae_bps=0.0, mfe_bps=0.0, slippage_bps=0.0, order_type="MARKET", signal_strength=0.0,
+                               spread_bps=0.0, notional=100.0, equity_before=0.0, atr=0.0, pnl_pct=0.0,
+                               micro_vpin=0.0, micro_risk_score=0.0, expected_cost_bps=0.0, fill_probability=0.0,
+                               id=0, is_win=pnl > 0)
+
+    rows = [row(1.0, "ENTRY", 0.0, "trend_entry_a"), row(2.0, "EXIT", 21.9, "trend_manual_a"),      # Edgar's close
+            row(3.0, "ENTRY", 0.0, "trend_entry_b"), row(4.0, "EXIT", -2.9, "trend_universe_b"),    # dropped market
+            row(5.0, "ENTRY", 0.0, "trend_entry_c"), row(6.0, "EXIT", -1.0, "trend_rebalance_c"),   # a trim
+            row(7.0, "ENTRY", 0.0, "trend_entry_d"), row(8.0, "EXIT", 5.0, "trend_exit_d")]         # the strategy
+    repo = SimpleNamespace(get_trades=lambda **kw: list(rows))
+    p = compute_alltime_performance(repo, 1000.0, source="paper")
+    assert p["total_trades"] == 1 and p["win_rate"] == 1.0          # only the strategy's own exit
+    assert p["forced_exits"] == 2 and p["rebalance_trims"] == 1
+    assert p["pnl"] == pytest.approx(21.9 - 2.9 - 1.0 + 5.0)           # every close is still cash
+    # with no strategy exit at all the counters are still reported
+    q = compute_alltime_performance(SimpleNamespace(get_trades=lambda **kw: rows[:6]), 1000.0, source="paper")
+    assert q["total_trades"] == 0 and q["forced_exits"] == 2 and q["rebalance_trims"] == 1

@@ -163,6 +163,8 @@ def build_event_row(event: str, ev: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if event == "config_updated":
         applied = ev.get("applied")
         det = ", ".join(map(str, applied)) if isinstance(applied, (list, tuple)) else str(applied or "")
+        if ev.get("restart_required"):
+            det = (det + " · restart required")[:240]
         return {"kind": "config", "title": "Config changed", "detail": det[:240]}
     if event == "signal_validated":
         return {"kind": "signal", "title": f"Signal {ev.get('side')} {sym}", "detail": str(ev.get("strategy", ""))[:100],
