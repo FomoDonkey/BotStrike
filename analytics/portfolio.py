@@ -77,11 +77,12 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
     hist_n = int(equity_history.count()) if equity_history is not None else 0
     has_hist = hist_n > 0
     rows = sorted(trades, key=lambda t: _f(getattr(t, "timestamp", 0.0)))
-    from analytics.edge import is_rebalance_row
-    # statistics (trades, win rate, holds, Sharpe) count round trips; a rebalance trim is money
-    # (in the balance, the days and the volume) but not a trade
+    from analytics.edge import is_non_strategy_exit, is_rebalance_row
+    # statistics (trades, win rate, holds, Sharpe) count round trips the STRATEGY closed; a rebalance
+    # trim and a forced close (manual / universe / risk halt) are money (in the balance, the days and
+    # the volume) but not a trade - the same population analytics/alltime and analytics/edge use
     closes = [t for t in rows if (getattr(t, "trade_type", "") or "ENTRY") not in ("ENTRY", "FUNDING")
-              and not is_rebalance_row(t)]
+              and not is_rebalance_row(t) and not is_non_strategy_exit(t)]
     funding_rows = [t for t in rows if (getattr(t, "trade_type", "") or "") == "FUNDING"]
     funding_paid = sum(_f(t.pnl) for t in funding_rows)
     fills_notional = [(_f(getattr(t, "price", 0.0)) * _f(getattr(t, "quantity", 0.0))
@@ -106,7 +107,7 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
         r["fees"] += _fee_paid(t)
         ttype = getattr(t, "trade_type", "") or "ENTRY"
         r["pnl"] += cash_effect(t)         # the day's move of the balance: fees, exits, funding
-        if ttype not in ("ENTRY", "FUNDING") and not is_rebalance_row(t):
+        if ttype not in ("ENTRY", "FUNDING") and not is_rebalance_row(t) and not is_non_strategy_exit(t):
             r["trades"] += 1
 
     start = datetime.fromtimestamp(since_ts, tz=timezone.utc).date()
@@ -256,7 +257,7 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
         # A rebalance trim is not a trade for the statistics (analytics/edge.py): the card read
         # 60 % / PF 7.97 on five rows while the edge monitor read 33 % / 3.04 on the three real
         # exits. Trims stay in the money (realised, curve) and are counted apart.
-        sc = [t for t in sc_all if not is_rebalance_row(t)]
+        sc = [t for t in sc_all if not is_rebalance_row(t) and not is_non_strategy_exit(t)]
         pnls = [_f(t.pnl) for t in sc]
         # Funding is paid by THIS strategy's positions: without it the card read +9.99 while the
         # account read +10.09 at the same instant (2026-09-05).
