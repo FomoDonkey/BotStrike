@@ -2515,3 +2515,11 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
 - [x] Bootstrap (Balanced): año mediano +19 %, P(año en pérdidas) 13 %, DD anual mediano −8,7 %, P(halt 23 %) 0,3 %/año.
 - [x] Cierre: ~50 configuraciones en 5 familias hoy; nada gana al motor validado. No seguir buscando "espectacular";
   las palancas son amplitud por clase de activo (venue), ejecución y tiempo.
+### HFT — investigado y medido (2026-09-20 17:10Z) — research note parte 4
+- [x] Latencia CT→Strike 140-195 ms (las carreras HFT se ganan en 5-10 µs); libro BTC 0,018 BTC en el mejor nivel;
+  coste ida y vuelta taker 9,25 bps vs 3,46 bps de movimiento medio por minuto → un oráculo perfecto a 1 min pierde
+  −5,8 bps por operación. Señales 1-15 min: el signo del edge bruto cambia entre IS y OOS (no hay señal).
+- [x] Las intradía retiradas del propio bot: MR 2.284 trades sin edge bruto; Fib t −2,6; Divergence PF 1,01.
+- [x] Veredicto: HFT no es viable para este bot. Ganancia "de alta frecuencia" real: ejecutar el rebalanceo diario
+  como MAKER (`trend_live_*`, ya implementado para live) ≈ +0,6-1,1 %/año sin riesgo nuevo.
+- [ ] Verificar el run del 21-sep 04:05Z (VPN de Edgar apagada; SSH vuelve a funcionar).

@@ -1801,3 +1801,10 @@ mejora robusta. Lo correcto no es seguir hasta que el ruido produzca un ganador 
 un sobreajuste), sino calcular el Sharpe deflactado (0,96-0,98: la ventaja real es la que ya corre), documentar los
 negativos y decir dónde están las palancas que quedan (amplitud por clase, ejecución, tiempo). Un bootstrap de
 "cómo es un año normal" (+19 % mediano, −8,7 % de DD) protege más la rentabilidad que cualquier overlay.
+
+## 2026-09-20 — "debe haber estudios increíbles sobre HFT": los hay, y hay que leerlos hasta el final
+Los estudios de referencia (Aquilina-Budish-O'Neill, Baron et al.) demuestran que el HFT es rentable — para los seis
+más rápidos, en carreras de 5-10 microsegundos. Con 150 ms de latencia y 9,25 bps de coste por ida y vuelta, un
+oráculo perfecto a 1 minuto pierde dinero: eso se calcula en diez líneas sobre los propios datos y cierra la
+discusión mejor que cualquier opinión. Regla: ante "quiero alta frecuencia", medir latencia, coste y movimiento
+medio por horizonte ANTES de diseñar nada; y recordar que el propio bot ya enterró tres motores intradía con t-tests.

@@ -201,3 +201,66 @@ validated Donchian ensemble robustly**, and its deflated Sharpe says the edge is
 in a backtest is what a desk learns to distrust; what is spectacular here is a validated ~1.4-1.9
 Sharpe engine whose normal year is +19 % with a 9 % drawdown. The levers that remain are not signals:
 breadth by asset class (a venue question), execution quality, and time.
+
+---
+
+# Part 4 — high-frequency trading: is it possible for this bot? (2026-09-20, 17:10Z)
+
+Edgar: "I want it to be a high-frequency strategy — there must be incredible studies proving it."
+There are. They prove the opposite for anyone without microsecond infrastructure.
+
+## What the studies say
+- Aquilina, Budish & O'Neill (QJE 2022): latency-arbitrage races happen ~once a minute per stock,
+  the modal race lasts **5-10 microseconds**, the top 6 firms win > 80 % of them; the prize is ~0.5 bps
+  of volume, $2-8 bn/yr globally — a winner-take-all race for speed.
+- Baron, Brogaard, Hagströmer & Kirilenko (JFQA 2019): HFT profits are concentrated in the fastest
+  firms; a rank improvement in latency (colocation) improves performance; the slow lose.
+- Makarov & Schoar (JFE 2020): crypto cross-exchange arbitrage was large in 2017 and is bounded by
+  capital controls and venue frictions; the common component of signed volume drives 80 % of BTC
+  returns — what looks like a price gap is usually a friction, not a free lunch.
+- Tiniç & Sensoy; Rajendran & Singaravelu (crypto microstructure): adverse selection is the primary
+  cost of market making in crypto; it is worst exactly during one-sided moves, when the maker keeps
+  getting filled on the wrong side.
+
+## What this bot measures (CT 104 → Strike, 2026-09-20 17:10Z)
+- REST round trip **140-195 ms** (connect ~20 ms); WS tick age 0.22 s. The races above are won in
+  5-10 µs: we are ~20,000× slower and always will be from a home LXC over Tailscale.
+- BTC-USD book at Strike: spread 0.25 bps, top of book 0.018 BTC (~$1,500) each side, top-5 depth
+  0.76 BTC (~$61k). A $300 order is fine; a market-making book is not.
+- Costs: taker 4.5 bps + half spread 0.125 → **9.25 bps per round trip**; maker rebate −0.5 bps only
+  if BOTH legs fill passively without adverse selection (the case that does not exist).
+
+## The arithmetic on Edgar's own 1-minute data (160,785 BTC bars, 31-May → 20-Sep-2026)
+
+| horizon | mean |move| | autocorr(1) | oracle net per trade (taker) |
+|---|---|---|---|
+| 1 min | 3.46 bps | 0.005 | **−5.8 bps** |
+| 5 min | 7.89 bps | −0.034 | **−1.4 bps** |
+| 15 min | 13.8 bps | −0.006 | +4.5 bps |
+| 60 min | 27.5 bps | 0.018 | +18.3 bps |
+
+A trader who knew the NEXT minute's direction with certainty loses 5.8 bps per trade after costs.
+Realistic 1-15 min signals (sign of the last k bars, long/short, walk-forward): the gross edge flips
+sign between IS and OOS for every k (momentum k=3: −39 IS / +43 OOS bps/day), i.e. there is no
+signal; net as taker −800 to −3,700 bps/day. The "ideal maker" column (+100 to +500 bps/day) is the
+mirage every retail HFT plan is built on: it assumes the rebate on both legs and zero adverse
+selection — the money the 5-microsecond firms take.
+
+## What this bot already found the hard way (its own retired intraday engines)
+- Mean reversion: no gross edge over 2,284 trades (−0.90/−0.63/−2.05/+0.45 bps, SE 1.2-2.6); random
+  entries perform the same and inverting every signal does not help.
+- Fibonacci retracement: t = −2.6, PSR(0) = 0.005, bootstrap PnL entirely negative.
+- Divergence (RSI + structure): widened to 30 markets, PF 1.11 → 1.01, +4.6 bps, t 0.95.
+
+## Verdict
+High-frequency trading is not a strategy family this bot can enter: by physics (150 ms vs 10 µs), by
+economics (9.25 bps cost vs 3.5 bps of movement per minute), and by its own experiments. The one
+"high-frequency" gain that is real and free: **execute the daily rebalance as a MAKER** (passive
+orders, re-pegged, market fallback — `trend_live_*` already implements it for live) — 5-9 bps per side
+× ~13 units of turnover a year ≈ +0.6 to +1.1 % of equity per year, with no new risk.
+
+Sources: Aquilina, Budish & O'Neill — https://academic.oup.com/qje/article/137/1/493/6368348 ·
+Budish, Cramton & Shim — https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2388265 ·
+Baron, Brogaard, Hagströmer & Kirilenko — https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2433118 ·
+Makarov & Schoar — https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3171204 ·
+Tiniç & Sensoy, *Adverse selection in cryptocurrency markets* — https://nottingham-repository.worktribe.com/OutputFile/40584797
