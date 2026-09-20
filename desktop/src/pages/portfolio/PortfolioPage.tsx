@@ -182,7 +182,7 @@ export function PortfolioPage() {
 
   const chart = (
     <Panel className="flex flex-col min-h-[320px] overflow-hidden">
-      <PortfolioChart days={p?.daily ?? []} missing={pf.missing} todayIso={todayIso} nowSec={now / 1000}
+      <PortfolioChart days={p?.daily ?? []} missing={pf.missing} todayIso={todayIso}
                       curve={perf.data?.equity_curve_ts ?? null} history={perf.data?.equity_history ?? p?.equity_history ?? null}
                       peak={acct.peak_equity > 0 ? acct.peak_equity : (perf.data?.peak_equity ?? null)} />
     </Panel>

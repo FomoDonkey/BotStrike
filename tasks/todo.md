@@ -2429,3 +2429,14 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
 - [ ] Lunes 21-sep 04:05Z: verificar tamaños ≈ 0,45/0,8 (trims REBAL), re-pick con n 8 (XAU debería volver; hasta 2
   entradas), ningún `universe` falso, fila de tracking, UI.
 - [ ] UI pendiente: escalera de salida en espacio de precio Strike (o etiquetar "precio fuente").
+### Auditoría UI 2026-09-20 (ronda 19, desde Chrome, DOM vs API en el mismo instante)
+- [x] Trade: posiciones (entry/mark/PnL/funding/legs/escalera/MAE-MFE/hold/fees), Trade History (20 filas), Order
+  History, cabecera del gráfico, panel Bot (next run, target, drift) — todo coincide con la API.
+- [x] **BUG Portfolio congelaba el renderizador** (45 s sin `document_idle`): `nowSec` (reloj de 1 s) en las deps del
+  `useMemo` de la curva → recharts redibujaba ~10 k puntos/s. Fix: ventana relativa a la última muestra +
+  `downsampleCurve` (≤ 1.200 puntos, último de cada bucket, extremos conservados). Sin test runner en desktop →
+  verificación en Chrome real tras el deploy.
+- [ ] Activity: eventos "Config changed" duplicados (dos filas idénticas por cambio).
+- [ ] Trade History dice "statistics count 5" mientras `/api/edge` cuenta 4 (excluye UNIVERSE) — unificar definición.
+- [ ] Panel Bot "NEXT REBALANCE (ESTIMATE)": usa los targets del último run; tras un cambio de config (vol 0,8 → 0,45)
+  dice "inside band" cuando mañana venderá ~45 %. Añadir aviso "config changed since last run".

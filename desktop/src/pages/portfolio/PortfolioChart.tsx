@@ -28,7 +28,7 @@ interface Props {
   history?: EquityHistoryMeta | null;
   /** the all-time mark-to-market peak, drawn as a reference line */
   peak?: number | null;
-  nowSec: number;
+
 }
 
 /**
@@ -40,7 +40,33 @@ interface Props {
  * days before the first real sample are estimates (fills priced at the daily source close) and are
  * drawn dashed and said so. The PNL bars are the day's marked move; the realised cash rides in the tooltip.
  */
-export function PortfolioChart({ days, missing, todayIso, curve, history, peak, nowSec }: Props) {
+/** More points than pixels only cost CPU: one sample a minute is 1,440 a day, and the curve grows
+ *  for as long as the bridge runs. Buckets of equal time keep the shape (the LAST sample of each
+ *  bucket, so the line ends where the account is) and the first/last points are always kept. */
+export const MAX_CURVE_POINTS = 1_200;
+
+export function downsampleCurve(pts: [number, number][], maxPoints: number): [number, number][] {
+  if (pts.length <= maxPoints || maxPoints < 2) return pts;
+  const first = pts[0][0];
+  const span = pts[pts.length - 1][0] - first;
+  if (span <= 0) return [pts[0], pts[pts.length - 1]];
+  const out: [number, number][] = [pts[0]];
+  let bucket = 0;
+  let last: [number, number] | null = null;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const b = Math.floor(((pts[i][0] - first) / span) * (maxPoints - 2));
+    if (b !== bucket) {
+      if (last) out.push(last);
+      bucket = b;
+    }
+    last = pts[i];
+  }
+  if (last) out.push(last);
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+
+export function PortfolioChart({ days, missing, todayIso, curve, history, peak }: Props) {
   const [tab, setTab] = useState<Tab>("value");
   const [range, setRange] = useState<Range>("7d");
 
@@ -54,19 +80,23 @@ export function PortfolioChart({ days, missing, todayIso, curve, history, peak, 
   const valueData = useMemo(() => {
     const pts = curve ?? [];
     if (!pts.length) return [];
-    const from = range === "all" ? -Infinity : nowSec - (range === "7d" ? 7 : 30) * DAY;
+    // The window ends at the LAST SAMPLE, not at the wall clock: with `nowSec` in the deps this
+    // memo re-ran every second and recharts redrew ~10k SVG points a second (7 d at one sample a
+    // minute), which kept the tab's renderer busy for good (2026-09-20: Portfolio never reached
+    // document_idle in Chrome). The curve itself only changes when /api/performance is re-polled.
+    const lastTs = pts[pts.length - 1][0];
+    const from = range === "all" ? -Infinity : lastTs - (range === "7d" ? 7 : 30) * DAY;
     // two series on one axis: the estimated prefix (dashed) and the sampled path; they share the
     // boundary point so the line is continuous
     const out: { ts: number; est: number | null; real: number | null; isEst: boolean }[] = [];
-    for (const [ts, eq] of pts) {
-      if (ts < from) continue;
+    for (const [ts, eq] of downsampleCurve(pts.filter(([ts]) => ts >= from), MAX_CURVE_POINTS)) {
       const isEst = realSince === null ? true : ts < realSince;
       out.push({ ts, est: isEst ? eq : null, real: isEst ? null : eq, isEst });
     }
     const firstReal = out.findIndex((p) => !p.isEst);
     if (firstReal > 0) out[firstReal - 1].real = out[firstReal - 1].est;
     return out;
-  }, [curve, range, nowSec, realSince]);
+  }, [curve, range, realSince]);
   const hasEst = valueData.some((p) => p.isEst);
   const calendarDays = useMemo(() => days.map((d) => ({ ...d, pnl: d.pnl_mtm ?? d.pnl })), [days]);
 
