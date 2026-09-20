@@ -64,6 +64,8 @@ BASIS_WARN = 0.025
 # CME session had been closed since Friday) and let BNB in on a single spike that crossed the floor
 # by 6 %. A market that really faded still leaves - after N/2 readings, like the S&P did in Sept.
 VENUE_VOL_DAYS = 7
+BASIS_LOG_DAYS = 30          # runs of basis history the guard compares today's reading against
+BASIS_GUARD_MIN_READINGS = 5  # under this many the guard has no reference and holds nothing
 
 
 def _venue_reading_informative(pool_symbol: str, ts: "pd.Timestamp") -> bool:
@@ -326,6 +328,10 @@ class TrendState:
     # the model parameters the last run's targets were computed with: the UI's "next rebalance"
     # estimate reads those targets, and after a config change it must say they are stale
     params_at_run: Dict[str, Any] = field(default_factory=dict)
+    # sym -> [[YYYY-MM-DD, basis], ...]: the venue basis at each run (last BASIS_LOG_DAYS), the
+    # reference the basis guard measures today's reading against
+    basis_log: Dict[str, List[List[Any]]] = field(default_factory=dict)
+    last_basis_blocked: Dict[str, float] = field(default_factory=dict)   # ui symbol -> deviation held today
     # sym -> [[YYYY-MM-DD, 24 h quote volume], ...]: the last VENUE_VOL_DAYS informative readings,
     # one per day; the liquidity floors read their median (see _effective_venue_volumes)
     venue_volume_log: Dict[str, List[List[Any]]] = field(default_factory=dict)
@@ -342,7 +348,8 @@ class TrendState:
             st.positions[k] = BookPosition(**{f: v.get(f, 0.0) for f in BookPosition.__dataclass_fields__})
         for k in ("weights", "universe", "universe_month", "universe_key", "targets", "last_run_date", "last_run_ts",
                   "last_run_status", "last_error", "equity_basis", "opens_prev", "tracking", "candidates",
-                  "last_run_late", "last_adds_blocked", "liquidity_note", "venue_volume_log", "params_at_run"):
+                  "last_run_late", "last_adds_blocked", "liquidity_note", "venue_volume_log", "params_at_run",
+                  "basis_log", "last_basis_blocked"):
             if k in d:
                 setattr(st, k, d[k])
         # One tracking row per day. Files written before 2026-09-05 hold a row per RUN — a restart
@@ -575,6 +582,34 @@ class TrendDailyEngine:
                 out[sym] = float(np.median([float(r[1]) for r in rows]))
         return out
 
+    def _basis_guard(self, basis_now: Dict[str, float], today_key: str) -> Dict[str, float]:
+        """Markets whose venue basis has jumped away from its recent median: {pool_symbol: deviation}.
+
+        Today's reading is logged (one per day, a re-run replaces it) and compared with the median
+        of the PREVIOUS readings; with fewer than BASIS_GUARD_MIN_READINGS there is no reference and
+        nothing is held. A held market gets no entry or add this run - the exits and trims of the
+        ladder are never touched - and tries again tomorrow. The level of the basis is not judged
+        (Strike's ZEC has traded 6 % under Binance for weeks and that is simply where it trades);
+        the JUMP is.
+        """
+        st = self.state
+        guard = float(getattr(self.config, "trend_basis_guard_pct", 0.0) or 0.0)
+        held: Dict[str, float] = {}
+        for sym, b in (basis_now or {}).items():
+            prev = [r for r in (st.basis_log.get(sym) or []) if r and str(r[0]) != today_key]
+            st.basis_log[sym] = (prev + [[today_key, float(b)]])[-BASIS_LOG_DAYS:]
+            if guard <= 0 or len(prev) < BASIS_GUARD_MIN_READINGS:
+                continue
+            med = float(np.median([float(r[1]) for r in prev]))
+            dev = float(b) - med
+            if abs(dev) > guard:
+                held[sym] = round(dev, 5)
+        st.last_basis_blocked = {to_ui_symbol(k): v for k, v in held.items()}
+        if held:
+            logger.warning("trend_adds_held_by_basis", guard=guard,
+                           **{to_ui_symbol(k): v for k, v in held.items()})
+        return held
+
     def _venue_volumes(self, symbols: List[str]) -> Dict[str, float]:
         """24 h quote volume per market AT THE VENUE, used as the liquidity floor for mixed pools.
 
@@ -620,7 +655,8 @@ class TrendDailyEngine:
             data = await asyncio.to_thread(self.store.load, self.pool(), today, True,
                                            params.min_history_days)
             st.candidates = len(data)
-            self._basis_snapshot(data)
+            basis_now = self._basis_snapshot(data)
+            basis_held = self._basis_guard(basis_now, today_key)
             decision = today - pd.Timedelta(days=1)
             month_key = today.strftime("%Y-%m")
             # The universe is re-picked monthly, but ALSO whenever the pool or the number of
@@ -746,7 +782,8 @@ class TrendDailyEngine:
                 # not read it as one (2026-09-20: all four "trend exits" on the CT were a pool
                 # change, a liquidity drop and a manual close - the stop had fired zero times).
                 why = "halt" if self.killed else ("universe" if sym not in st.universe else "exit")
-                await self._execute_symbol(sym, w, price, equity, today_key, now, allow_add=may_add,
+                await self._execute_symbol(sym, w, price, equity, today_key, now,
+                                           allow_add=may_add and sym not in basis_held,
                                            weight_changed=abs(w - prev_w) > 1e-12, reason=why)
             st.targets = {s: round(w, 6) for s, w in targets.items() if s in st.universe or w > 0}
             self._record_tracking(today_key, opens, turnover, equity, prev_basis, weights_prev=weights_prev)
@@ -1328,6 +1365,9 @@ class TrendDailyEngine:
             "exposure": round(exposure / equity, 4) if equity > 0 else 0.0,
             "tracking": self.tracking_summary(),
             "params_changed_since_run": self.params_changed_since_run(),
+            "basis_guard": {"pct": float(getattr(tc, "trend_basis_guard_pct", 0.0) or 0.0),
+                            "held": dict(self.state.last_basis_blocked or {}),
+                            "readings": {to_ui_symbol(k): len(v) for k, v in (self.state.basis_log or {}).items()}},
             "params": {
                 "lookbacks": tc.trend_lookbacks, "target_vol": tc.trend_target_vol,
                 "vol_window": tc.trend_vol_window, "n_assets": tc.trend_n_assets,

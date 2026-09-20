@@ -211,6 +211,12 @@ class TradingConfig:
     # A member LEAVES when its 24 h venue volume falls under this multiple of one position (checked
     # every run, not only at the monthly re-pick). Lower than the entry multiple on purpose: hysteresis.
     trend_liq_venue_exit_multiple: float = 10.0
+    # The signal is decided on the reference close (Binance / Yahoo) and filled at the venue's mark,
+    # and the two differ by a basis that drifts (measured 2026-09-20 over five months: std 0.8-1.8 %
+    # per market, extremes -6 % / +14 %, drift -2 to -3 %). A breakout the signal saw is not the one
+    # the venue prints when its basis has just jumped, so no ENTRY or ADD is placed in a market whose
+    # basis sits more than this far from its 30-run median. Exits and trims are never held. 0 = off.
+    trend_basis_guard_pct: float = 0.02
     # Short side of the daily book. OFF by default and that is a measured decision, not caution:
     # tasks/research_shorts_and_speed_2026-09-04.md — at half size it holds the Sharpe (1.92) and cuts
     # the drawdown in all ten stress scenarios (7.6 % -> 5.6 %), and it is the only natural hedge the

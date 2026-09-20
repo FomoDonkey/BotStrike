@@ -204,3 +204,38 @@ def test_params_changed_since_run_lists_what_moved(tmp_path):
     s.trading.trend_lookbacks = "10,20,30,60,90"
     assert eng.params_changed_since_run() == ["lookbacks", "target_vol"]
     assert eng.status()["params_changed_since_run"] == ["lookbacks", "target_vol"]
+
+
+# ── 4. the basis guard: a venue dislocated from the signal gets no entry / add, exits still run ────
+def test_basis_guard_holds_entries_on_a_basis_jump_but_never_exits(tmp_path):
+    from strategies.trend_daily import BASIS_GUARD_MIN_READINGS
+    frames = {"UPUSDT": _frame("up")}
+    eng, fills, s = _engine(tmp_path, frames, trend_n_assets=1)
+    s.trading.trend_basis_guard_pct = 0.02
+    ref_close = float(frames["UPUSDT"]["close"].iloc[-2])          # last settled reference close
+    # ten runs of history with the venue trading exactly at the reference (basis 0)
+    eng.state.basis_log = {"UPUSDT": [[f"2026-08-{d:02d}", 0.0] for d in range(1, 11)]}
+    eng.set_venue_mark("UP-USD", ref_close * 0.93)                   # today the venue is 7 % under
+    asyncio.run(eng.run_once())
+    assert "UPUSDT" not in eng.state.positions                       # the entry was held
+    assert eng.state.last_basis_blocked == {"UP-USD": pytest.approx(-0.07, abs=0.002)}
+    assert eng.status()["basis_guard"]["held"] == eng.state.last_basis_blocked
+    assert eng.state.basis_log["UPUSDT"][-1][0] == "2026-09-02"      # today's reading was logged
+    # the venue comes back to the reference the next day -> the entry goes through
+    eng.set_venue_mark("UP-USD", ref_close)
+    eng._clock = lambda: NOW + 86_400
+    asyncio.run(eng.run_once())
+    assert "UPUSDT" in eng.state.positions and eng.state.last_basis_blocked == {}
+    # a jump the other way holds ADDS but a full exit is executed regardless
+    eng.state.basis_log["UPUSDT"] = [[f"2026-08-{d:02d}", 0.0] for d in range(1, 11)]
+    eng.set_venue_mark("UP-USD", ref_close * 1.08)
+    eng._clock = lambda: NOW + 2 * 86_400
+    res = asyncio.run(eng.close_symbol("UP-USD", reason="manual"))    # a close is never a held add
+    assert res["closed"] is True and "UPUSDT" not in eng.state.positions
+    # with too little history the guard has no reference and holds nothing
+    eng2, fills2, s2 = _engine(tmp_path / "b", {"UPUSDT": _frame("up")}, trend_n_assets=1)
+    s2.trading.trend_basis_guard_pct = 0.02
+    eng2.state.basis_log = {"UPUSDT": [["2026-08-01", 0.0]] * (BASIS_GUARD_MIN_READINGS - 1)}
+    eng2.set_venue_mark("UP-USD", ref_close * 0.93)
+    asyncio.run(eng2.run_once())
+    assert "UPUSDT" in eng2.state.positions and eng2.state.last_basis_blocked == {}

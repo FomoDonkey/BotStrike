@@ -141,6 +141,10 @@ GROUPS: List[Dict[str, Any]] = [
            help="1.0 = never more than 100% of the slot in one asset (no leverage)."),
         _t("trend_rebalance_threshold", "Rebalance threshold", "percent", min=0, max=1, step=0.05,
            help="Vol-induced size changes smaller than this are not traded (saves fees)."),
+        _t("trend_basis_guard_pct", "Basis guard", "percent", min=0, max=0.1, step=0.005,
+           help="No entry or add in a market whose venue basis (mark vs the signal's reference close) sits "
+                "more than this from its 30-run median: the breakout the venue prints is not the one the "
+                "signal saw. Exits and trims are never held. 0 = off."),
         _t("trend_execution_hour_utc", "Execution hour (UTC)", "int", min=0, max=23, step=1, unit="h"),
         _t("trend_execution_delay_min", "Execution delay", "int", min=1, max=600, step=1, unit="min"),
         _t("trend_min_order_usd", "Min order", "number", min=1, max=10_000, step=1, unit="$",

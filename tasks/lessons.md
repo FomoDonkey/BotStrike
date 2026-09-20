@@ -1774,3 +1774,10 @@ no se toca, y se documenta el resultado negativo para no repetir la pregunta.
 La conversión fuente→venue (mark / cierre fuente) se hizo UNA vez en `exit_ladders()` y todos los consumidores
 (tabla, ficha, gráfico, journal) quedaron coherentes sin tocar cada uno. Las distancias son ratios y no cambian;
 el precio fuente y el basis se conservan en el registro para poder auditar la decisión del modelo.
+
+## 2026-09-20 — "exacto" no es "correcto": la serie de la señal se elige por validez, no por cercanía al fill
+Pedir que todo corra con datos del venue suena a precisión. Medido: Strike tiene 24-165 días de historia (el modelo
+necesita 92 y la regla de universo 365), un tercio de los días del oro sin ninguna operación y velas de fin de semana
+que generan breakouts falsos; y aun así las piernas coinciden 91-100 % de los días con la fuente. Regla: la señal se
+calcula en la serie más larga y limpia sobre la que está validada; el venue manda en la EJECUCIÓN; y la brecha entre
+ambas (basis) se mide, se registra y se acota con un guardia — no se elimina cambiando de serie.

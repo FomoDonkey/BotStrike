@@ -299,6 +299,8 @@ export interface TrendResponse {
   last_run_late?: boolean;
   /** why the last run held its adds (risk limits), "" when it did not */
   last_adds_blocked?: string;
+  /** the basis guard at the last run: threshold, markets whose entries/adds were held (ui symbol -> deviation from the 30-run median) and readings logged per market */
+  basis_guard?: { pct: number; held: Record<string, number>; readings: Record<string, number> };
   universe: string[];
   candidates: number;
   /** the model's weights at the last run */

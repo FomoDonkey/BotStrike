@@ -88,6 +88,11 @@ export function TrendDailyPanel() {
           <ListRow label="Last run"><span className="inline-flex items-center gap-2">{formatLocalDateTime(trend.last_run_utc)} <StatusChip status={statusKind} label={trend.last_run_status || "never"} size="xs" />{trend.last_run_late && <Chip tone="amber" size="xs" title="The run happened after its slot and filled at the current price, not at the 04:05 open">late</Chip>}</span></ListRow>
           {trend.last_error && <p className="text-[12.5px] font-medium text-rose break-words mt-1">{trend.last_error}</p>}
           {trend.last_adds_blocked && <p className="text-[12.5px] font-medium text-amber break-words mt-1" title="The risk limits held the book's adds at the last run; exits always execute">Adds held by risk: {trend.last_adds_blocked}</p>}
+          {trend.basis_guard && Object.keys(trend.basis_guard.held ?? {}).length > 0 && (
+            <p className="text-[12.5px] font-medium text-amber break-words mt-1" title="The venue's basis against the signal's reference close jumped more than the guard allows: the breakout the venue printed is not the one the signal saw. No entry or add in these markets at the last run; exits and trims were not held. It retries at the next run.">
+              Entries / adds held by the basis guard (±{(trend.basis_guard.pct * 100).toFixed(1)}%): {Object.entries(trend.basis_guard.held).map(([s, d]) => `${s} ${d >= 0 ? "+" : ""}${(d * 100).toFixed(2)}%`).join(" · ")}
+            </p>
+          )}
           {trend.killed && <p className="text-[12.5px] font-medium text-rose mt-1">Killed by the edge monitor — the book is closed and no run opens positions.</p>}
           <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-2 h-7 flex items-center mt-2">
             Universe <span className="ml-1 normal-case tracking-normal font-medium">({trend.universe?.length ?? 0} of {trend.candidates} candidates)</span>

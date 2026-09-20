@@ -2476,3 +2476,18 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
   al nivel `full_exit` de la escalera (en precio venue), re-colocada tras cada run y tras cada trim/add; el bot sigue
   mandando (el stop del exchange solo actúa si el bot no está). Requiere `trend_live_executor` con órdenes
   condicionales y reconciliación al arrancar. No se implementa mientras `BOTSTRIKE_ALLOW_LIVE=0`.
+### ¿Todo con datos de Strike? — investigado con datos (2026-09-20 ~07:00Z)
+- [x] Velas diarias de Strike descargadas para los 12 del pool: historia 24 d (BNB) · 35 (SP500) · 64 (NAS100) ·
+  150 (XAU/XAG/WTI) · 157-165 (ZEC/XRP). El modelo necesita 92 cierres y la regla de universo 365 días → con Strike
+  solo NO puede correr en 3 mercados y no existe validación (las 11 puertas son sobre 9 años).
+- [x] Calidad de las velas Strike en TradFi: XAU 42/150 días con volumen 0, XAG 30, WTI 5; 43 velas de fin de semana
+  por mercado que 1-4 veces marcaron un nuevo máximo/mínimo de 20 d sin sesión (breakouts/stops espurios).
+- [x] Acuerdo de señal (misma pierna Donchian, Strike vs fuente, ventana común): crypto majors 0 % de días distintos;
+  XRP/ZEC 0-2 %; TradFi 1-9 % en piernas 10-60 (XAU lb30 9 %). Basis: std 0,8-1,8 %, extremos −6 %/+14 %, deriva
+  −2/−3 % en 5 meses.
+- [x] Conclusión: señal en la fuente (larga, limpia, validada) + ejecución en Strike es lo correcto; lo que faltaba era
+  ACOTAR el riesgo del basis → `trend_basis_guard_pct` (2 %): sin entrada/add en un mercado cuyo basis salta más de
+  2 pp respecto a la mediana de sus 30 últimos runs (≥ 5 lecturas); salidas y trims nunca se retienen. Log persistido
+  (`basis_log`), `/api/trend.basis_guard`, aviso en el panel Trend daily. Test e2e. Primera decisión posible el 25-sep.
+- [ ] Futuro: archivar cada día la vela diaria de Strike por mercado (dataset propio) y, con ≥ 12-18 meses, validar
+  una variante "Strike-nativa" con las mismas 11 puertas antes de plantear el cambio.
