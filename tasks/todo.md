@@ -2507,3 +2507,11 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
   activo cuando el venue tenga TradFi líquido. Revisar XS momentum solo con ≥ 15-20 crypto líquidos y ≥ 2 años.
 - [ ] Tailscale SSH al host denegó la conexión ("Permission denied" al conectar; el host aparece en `tailscale status`)
   → reintentar antes de verificar el run del 21-sep 04:05Z.
+### Overlays + construcción de cartera + bootstrap (2026-09-20 ~09:40Z) — research note parte 3
+- [x] 13 overlays (vol-régimen ×3, compresión ×2, pullback ×3, compuerta BTC ×2, mezcla carry ×2, semanal): NINGUNO
+  pasa la regla (Sharpe +0,1 y menor DD, IS y OOS). El más cercano (compuerta BTC ×0,5) es un empate.
+- [x] Reparto del riesgo: 1/N (1,48) > ajuste por correlación (1,47) > inverso-vol (1,20) > paridad por clase (0,92).
+- [x] Sharpe deflactado del motor con 40-80 pruebas: 0,98-0,96 → la ventaja no es producto de la búsqueda.
+- [x] Bootstrap (Balanced): año mediano +19 %, P(año en pérdidas) 13 %, DD anual mediano −8,7 %, P(halt 23 %) 0,3 %/año.
+- [x] Cierre: ~50 configuraciones en 5 familias hoy; nada gana al motor validado. No seguir buscando "espectacular";
+  las palancas son amplitud por clase de activo (venue), ejecución y tiempo.

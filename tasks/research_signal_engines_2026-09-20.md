@@ -147,3 +147,57 @@ CLASSES (metal, energy, index), and those are the venue's illiquid markets.
 Sources for part 2: Koijen, Moskowitz, Pedersen & Vrugt, *Carry* (JFE 2018); Liu, Tsyvinski & Wu,
 *Common Risk Factors in Cryptocurrency* (JF 2022) — momentum and size factors in crypto; the funding
 data is Binance USDT-M `fapi/v1/fundingRate`.
+
+---
+
+# Part 3 — overlays, portfolio construction, and what a normal year looks like (2026-09-20, later)
+
+Edgar: "keep testing almost indefinitely until you find a very powerful strategy; it cannot be that
+only one works". The families a CTA desk layers OVER a trend engine, each with prior evidence, on the
+same harness. Acceptance rule: Sharpe +0.10 and lower MaxDD, in IS and OOS, stable to neighbours.
+Script `/tmp/bs/overlay_study.py`, `portfolio_study.py`, `mc_dd.py`.
+
+## Overlays on the live engine
+
+| overlay | CAGR | Sharpe | MaxDD | turn/y | IS Sh | OOS Sh | OOS DD |
+|---|---|---|---|---|---|---|---|
+| **BASE (live engine)** | 21.0 % | **1.46** | −19.7 % | 12.8 | 1.16 | **2.09** | −5.9 % |
+| Vol-regime attenuation p80 ×0.5 / p90 ×0.5 / p80 ×0.7 | 17.5-18.8 % | 1.42-1.45 | −20.7…−21.5 % | 13 | 1.12-1.18 | 2.03-2.07 | −6.1…−6.7 % |
+| Breakout only from vol compression k1.0 / k1.2 | 16.4 / 19.5 % | 1.41 / 1.44 | −21 % | 10-12 | 1.12 / 1.24 | 2.06 / 1.90 | −6.3 / −7.8 % |
+| Pullback entry, max 3 / 5 / 10 d | 18.4 / 16.3 / 13.6 % | 1.38 / 1.31 / 1.22 | −17.9 / −17.1 / −17.9 % | 10-11 | 1.18 / 1.13 / 1.07 | 1.80 / 1.69 / 1.53 | −7.5…−7.8 % |
+| BTC-200d regime gate for alts ×0.5 / ×0 | 20.7 / 20.4 % | 1.46 / 1.44 | −19.1 / −18.4 % | 12.5 | 1.17 / 1.18 | 2.05 / 1.99 | −6.8 / −7.7 % |
+| Carry forecast blended in (Carver) w 0.15 / 0.30 | 15.1 / 11.0 % | 1.37 / 1.25 | −16.3 / −13.0 % | 11 | 0.99 / 0.82 | 2.09 / 2.01 | −5.8 / −5.9 % |
+| Weekly Donchian 2/4/6/12/18 wk | 20.1 % | 1.28 | −23.8 % | 11.6 | 0.99 | 1.93 | −8.7 % |
+
+None passes the acceptance rule. The closest (BTC gate ×0.5) is a wash: same Sharpe, 0.6 pp less
+drawdown, slightly worse OOS. Pullback entries buy a lower drawdown with a lower Sharpe and a worse
+OOS: the trend's payoff is at the START of the move, and waiting for a dip misses part of it.
+
+## Portfolio construction (same engine, at EQUAL's realised vol)
+
+| risk split | Sharpe | MaxDD | turn/y | IS | OOS |
+|---|---|---|---|---|---|
+| **1/N (live)** | **1.48** | −19.7 % | 13 | 1.18 | 2.09 |
+| equal risk per asset class | 0.92 | −25.0 % | 15 | 0.67 | 1.36 |
+| inverse volatility | 1.20 | −23.3 % | 19 | 0.82 | 1.92 |
+| correlation-adjusted (Baltas-Kosowski CF) | 1.47 | −19.2 % | 22 | 1.17 | 2.06 |
+
+## Is the live engine's edge a product of today's search?
+
+Deflated Sharpe probability (Bailey & López de Prado) of the live engine — Sharpe 1.48, 2,954 days,
+skew +0.46, kurtosis 13.5 — with 20 / 40 / 80 trials: **0.99 / 0.98 / 0.96**. It is not.
+
+## What a normal year looks like (block bootstrap, 5,000 one-year paths, Balanced size)
+
+- 1-year return: median **+19 %**, p10 −2 %, p90 +50 %; P(losing year) 13 %.
+- Worst drawdown within a year: median −8.7 %, p90 −14 %; P(DD > 15 %) 7 %; **P(DD > 23 % = halt) 0.3 %**
+  per year, 10 % over an 8-year path (median 8-year max DD −16.3 %).
+- Worst single day within a year: median −3.6 %; the 8 % daily limit is never reached.
+
+## Verdict of the day (≈ 50 configurations, five families)
+
+Trend engines, exit rules, second books, portfolio construction and overlays: **nothing beats the
+validated Donchian ensemble robustly**, and its deflated Sharpe says the edge is real. "Spectacular"
+in a backtest is what a desk learns to distrust; what is spectacular here is a validated ~1.4-1.9
+Sharpe engine whose normal year is +19 % with a 9 % drawdown. The levers that remain are not signals:
+breadth by asset class (a venue question), execution quality, and time.

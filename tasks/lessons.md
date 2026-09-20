@@ -1794,3 +1794,10 @@ El momentum relativo parecía el complemento perfecto (corr 0,10, mezcla 1,65) h
 mensual y lookbacks vecinos. Regla: antes de llamar "descorrelacionada y rentable" a una segunda estrategia, barrer
 las especificaciones vecinas; si el signo del Sharpe depende del día de rebalanceo, es ruido sobre pocos nombres.
 Y el carry de funding en crypto es anti-tendencia por construcción: el funding alto ES el mercado alcista.
+
+## 2026-09-20 — "sigue probando hasta que salga algo espectacular" es la petición que un desk debe saber rechazar
+Cincuenta configuraciones en cinco familias, con regla de aceptación fijada ANTES de mirar resultados, y ninguna
+mejora robusta. Lo correcto no es seguir hasta que el ruido produzca un ganador (eso es exactamente cómo se fabrica
+un sobreajuste), sino calcular el Sharpe deflactado (0,96-0,98: la ventaja real es la que ya corre), documentar los
+negativos y decir dónde están las palancas que quedan (amplitud por clase, ejecución, tiempo). Un bootstrap de
+"cómo es un año normal" (+19 % mediano, −8,7 % de DD) protege más la rentabilidad que cualquier overlay.
