@@ -1746,3 +1746,20 @@ Regla: stop → editar → start, y verificar leyendo el estado con el código N
 Dije "cap 2 gana en las 20 celdas" (pool Strike, sin funding) y era verdad; el panel del proyecto (14 mercados, con
 funding) dijo lo contrario por un margen igual de pequeño. Cuando dos backtests razonables discrepan en 0,05 de
 Sharpe, la conclusión es que el parámetro no importa a ese nivel — y entonces se deja el valor VALIDADO, no el mío.
+
+## 2026-09-20 — "la UI refleja todo" se comprueba con el DOM y la API en el mismo instante, no con capturas
+Extraer tablas y textos con JavaScript y hacer `fetch('/api/...')` desde la misma página da dos fotos del mismo
+milisegundo; una captura a ojo no distingue 1.040,87 de 1.040,75. Y comprobar `document.scripts[].src` contra el
+hash del último build ANTES de dar por verificado un cambio de UI: index.html se cachea y el "fix que no aplica"
+era el bundle anterior (otra vez). Navegar con `?v=<sha>` fuerza la recarga.
+
+## 2026-09-20 — una estadística con tres poblaciones distintas en tres paneles es un bug aunque cada número sea exacto
+Trade History decía 5, la card de Strategies 5/40 % y el edge monitor 4/50 %: alltime, portfolio y edge filtraban
+distinto. Regla: la definición de "trade" vive en UN sitio del servidor (`analytics/edge.is_*`) y todos los
+consumidores la importan; la UI enseña los conteos apartados (round trips / forzados / trims) en vez de esconderlos.
+
+## 2026-09-20 — un reloj de 1 s en las dependencias de un gráfico de 16 k puntos congela la pestaña
+`useNow()` alimentaba el `useMemo` de la curva de Portfolio; recharts redibujaba 10 k puntos SVG por segundo.
+Regla: las ventanas temporales de un gráfico se anclan a los DATOS (última muestra), no al reloj; y nunca se pintan
+más puntos que píxeles (downsample por buckets, extremos conservados). Medirlo: `document.readyState` y si un
+`setTimeout(1500)` tarda 1,5 s de verdad.

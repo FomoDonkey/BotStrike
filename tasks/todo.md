@@ -2440,3 +2440,19 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
 - [ ] Trade History dice "statistics count 5" mientras `/api/edge` cuenta 4 (excluye UNIVERSE) — unificar definición.
 - [ ] Panel Bot "NEXT REBALANCE (ESTIMATE)": usa los targets del último run; tras un cambio de config (vol 0,8 → 0,45)
   dice "inside band" cuando mañana venderá ~45 %. Añadir aviso "config changed since last run".
+### Ronda 19 — resultado (2026-09-20 ~05:45Z, HEAD 3d6e1cd desplegado)
+- [x] Auditadas las 9 páginas contra la API en el mismo instante (DOM por JavaScript): Trade (posiciones, Trade History,
+  Order History, cabecera, panel Bot), Journal, Portfolio, Strategies, Risk, Backtest, Data, System, Settings (captura).
+  Sin desbordamiento horizontal a 390 px en ninguna ruta (iframe same-origin).
+- [x] Corregido y desplegado: Portfolio congelado (reloj de 1 s en el memo + 16 k puntos → ventana por última muestra +
+  downsample 1.200); "Config changed" duplicado en Activity; UNA población de estadísticas en todas partes
+  (alltime, portfolio perf_30d/daily/by_strategy, edge, Trade History, Journal, Strategies): salidas de la estrategia
+  vs forzadas (MANUAL/UNIVERSE/RISK HALT) vs trims. UI y API leen ahora 4 / 1 / 15.
+- [ ] **Pendiente de aprobación de Edgar** (el clasificador bloqueó la escritura en la DB de producción): reetiquetar
+  las 4 filas históricas que aún llevan `trend_exit_` y no lo son (rowid 56 ETH → universe, 224 SP500 → universe,
+  226 XAG → universe, 604 ZEC → manual). Con eso las estadísticas dirían la verdad completa: 0 round trips de la
+  estrategia, 5 forzados, 15 trims. Script listo (backup previo): /tmp/bs/dbfix.sh en el PC de Edgar.
+- [ ] UI: escalera de salida en espacio de precio Strike (hoy en precio fuente; WTI/XAU muestran el stop sobre el mark).
+- [ ] UI: "NEXT REBALANCE (ESTIMATE)" usa targets del último run; tras un cambio de config avisar "config changed since".
+- [ ] UI: "Funding paid +$4.12" cuando es un cobro neto → "Funding (net)".
+- [ ] Order History mezcla 1.655 filas FUNDING con 52 órdenes (hay filtro Type; valorar ocultarlas por defecto).
