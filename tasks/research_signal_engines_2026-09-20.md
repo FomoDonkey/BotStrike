@@ -264,3 +264,78 @@ Budish, Cramton & Shim — https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2
 Baron, Brogaard, Hagströmer & Kirilenko — https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2433118 ·
 Makarov & Schoar — https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3171204 ·
 Tiniç & Sensoy, *Adverse selection in cryptocurrency markets* — https://nottingham-repository.worktribe.com/OutputFile/40584797
+
+---
+
+# Part 5 — medium frequency (15 m – 4 h): the one thing that survived (2026-09-20, 22:00Z)
+
+Edgar: "a strategy at 15 m / 30 m / 1 h / 4 h, or a market maker". Binance USDT-M perp 1 h bars
+2020-01 → 2026-09 for the 7 crypto markets the venue trades (6 years, 52-59k bars each), taker
+costs as the venue charges (4.5 bps + half spread per side, ~13 bps per round trip), 8 h funding cash
+flows on every position, IS to 2023-12 / OOS 2024-01 →. Scripts `/tmp/bs/mf_study.py`,
+`h4_blend.py`, `clock_test.py`, `clock_curve.py`, `clock_shift.py`.
+
+**A first run of this study printed Sharpe 7-12 for intraday trend. That was a look-ahead bug in the
+harness (the position was paid for the bar it had just observed). It is recorded here because the
+lesson matters: any medium-frequency result that looks spectacular is a bug until proven otherwise.**
+
+## Cost hurdle (mean |move| per bar, 7-market average, vs ~13 bps round trip)
+15 m 13.8 bps (BTC) · 30 m 19.4 · 1 h 62 · 4 h 124 · 1 d 322. Below one hour the move is the cost.
+
+## What was tested at 1 h – 4 h (corrected)
+
+| book | Sharpe | MaxDD | turn/y | IS | OOS |
+|---|---|---|---|---|---|
+| Trend Donchian 4 h, long-only (lb 1-20 d) | 1.35 | −24.9 % | 80 | 1.30 | 1.41 |
+| Trend Donchian 1 h, long-only | 1.32 | −21.1 % | 80 | 1.28 | 1.39 |
+| Trend 4 h long/short | 0.67 | −24.0 % | 148 | 0.62 | 0.73 |
+| EWMAC 4 h long/short | 0.78 | −24.0 % | 24 | 0.89 | 0.62 |
+| Mean reversion 1 h (z 24/48 h) | **−1.3 … −1.5** | −90 % | 200-360 | loses | loses |
+| Funding-settlement effect (1 h before settlement) | 0.19 gross / **−4.7** net | — | 650 | — | — |
+| Market maker on BTC 1 m, 12 variants (spread 0.5-2 bps, adverse 0-2 bps) | **−25 … −43** | — | 550-1,560 fills/day | — | — |
+
+Mean reversion, the settlement effect and market making are dead on arrival at this venue's costs
+and this bot's latency (quotes go stale in the 150 ms it takes to reach Strike; the market moves
+3.5 bps a minute while a 0.5 bps quote sits there).
+
+## The finding: the SAME daily rule on a faster clock
+
+The 4 h trend book was not a new strategy (corr 0.80-0.98 with the daily book) — so the clean
+question was asked: the daily rule exactly (Donchian 10/20/30/60/90 **days**, long-only, same
+sizing, same band, same costs, same funding) evaluated every 12 / 8 / 4 / 1 h instead of once a day.
+
+| clock | Sharpe | MaxDD | turn/y | OOS Sh | corr daily |
+|---|---|---|---|---|---|
+| **24 h (the engine)** | 1.42 | −22.5 % | 9 | 1.40 | 1.00 |
+| 12 h | **1.73** | −18.2 % | 9 | **1.61** | — |
+| 8 h | 1.68 | −18.3 % | 9 | 1.52 | — |
+| 4 h | 1.61 | −18.3 % | 9 | 1.50 | 0.98 |
+| 1 h | 1.63 | −17.9 % | 9 | 1.52 | 0.97 |
+| 4 h, cost ×2 | 1.57 | −19.2 % | 9 | 1.46 | 0.98 |
+| 4 h, neighbouring lookback sets (×3) | 1.56-1.63 | −17.3…−18.1 % | 14-27 | 1.37-1.58 | 0.91-0.96 |
+
+Year by year (4 h vs daily): better in 5/7 years (2021 +0.71, 2026 +0.22, 2024 +0.11, 2023 +0.06,
+2025 +0.02; 2020 −0.09, 2022 −0.18); daily difference +2.8 %/y, **t = +1.75**.
+
+**Mechanism.** The rule's stop is "close under the trailing mid" and its entry "close at the N-day
+high". Evaluated once a day, a break that happens at 06:00 is acted on at 04:05 the next morning —
+up to 28 h of exposure after the trend has ended; a breakout confirmed at noon waits until the
+next day. On a sub-daily clock the same events are acted on within hours. The number of entries and
+exits per year does not change (turnover 9/y in every row), they just happen earlier. The gain is
+mostly in the first step (24 h → 12 h) and flat after — exactly what a delay effect looks like, and
+the reverse of the project's own delay audit (each day of extra delay cost Sharpe in
+scripts/validate_profile.py). This is NOT a faster signal (those died, Kurth-Eisler-Rej-Bouchaud
+2026); it is the validated signal with less lag.
+
+## Acceptance rule check (set before the tests)
+Sharpe +0.10 ✔ (+0.19 … +0.31) · lower MaxDD ✔ (−22.5 → −18 %) · IS ✔ and OOS ✔ · stable across
+neighbours ✔ and costs ×2 ✔ · mechanism explained ✔ · significance moderate (t = 1.75, 6 years).
+
+## What it would take
+Crypto legs only (24/7 bars; Yahoo has no sub-daily bars for gold/oil — those legs stay daily): a
+bar-clock abstraction in `strategies/trend_daily.py` (today-keys → bar-keys), a sub-daily kline
+store (same fetcher with interval `12h`/`4h`, lookbacks × bars-per-day, annualisation × bars-per-day),
+runs at each bar close + 5 min, universe pick unchanged (daily/monthly), tracking per bar, the
+basis guard and venue floors unchanged. Then: the 11 gates on the research panel's crypto legs at
+the new clock, 60 days of paper beside the daily book, and only then a switch. **Not implemented
+tonight**: the book is hours from its first run at the Balanced size.

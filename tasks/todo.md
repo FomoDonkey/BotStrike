@@ -2523,3 +2523,13 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
 - [x] Veredicto: HFT no es viable para este bot. Ganancia "de alta frecuencia" real: ejecutar el rebalanceo diario
   como MAKER (`trend_live_*`, ya implementado para live) ≈ +0,6-1,1 %/año sin riesgo nuevo.
 - [ ] Verificar el run del 21-sep 04:05Z (VPN de Edgar apagada; SSH vuelve a funcionar).
+### Media frecuencia (1 h – 4 h) — investigado (2026-09-20 22:00Z) — research note parte 5
+- [x] Primer run con Sharpe 7-12 = look-ahead del harness (corregido y documentado).
+- [x] MR horaria −1,3/−1,5; settlement 0,19 bruto/−4,7 neto; market maker −25…−43 en 12 variantes → descartados.
+- [x] **HALLAZGO**: la misma regla diaria evaluada cada 12/8/4/1 h: Sharpe 1,42 → 1,61-1,73, MaxDD −22,5 → −18 %,
+  OOS 1,40 → 1,50-1,61, turnover igual (9/año), costes ×2 aguanta (1,57), vecinos 1,56-1,63, 5/7 años, t = +1,75.
+  Mecanismo: menos retraso entre la ruptura y la ejecución (no una señal más rápida).
+- [ ] Auditoría de retraso (ejecución k barras después de la decisión) — en curso al cerrar la sesión.
+- [ ] PRÓXIMO PROYECTO (no esta noche): reloj sub-diario para los mercados crypto (12 h como primer candidato: dos
+  runs/día, 04:05 y 16:05Z) — abstracción de clave de barra, store `12h`/`4h`, lookbacks × barras/día, tracking por
+  barra; TradFi sigue diario. Validar con las 11 puertas sobre las piernas crypto + 60 días de paper en paralelo.

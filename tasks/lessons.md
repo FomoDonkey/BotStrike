@@ -1808,3 +1808,10 @@ más rápidos, en carreras de 5-10 microsegundos. Con 150 ms de latencia y 9,25 
 oráculo perfecto a 1 minuto pierde dinero: eso se calcula en diez líneas sobre los propios datos y cierra la
 discusión mejor que cualquier opinión. Regla: ante "quiero alta frecuencia", medir latencia, coste y movimiento
 medio por horizonte ANTES de diseñar nada; y recordar que el propio bot ya enterró tres motores intradía con t-tests.
+
+## 2026-09-20 — un Sharpe de 12 en un backtest intradía es un bug, no un hallazgo; y el hallazgo real fue "menos retraso"
+Desplacé el retorno una barra de más y la tendencia a 4 h "ganó" un 1.261 % anual. La regla: cualquier resultado
+que multiplique por 5 lo conocido se investiga como error antes que como descubrimiento. Corregido, lo que quedó
+fue más interesante y más modesto: la misma señal diaria evaluada cada 12 h suma ~0,2-0,3 de Sharpe y quita 4 pp de
+drawdown sin una operación más al año — porque un stop roto a las 06:00 se ejecuta a las 08:05 y no 22 h después.
+Las mejoras robustas casi nunca son señales nuevas: son retraso, costes, amplitud y tamaño.
