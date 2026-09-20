@@ -33,6 +33,15 @@ VERDICT_KILL = "kill"
 
 
 REBALANCE_ORDER_PREFIXES = ("trend_rebalance_",)
+# A manual close, a universe drop or a risk-halt flatten realises PnL but says nothing about the
+# trailing stop, so the edge statistic must not count it (2026-09-20: the CT's "4 trades, profit
+# factor 21" were a pool change, a liquidity drop and one manual close - zero stop exits).
+NON_STRATEGY_ORDER_PREFIXES = ("trend_manual_", "trend_universe_", "trend_halt_")
+
+
+def is_non_strategy_exit(t: Any) -> bool:
+    oid = str(getattr(t, "order_id", "") or "")
+    return oid.startswith(NON_STRATEGY_ORDER_PREFIXES)
 
 
 def is_rebalance_row(t: Any) -> bool:
@@ -125,9 +134,11 @@ def compute_edge_stats(trade_repo, source: str = "paper", window: int = 200,
     # grew and adds to a loser after it shrank, so counting trims as trades biased the statistic
     # towards the last move and drowned the ~90 real exits a year in drift rows (2026-09-05).
     trims = [t for t in closes if is_rebalance_row(t)]
-    closes = [t for t in closes if not is_rebalance_row(t)]
+    forced = [t for t in closes if is_non_strategy_exit(t)]
+    closes = [t for t in closes if not is_rebalance_row(t) and not is_non_strategy_exit(t)]
     closes.sort(key=lambda t: float(t.timestamp or 0.0))
     out["rebalance_rows_excluded"] = len(trims)
+    out["non_strategy_rows_excluded"] = len(forced)
     by_strategy: Dict[str, List[Any]] = {}
     for t in closes:
         by_strategy.setdefault(t.strategy or "UNKNOWN", []).append(t)

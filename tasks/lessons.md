@@ -1694,3 +1694,33 @@ número de filas que se ven al abrirla; las definiciones finas (round trips vs t
 las estadísticas, con la palabra exacta ("Round trips", no "Trades"). Y comprobar cada pareja badge/tabla en el
 navegador, no solo cada número contra la API.
 
+
+## 2026-09-20 — un panel "modelo vs real" también puede mentir: comprobar QUÉ pesos se puntúan
+El tracking del libro trend leía `st.weights` después de ejecutar el día → puntuaba el retorno de ayer con los pesos
+de hoy. Firma inequívoca: la diferencia motor−correcto era ≥ 0 en TODOS los días (un sesgo de look-ahead nunca
+perjudica). **Regla:** cualquier métrica "modelo vs realidad" se reproduce con un replay independiente sobre los
+mismos datos ANTES de sacar conclusiones sobre la ejecución; y en cualquier bucle "ejecutar → registrar", los pesos
+"previos" se capturan antes del bucle, no se leen del estado después.
+
+## 2026-09-20 — "no cierra las que van en positivo" es la estrategia, y hay que poder ENSEÑARLO
+Un seguidor de tendencia sin take-profit parece roto a quien mira el P&L abierto. La respuesta no es un TP (destruye
+el edge: el retorno viene de las pocas tendencias largas) sino visibilidad: escalera de salida por posición con
+distancia a cada peldaño. Ya existe en /api/positions.exit_ladder; conviene que la UI la haga evidente.
+
+## 2026-09-20 — target_vol es un dial de riesgo, no de edge; el cap de apalancamiento sí cambia el Sharpe
+Grid 2018-26: Sharpe plano de vol 0,2 a 1,2 dentro de cada n; cap 2 > cap 3 en las 20 celdas (el cap 3 solo se
+activa en activos de baja vol → sesga el libro hacia crypto). La config "agresiva" multiplica el DD sin añadir
+Sharpe. Y 18 días de paper con Sharpe 3,6 ± 12 no dicen nada: la potencia estadística para Sharpe ~1,2 son ~4,6 años.
+El paper sirve para validar EJECUCIÓN (tracking), no rentabilidad.
+
+## 2026-09-20 — "cerró con beneficio" no se afirma leyendo la etiqueta: se comprueba QUIÉN cerró
+Dije que ZEC (+21,9 $) era el trailing stop funcionando. Era un cierre manual de Edgar; la fila llevaba `trend_exit`
+porque el código ponía ese prefijo a TODO cierre total. Regla: antes de atribuir un cierre a la estrategia, cruzar
+(a) el feed de Activity (dice "Manual close"), (b) la hora (04:05Z es el run; otra hora es deploy/manual/re-pick) y
+(c) el peso del modelo en la fecha de decisión (si sigue > 0, el stop NO disparó). Y el order_id debe decir la causa.
+
+## 2026-09-20 — dos espacios de precio en la misma ficha se leen como "el stop no funciona"
+Señal y stop viven en el cierre de la fuente (Yahoo/Binance); el mark vive en Strike, con basis de hasta −6 %.
+En WTI el stop (98,66) se pintaba por encima del mark (96,85). Los números eran correctos y aun así la pantalla
+mentía. Regla: todo nivel que se muestre junto a un precio debe estar en el MISMO espacio de precio que ese precio,
+o llevar la etiqueta del suyo.

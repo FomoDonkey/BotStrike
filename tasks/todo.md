@@ -2360,3 +2360,44 @@ desbordamiento horizontal. Las capturas están en el scratchpad de la sesión.
 - [x] 2026-09-06 desplegado y verificado: estadísticas por ciclo completo en todas las superficies, Journal = cuenta al céntimo, margen cross 3× (4e7a04d)
 - [x] 2026-09-06 ejecución 04:05 UTC: S&P y plata fuera (suelo de liquidez), ADA y ZEC dentro
 - [x] 2026-09-07 conciliación completa tras la ejecución del 6 sep (11 identidades OK); stops verificados; profit-lock medido y descartado (scripts/profit_lock_study.py)
+
+## Sesión 2026-09-20 — Evaluación quant del paper trading (18 días) y go/no-go
+Edgar: "analiza cómo van las operaciones, si hay que ajustar parámetros, evalúa el paper a fondo, ¿listo para real?,
+¿por qué no cierra posiciones en positivo desde hace mucho?". Datos: 17 endpoints del CT + trades.json (1.690 filas) +
+caché diaria binance_daily (9 años) + estado del libro. Backtest propio con las funciones del modelo del bot
+(verificado: versión lenta con `target_weights` día a día = versión rápida, mismos números a 2 decimales).
+### Hallazgos (verificados)
+- [x] Posiciones abiertas 10–18 días en positivo sin cerrar = DISEÑO (Donchian trailing, sin take-profit); la escalera
+  de salida de cada posición está en /api/positions.exit_ladder. Es correcto, no un fallo.
+- [x] **BUG de reporting (no de trading)**: `_record_tracking` lee `st.weights` DESPUÉS de que `_execute_symbol` los
+  actualice → el "model_ret" aplica los pesos de HOY al retorno de AYER (look-ahead). Replay: motor +11,8 % vs
+  correcto +7,3 % en 17 días (+4,5 pp inflados; la diferencia nunca es negativa = firma de look-ahead). El panel
+  "model 11,5 % vs paper 4,7 %, TE 26 %" exagera el gap real (2,6 pp). Fix: capturar `weights_prev` ANTES del bucle.
+- [x] Config viva (vol 0,8 · cap 3 · n 6) ≠ config validada 11/11 (vol 0,2 · cap 2 · n 3). Grid 2018-26: el Sharpe
+  es plano en target_vol (es un dial de riesgo), sube con n (0,67→0,92→1,24→1,43) y cap 2 > cap 3 en todo el grid.
+- [x] Lookback 5 no paga: quitarlo baja turnover 31→20/año y sube Sharpe 1,21→1,25 (pool real de Strike).
+- [x] Trims de rebalanceo: −16,0 $ realizados vs +24,3 $ de salidas trend; coste de recompra en los ciclos
+  trim→re-add: +18,2 $ (vendió BTC a 75.769 y recompró a 81.086; SOL 97,2→113,2; ADA 0,195→0,231).
+- [x] Riesgo: MaxDD histórico de la config viva −34,9 % (marcas diarias) con halt en 39 % (margen 4 pp); 1.167 días
+  (3,2 años) fue el DD más largo y 666 días con DD>20 %. Con vol 0,4 cap 2: MaxDD −18,9 %, 0 días >20 %, mismo Sharpe.
+- [x] Funding: +4,20 $ NETO RECIBIDO (WTI +3,03) — los perps de Strike cotizan bajo índice (basis WTI −3,6 %,
+  ZEC −5,8 %); viento de cola hoy, dependiente de régimen.
+- [x] Límites 12 %/día y 15 %/semana nunca habrían saltado (peor día −8,8 %, peor semana −9,1 %) — no trocean un DD válido.
+- [x] Exposición 111 % vs `max_total_exposure_pct 0,6` NO es una brecha: el tope real = equity×0,6×5 = 300 %.
+### Pendiente (decisión de Edgar)
+- [ ] Arreglar el look-ahead de `_record_tracking` (1 línea + test) y desplegar.
+- [ ] Decidir perfil: propuesta vol 0,4 · cap 2 · lookbacks 10-90 · n 6→8 si el pool lo permite (ver informe).
+- [ ] NO ir a real todavía: 18 días / 4 round trips no validan nada (Sharpe 3,6 ± 12). El paper valida EJECUCIÓN,
+  no edge; criterio de salida: tracking honesto |paper−modelo| < 1 pp/mes durante ≥ 60 días + bug de tracking cerrado.
+### Añadido en la misma sesión (tras verificar en Chrome)
+- [x] Las 4 "trend_exit" del historial NO eran salidas del trailing (ETH = cambio de pool 3-sep, SP500/XAG = re-pick
+  6-sep, ZEC = cierre MANUAL de Edgar 9-sep); el modelo seguía largo en las cuatro. El stop ha disparado 0 veces en 18 d.
+- [x] Fix: cada causa de cierre lleva su prefijo de order_id y su exit_reason (`trend_manual_`/MANUAL,
+  `trend_universe_`/UNIVERSE, `trend_halt_`/RISK_HALT); bridge las deriva, edge.py las excluye de las estadísticas,
+  UI las etiqueta. Las filas históricas conservan `trend_exit_` (no se reescribe la DB).
+- [x] Fix del look-ahead del tracking (`weights_prev` capturado antes del bucle) + 8 tests nuevos
+  (`tests/test_trend_tracking_and_exit_reasons.py`); el e2e falla contra el código viejo (0,149 vs 0,074).
+- [x] Verificado el invariante del stop: 36 piernas × 9 años, 0 bajadas mientras la pierna está dentro.
+- [ ] UI: la escalera de salida está en precio de la FUENTE (Yahoo/Binance) y el mark en precio Strike → en WTI/XAU el
+  "Exit 98,66" aparece POR ENCIMA del mark 96,85 (basis −3,6 %). Hay que dibujar la escalera en espacio venue
+  (stop × mark/source) o etiquetar el espacio de precio. También en el overlay del gráfico (ZEC: líneas 6 % altas).

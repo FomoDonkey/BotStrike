@@ -3342,6 +3342,12 @@ def _trade_row(r) -> dict:
         exit_reason = "trend_exit"
     elif oid.startswith("trend_rebalance"):
         exit_reason = "rebalance"
+    elif oid.startswith("trend_manual"):
+        exit_reason = "manual"           # operator closed it from the UI - not a strategy exit
+    elif oid.startswith("trend_universe"):
+        exit_reason = "universe"         # the market left the pick / liquidity floor
+    elif oid.startswith("trend_halt"):
+        exit_reason = "halt"             # risk halt / kill flattened the book
     else:
         exit_reason = ""
     # An ENTRY row stores the signal's REFERENCE price in `entry_price` (main.py passes

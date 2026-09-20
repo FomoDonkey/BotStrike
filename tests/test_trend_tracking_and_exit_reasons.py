@@ -1,0 +1,149 @@
+"""TREND_DAILY — two faults found on the CT on 2026-09-20 after 18 live days.
+
+1. The tracking record scored yesterday's return with TODAY's weights: `_record_tracking` read
+   `st.weights` after `_execute_symbol` had already overwritten them. Replayed on the live data the
+   engine's model return was +11.8 % against +7.3 % without the look-ahead, and the inflation was
+   >= 0 on every single day. The record must use the weights held BEFORE today's trades.
+2. Every full close wore the `trend_exit_` order id, so `/api/trades` and `analytics/edge` read a
+   manual close, a universe drop and a risk-halt flatten as trailing-stop exits (the CT's "4 trades,
+   profit factor 21" contained zero stop exits). Each cause now has its own prefix and exit_reason.
+"""
+import asyncio
+
+import pytest
+
+from strategies.trend_daily import BookPosition, _close_kind
+from strategies.trend_daily_model import model_daily_return
+from test_trend_daily import NOW, _engine, _frame
+
+
+# ── 1. tracking uses the weights that earned the return ────────────────────────
+def test_tracking_scores_the_weights_held_not_the_weights_just_set(tmp_path):
+    eng, _, s = _engine(tmp_path, {"BTCUSDT": _frame("up")})
+    st = eng.state
+    st.opens_prev = {"BTCUSDT": 100.0}
+    st.last_run_date = "2026-09-01"
+    st.weights = {"BTCUSDT": 1.0}                 # what today's run has just set (after trading)
+    held_yesterday = {"BTCUSDT": 0.5}             # what actually rode 100 -> 110
+    eng._record_tracking("2026-09-02", {"BTCUSDT": 110.0}, 0.5, 1_050.0, prev_equity=1_000.0,
+                         weights_prev=held_yesterday)
+    cost_bps = s.trading.taker_fee * 1e4 + s.trading.slippage_bps
+    expected = model_daily_return(held_yesterday, {"BTCUSDT": 100.0}, {"BTCUSDT": 110.0}, 0.5, cost_bps)
+    assert st.tracking[-1]["model_ret"] == pytest.approx(expected, abs=1e-9)
+    assert st.tracking[-1]["model_ret"] < 0.10    # 0.5 x 10 % minus costs - NOT the 1.0 x 10 % the bug gave
+
+
+def test_run_once_records_yesterdays_weights_after_resizing_today(tmp_path):
+    """End to end: day 1 enters; before day 2 the held weight is halved by hand so the model resizes
+    it (> threshold). The day-2 record must score the HALVED weight, not the resized one."""
+    import pandas as pd
+    frames = {"UPUSDT": _frame("up")}
+    eng, fills, s = _engine(tmp_path, frames, trend_n_assets=1)
+    asyncio.run(eng.run_once())
+    st = eng.state
+    w_model = st.weights["UPUSDT"]
+    assert w_model > 0
+    opens_day1 = dict(st.opens_prev)
+    # simulate a book that drifted to half the model weight (e.g. a manual trim)
+    st.weights["UPUSDT"] = w_model / 2
+    st.positions["UPUSDT"].size /= 2
+    held = dict(st.weights)
+    # day 2: a forming candle 5 % higher (the decision still reads rows <= yesterday, so the
+    # model weight is unchanged and the halved book is resized back up)
+    o2 = float(frames["UPUSDT"]["close"].iloc[-1]) * 1.05
+    frames["UPUSDT"].loc[pd.Timestamp("2026-09-03")] = [o2, o2, o2, o2, 0.0, 0.0]
+    eng._clock = lambda: NOW + 86_400
+    n_before = len(fills.trades)
+    asyncio.run(eng.run_once())
+    assert len(fills.trades) > n_before                         # it did resize (buy) today
+    assert st.weights["UPUSDT"] == pytest.approx(w_model, rel=1e-6)
+    rec = st.tracking[-1]
+    cost_bps = s.trading.taker_fee * 1e4 + s.trading.slippage_bps
+    expected = model_daily_return(held, opens_day1, st.opens_prev, rec["turnover"], cost_bps)
+    assert rec["model_ret"] == pytest.approx(expected, abs=1e-6)
+    wrong = model_daily_return(st.weights, opens_day1, st.opens_prev, rec["turnover"], cost_bps)
+    assert rec["model_ret"] != pytest.approx(wrong, abs=1e-6)   # the look-ahead number differs
+
+
+# ── 2. a close says why it happened ────────────────────────────────────────────
+def test_close_kind_maps_every_cause_to_its_own_prefix():
+    assert _close_kind("exit", True) == ("exit", "TREND_EXIT")
+    assert _close_kind("exit", False) == ("rebalance", "REBALANCE")
+    assert _close_kind("flip", True) == ("exit", "TREND_FLIP")
+    assert _close_kind("manual", True) == ("manual", "MANUAL")
+    assert _close_kind("universe", True) == ("universe", "UNIVERSE")
+    assert _close_kind("halt", True) == ("halt", "RISK_HALT")
+
+
+def test_manual_close_is_not_a_trend_exit(tmp_path):
+    eng, fills, _ = _engine(tmp_path, {"UPUSDT": _frame("up")}, trend_n_assets=1)
+    asyncio.run(eng.run_once())
+    res = asyncio.run(eng.close_symbol("UP-USD", reason="manual"))
+    assert res["closed"] is True
+    t = fills.trades[-1]
+    assert t.order_id.startswith("trend_manual_")
+    assert t.signal_features["exit_reason"] == "MANUAL"
+
+
+def test_risk_halt_flatten_is_not_a_trend_exit(tmp_path):
+    eng, fills, _ = _engine(tmp_path, {"UPUSDT": _frame("up")}, trend_n_assets=1)
+    asyncio.run(eng.run_once())
+    asyncio.run(eng.close_all(reason="max_drawdown"))
+    t = fills.trades[-1]
+    assert t.order_id.startswith("trend_halt_")
+    assert t.signal_features["exit_reason"] == "RISK_HALT"
+
+
+def test_market_dropped_from_the_universe_is_not_a_trend_exit(tmp_path):
+    """A position in a market the pick no longer holds is closed with the UNIVERSE reason; a
+    universe member whose weight went to zero is still a TREND_EXIT."""
+    frames = {"UPUSDT": _frame("up"), "OTHERUSDT": _frame("up", seed=5)}
+    frames["OTHERUSDT"]["quote_volume"] = 1e6          # ranks below UPUSDT -> not picked with n=1
+    eng, fills, _ = _engine(tmp_path, frames, trend_n_assets=1)
+    asyncio.run(eng.run_once())
+    assert eng.state.universe == ["UPUSDT"]
+    # a leftover position in the market that is NOT in the universe (e.g. picked last month)
+    eng.state.positions["OTHERUSDT"] = BookPosition(symbol="OTHERUSDT", size=0.5, entry_price=100.0,
+                                                    entry_fee_rate=0.0005, weight=0.3, opened="2026-08-15",
+                                                    opened_ts=NOW - 20 * 86_400, mark_price=100.0)
+    eng.state.weights["OTHERUSDT"] = 0.3
+    eng._clock = lambda: NOW + 86_400
+    asyncio.run(eng.run_once())
+    closes = [t for t in fills.trades if t.symbol == "OTHER-USD" and t.side.name == "SELL"]
+    assert closes, "the dropped market must be closed"
+    assert closes[-1].order_id.startswith("trend_universe_")
+    assert closes[-1].signal_features["exit_reason"] == "UNIVERSE"
+    assert "OTHERUSDT" not in eng.state.positions
+
+
+def test_bridge_derives_the_new_reasons_from_the_order_id():
+    from server.bridge import _trade_row
+
+    class Row:
+        trade_type = "EXIT"; duration_sec = 10.0; timestamp = 1_789_000_000.0
+        symbol = "ZEC-USD"; side = "SELL"; price = 1.0; quantity = 1.0; entry_price = 1.0; pnl = 0.0
+        fee = 0.0; strategy = "TREND_DAILY"; leverage = 1.0; regime = None; id = 1; trade_id = "x"
+        signal_strength = 0.0; slippage_bps = 0.0; spread_bps = 0.0; mae_bps = 0.0; mfe_bps = 0.0
+        order_type = "MARKET"; equity_after = 0.0; expected_price = None; entry_fee_charged = 0.0
+        cash_effect = 0.0; hold_sec = 10.0; pnl_bps = 0.0; roe_pct = 0.0
+
+        def __init__(self, oid):
+            self.order_id = oid
+
+    assert _trade_row(Row("trend_manual_abc"))["exit_reason"] == "manual"
+    assert _trade_row(Row("trend_universe_abc"))["exit_reason"] == "universe"
+    assert _trade_row(Row("trend_halt_abc"))["exit_reason"] == "halt"
+    assert _trade_row(Row("trend_exit_abc"))["exit_reason"] == "trend_exit"
+    assert _trade_row(Row("trend_rebalance_abc"))["exit_reason"] == "rebalance"
+
+
+def test_edge_statistics_skip_forced_exits():
+    from analytics.edge import is_non_strategy_exit, is_rebalance_row
+
+    class T:
+        def __init__(self, oid):
+            self.order_id = oid
+
+    assert is_non_strategy_exit(T("trend_manual_1")) and is_non_strategy_exit(T("trend_universe_1"))
+    assert is_non_strategy_exit(T("trend_halt_1"))
+    assert not is_non_strategy_exit(T("trend_exit_1")) and not is_rebalance_row(T("trend_exit_1"))

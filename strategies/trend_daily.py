@@ -33,7 +33,7 @@ import urllib.request
 import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -191,6 +191,22 @@ class DailyDataStore:
 
 # ── Book / state ───────────────────────────────────────────────────────────────
 _VENUE_COSTS: Dict[str, Any] = {"mtime": 0.0, "half_spread": {}}
+
+# Why a close happened -> (order id kind, exit_reason on the fill). The kind is the prefix
+# `/api/trades` and `analytics/edge` derive the reason from, so every cause gets its own.
+_CLOSE_KINDS: Dict[str, Tuple[str, str]] = {
+    "flip": ("exit", "TREND_FLIP"),          # sign change: the trend leg is a real exit
+    "manual": ("manual", "MANUAL"),          # operator override from the UI
+    "universe": ("universe", "UNIVERSE"),    # the market left the monthly pick / liquidity floor
+    "halt": ("halt", "RISK_HALT"),           # risk halt or kill: the book was flattened
+}
+
+
+def _close_kind(reason: str, full_exit: bool) -> Tuple[str, str]:
+    """A partial close is always a rebalance trim; a full close is named after its cause."""
+    if reason in _CLOSE_KINDS:
+        return _CLOSE_KINDS[reason]
+    return ("exit", "TREND_EXIT") if full_exit else ("rebalance", "REBALANCE")
 
 
 def _venue_half_spread_bps(ui_symbol: str) -> Optional[float]:
@@ -637,6 +653,11 @@ class TrendDailyEngine:
             equity = float(self._equity_provider())
             prev_basis = float(st.equity_basis or 0.0)
             st.equity_basis = equity
+            # The weights held from yesterday's open to today's: `_execute_symbol` overwrites
+            # `st.weights` as it trades, and the tracking record used to read them AFTER the loop,
+            # scoring yesterday's return with today's weights (look-ahead: +4.5 pp over the first
+            # 17 live days, never negative - found 2026-09-20). Capture them before anything trades.
+            weights_prev = dict(st.weights)
             turnover = 0.0
             for sym, w in sorted(exec_w.items()):
                 price = fills_at.get(sym)
@@ -645,10 +666,15 @@ class TrendDailyEngine:
                     continue
                 prev_w = float(st.weights.get(sym, 0.0))
                 turnover += abs(w - prev_w)
+                # WHY a position is being closed is part of the record: a market that left the
+                # universe or a killed book is not a trailing-stop exit, and the statistics must
+                # not read it as one (2026-09-20: all four "trend exits" on the CT were a pool
+                # change, a liquidity drop and a manual close - the stop had fired zero times).
+                why = "halt" if self.killed else ("universe" if sym not in st.universe else "exit")
                 await self._execute_symbol(sym, w, price, equity, today_key, now, allow_add=may_add,
-                                           weight_changed=abs(w - prev_w) > 1e-12)
+                                           weight_changed=abs(w - prev_w) > 1e-12, reason=why)
             st.targets = {s: round(w, 6) for s, w in targets.items() if s in st.universe or w > 0}
-            self._record_tracking(today_key, opens, turnover, equity, prev_basis)
+            self._record_tracking(today_key, opens, turnover, equity, prev_basis, weights_prev=weights_prev)
             st.opens_prev = opens
             st.last_run_date = today_key
             st.last_run_ts = now
@@ -684,7 +710,7 @@ class TrendDailyEngine:
 
     async def _execute_symbol(self, sym: str, target_w: float, price: float, equity: float,
                               today_key: str, now: float, allow_add: bool = True,
-                              weight_changed: bool = True) -> None:
+                              weight_changed: bool = True, reason: str = "exit") -> None:
         """Move one market from what we hold to what the model wants, in SIGNED notional.
 
         Everything here is expressed as signed exposure (positive long, negative short) so one path
@@ -728,7 +754,7 @@ class TrendDailyEngine:
         if closing:
             fill_price = price * (1.0 - self._slippage_bps(sym) / 10_000.0 * (1 if pos.size > 0 else -1))
             qty = abs(pos.size) if target == 0.0 else min(abs(pos.size), abs(delta) / fill_price)
-            await self._close_part(sym, pos, qty, price, now, target_w=target_w, reason="exit")
+            await self._close_part(sym, pos, qty, price, now, target_w=target_w, reason=reason)
             return
 
         # entry or add, in the direction of `delta`
@@ -840,16 +866,18 @@ class TrendDailyEngine:
         entry_fee_charged = min(entry_share, paid * (qty / abs(pos.size))) if abs(pos.size) > 0 else 0.0
         hold = max(0.0, now - pos.opened_ts)
         full_exit = qty >= abs(pos.size) - 1e-12
+        # The order id prefix is what /api/trades and analytics/edge read the exit reason from, so a
+        # manual close, a universe drop or a risk halt must NOT wear the trailing stop's prefix.
+        kind, exit_reason = _close_kind(reason, full_exit)
         trade = Trade(
             symbol=to_ui_symbol(sym), side=Side.SELL if long_pos else Side.BUY, price=fill,
             quantity=qty, fee=fees,
-            order_id=f"trend_{'exit' if full_exit else 'rebalance'}_{uuid.uuid4().hex[:8]}",
+            order_id=f"trend_{kind}_{uuid.uuid4().hex[:8]}",
             strategy=StrategyType.TREND_DAILY, timestamp=now, pnl=pnl, expected_price=pos.entry_price,
             actual_slippage_bps=abs(fill - price) / price * 1e4,
             signal_features={"action": "exit_trend" if full_exit else "exit_trend_rebalance",
                              "execution": "venue" if getattr(self, "_fill_fn", None) is not None else "paper",
-                             "exit_reason": ("TREND_FLIP" if reason == "flip" else
-                                             "TREND_EXIT" if full_exit else "REBALANCE"),
+                             "exit_reason": exit_reason,
                              "entry_price": pos.entry_price, "exit_price": fill,
                              "hold_time_sec": hold, "target_weight": target_w,
                              "pnl_bps": ((fill / pos.entry_price - 1.0) * (1 if long_pos else -1) * 1e4
@@ -873,7 +901,8 @@ class TrendDailyEngine:
                     pnl=round(pnl, 4), full=full_exit, direction="long" if long_pos else "short")
 
     def _record_tracking(self, today_key: str, opens: Dict[str, float], turnover: float,
-                         equity: float, prev_equity: float = 0.0) -> None:
+                         equity: float, prev_equity: float = 0.0,
+                         weights_prev: Optional[Dict[str, float]] = None) -> None:
         """One record per trading day: the model's open-to-open return against the book's.
 
         Two faults lived here (found 2026-09-05 on the CT: six records for three days, every
@@ -889,8 +918,10 @@ class TrendDailyEngine:
         if st.last_run_date == today_key:
             return                                   # a re-run of a day already on the record
         cost_bps = float(self.config.taker_fee) * 1e4 + float(self.config.slippage_bps)
-        weights_prev = {s: w for s, w in st.weights.items()}  # weights held since the previous run
-        model_ret = model_daily_return(weights_prev, st.opens_prev, opens, turnover, cost_bps)
+        # The weights that EARNED yesterday-open -> today-open are the ones held before today's
+        # trades. run_once hands them in; a direct caller that has not traded yet may omit them.
+        held = dict(weights_prev) if weights_prev is not None else {s: w for s, w in st.weights.items()}
+        model_ret = model_daily_return(held, st.opens_prev, opens, turnover, cost_bps)
         prev_eq = float(prev_equity) if prev_equity and prev_equity > 0 else 0.0
         paper_ret = (equity / prev_eq - 1.0) if prev_eq > 0 else 0.0
         rec = {"date": today_key, "model_ret": round(model_ret, 6), "paper_ret": round(paper_ret, 6),
@@ -911,7 +942,7 @@ class TrendDailyEngine:
             closed = 0
             for sym, pos in list(st.positions.items()):
                 price = pos.mark_price or pos.entry_price
-                await self._execute_symbol(sym, 0.0, price, equity, today_key, now)
+                await self._execute_symbol(sym, 0.0, price, equity, today_key, now, reason="halt")
                 closed += 1
             st.targets = {}
             st.last_run_status = f"flattened:{reason}"
@@ -938,7 +969,8 @@ class TrendDailyEngine:
             price = pos.mark_price or pos.entry_price
             now = self._clock()
             equity = float(self._equity_provider())
-            await self._execute_symbol(sym, 0.0, price, equity, self._today(now).strftime("%Y-%m-%d"), now)
+            await self._execute_symbol(sym, 0.0, price, equity, self._today(now).strftime("%Y-%m-%d"), now,
+                                       reason="manual")
             st.targets.pop(sym, None)
             st.weights.pop(sym, None)
             self.save_state()
