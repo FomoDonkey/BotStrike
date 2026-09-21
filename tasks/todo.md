@@ -2565,3 +2565,13 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
 - [ ] FIX: fuente spot para metales (`XAUUSD=X`, `XAGUSD=X`: sin rolls; Strike XAU sigue spot; el basis −1,7 % era
   la prima futuro-spot). Comparar series/piernas, actualizar YAHOO_MAP, test, y anotar que GC=F/SI=F/CL=F re-nivelan
   toda la historia en cada roll (HEAL_DAYS=5 no lo cubre).
+### Auditoría UI ronda 20 (2026-09-21 ~23:00Z, tras el reloj de 4 h) — DOM vs API en el mismo instante
+- [x] Trade: 7 posiciones (entry/mark/PnL/funding/legs/escalera venue/MAE-MFE/hold/fees) idénticas a la API; hint
+  "Runs" según el reloj; Trade History 31 = 0 + 5 forzados + 26 trims; Activity carga (config changed sin duplicar).
+- [x] Strategies: descripción según reloj; edge n 0 (5 forzados excluidos); Schedule next/last run; PARAMS bar hours 4.
+  CORREGIDO: tracking "21 days" → "21 runs · 20,2 days"; card "30D realised 0,00 %" → +7,34 % (toda la caja
+  realizada, no solo round trips); win rate "0 %" con 0 round trips → "---" (card y leaderboard).
+- [x] Portfolio, Risk (balanced, equity, pico 1.091,07, DD 0,34 %, límites), System (ops ALL CLEAR con la lógica de
+  4 h, ningún trend_missing falso), Journal (0 · 5 · 26 · 7 abiertas) — coinciden. 390 px sin desbordes.
+- [x] XAU 0/5 piernas: explicado (serie GC=F re-nivelada al roll; ver hallazgo). El run de 04:05Z la cerrará.
+- [ ] Portfolio/System muestran "---" durante 1-2 s en la primera carga (los endpoints tardan 0,4-7 s); cosmético.

@@ -1829,3 +1829,10 @@ con lookbacks de 4 h (×6) sobre la caché DIARIA (60-540 días) y recortó el l
 que determina la construcción del motor (store, reloj) se lee UNA vez en `__init__` y se cachea; un cambio en vivo
 no puede mover el motor a un reloj cuya caché no tiene. Y al desplegar un ajuste de reinicio: reiniciar ANTES de que
 pase el siguiente ciclo del bucle (o parar → cambiar → arrancar).
+
+## 2026-09-21 — la historia de un futuro en Yahoo es la del contrato front ACTUAL: cambia entera en cada roll
+`GC=F` re-descargado tras el cambio de reloj difería en 1.507 cierres (~1 %) de la caché construida un mes antes;
+el "heal" de 5 días no puede ver un re-nivelado de toda la historia, así que la caché vieja era un empalme con un
+salto en el roll — y ese salto fue lo que dejó viva la pierna de 60 días del oro (la entrada del 21-sep). Regla: para
+metales usar spot (`XAUUSD=X`, `XAGUSD=X`, sin rolls; es lo que sigue el perp de Strike); para cualquier futuro de
+Yahoo, re-descargar la historia completa cuando cambie el contrato front, no solo los últimos días.
