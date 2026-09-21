@@ -3211,10 +3211,14 @@ def _strategy_view(settings: Settings, st: StrategyType) -> dict:
         rule = ("%d markets: one per asset class, longest history, correlation cap, venue liquidity floor"
                 % tc.trend_n_assets if len(classes) > 1
                 else "top-%d by 30d volume" % tc.trend_n_assets)
+        bh = int(getattr(tc, "trend_bar_hours", 24) or 24)
+        when = (f"signal at close, executed at {tc.trend_execution_hour_utc:02d}:00 UTC open + "
+                f"{tc.trend_execution_delay_min} min" if bh >= 24 else
+                f"the daily rule evaluated at every {bh} h bar close + {tc.trend_execution_delay_min} min on the "
+                f"crypto legs (from {tc.trend_execution_hour_utc:02d}:00 UTC); daily legs decide at "
+                f"{tc.trend_execution_hour_utc:02d}:{tc.trend_execution_delay_min:02d} UTC")
         desc = (f"Daily Donchian ensemble {tc.trend_lookbacks} · long-only · vol target "
-                f"{tc.trend_target_vol:.0%} ({tc.trend_vol_window}d) · {rule} · "
-                f"signal at close, executed at {tc.trend_execution_hour_utc:02d}:00 UTC open + "
-                f"{tc.trend_execution_delay_min} min")
+                f"{tc.trend_target_vol:.0%} ({tc.trend_vol_window}d) · {rule} · {when}")
         return {"description": desc, "params": params, "group": "trend_daily",
                 "symbols": [f"universe re-picked monthly and whenever the pool or size changes "
                             f"({len(pool)} candidates, {'/'.join(sorted(classes))})"]}

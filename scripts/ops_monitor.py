@@ -132,6 +132,30 @@ def maintenance_age_min(maint: Optional[Dict], now: datetime) -> Optional[float]
         return None
 
 
+def trend_bar_hours(trend: Optional[dict]) -> int:
+    """The book's evaluation clock (24 = once a day; 4 = every 4 h bar), from /api/trend.params."""
+    params = (trend or {}).get("params") if isinstance(trend, dict) else None
+    try:
+        bh = int((params or {}).get("bar_hours", 24) or 24)
+    except (TypeError, ValueError):
+        bh = 24
+    return bh if bh in (4, 8, 12, 24) else 24
+
+
+def trend_run_age_min(trend: Optional[dict], now: datetime) -> Optional[float]:
+    """Minutes since the last run the bridge reports, or None when it never ran."""
+    raw = str((trend or {}).get("last_run_utc") or "")
+    if not raw:
+        return None
+    try:
+        ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return (now - ts).total_seconds() / 60.0
+    except Exception:
+        return None
+
+
 def trend_deadline_min(trend: Optional[dict]) -> int:
     """Minute of the UTC day by which today's trend run must be OK: schedule + grace."""
     params = (trend or {}).get("params") if isinstance(trend, dict) else None
@@ -194,8 +218,18 @@ def evaluate(now: datetime, health: Optional[dict], trend: Optional[dict], risk:
         status = trend.get("last_run_status")
         rep.facts["trend_last_run"] = trend.get("last_run_utc")
         rep.facts["trend_status"] = status
+        bh = trend_bar_hours(trend)
         if status == "error":
             alert("trend_error", f"Run diario del trend con ERROR: {trend.get('last_error', '')[:200]}")
+        elif bh < 24:
+            # a sub-daily clock runs at every bar close + delay: the alarm is a run older than one bar
+            # plus the delay and the grace, whatever the date
+            age = trend_run_age_min(trend, now)
+            limit = bh * 60 + int((trend.get("params") or {}).get("execution_delay_min", 5) or 5) + TREND_DEADLINE_GRACE_MIN
+            if age is None or age > limit:
+                alert("trend_missing", f"El run del trend (reloj de {bh} h) lleva "
+                                       f"{'nunca' if age is None else f'{age:.0f} min'} sin ejecutarse "
+                                       f"(límite {limit} min; último: {trend.get('last_run_utc') or 'nunca'})")
         elif minutes >= deadline and last != today:
             alert("trend_missing", f"El run diario del trend de hoy ({today}) no se ha ejecutado "
                                    f"(último: {trend.get('last_run_utc') or 'nunca'})")
