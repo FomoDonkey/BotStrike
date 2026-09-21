@@ -146,6 +146,11 @@ GROUPS: List[Dict[str, Any]] = [
                 "more than this from its 30-run median: the breakout the venue prints is not the one the "
                 "signal saw. Exits and trims are never held. 0 = off."),
         _t("trend_execution_hour_utc", "Execution hour (UTC)", "int", min=0, max=23, step=1, unit="h"),
+        _t("trend_bar_hours", "Evaluation clock", "select", restart=True,
+           options=[{"value": "24", "label": "once a day (24 h)"}, {"value": "4", "label": "every 4 h"}],
+           help="How often the same daily rule is evaluated on the crypto markets. Lookbacks stay in days; "
+                "Yahoo markets (gold, oil, indices) keep the daily decision at the execution hour. The "
+                "execution hour must be a multiple of the clock."),
         _t("trend_execution_delay_min", "Execution delay", "int", min=1, max=600, step=1, unit="min"),
         _t("trend_min_order_usd", "Min order", "number", min=1, max=10_000, step=1, unit="$",
            help="Rebalances smaller than this notional are skipped (venue minimums: Strike and Hyperliquid 10 $, "

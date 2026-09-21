@@ -40,6 +40,7 @@ import pandas as pd
 import structlog
 
 from core.types import Position, Side, StrategyType, Trade
+from strategies.daily_sources import is_yahoo_symbol
 from strategies.trend_daily_model import (
     TrendParams, apply_rebalance_threshold, exit_ladder, model_daily_return, select_universe, venue_floors, asset_class,
     target_weights,
@@ -90,13 +91,18 @@ def to_ui_symbol(pool_symbol: str) -> str:
 
 
 # ── Data ───────────────────────────────────────────────────────────────────────
-def fetch_daily_klines(symbol: str, start_ms: int = START_MS, timeout: float = 60.0) -> Optional[pd.DataFrame]:
-    """All daily candles from `start_ms` (inclusive) — the LAST row may be the
-    forming (incomplete) candle of today. None when the pair does not exist."""
+INTERVAL_MS = {"1d": 86_400_000, "12h": 43_200_000, "8h": 28_800_000, "4h": 14_400_000}
+
+
+def fetch_daily_klines(symbol: str, start_ms: int = START_MS, timeout: float = 60.0,
+                       interval: str = "1d") -> Optional[pd.DataFrame]:
+    """All candles of `interval` from `start_ms` (inclusive) — the LAST row may be the
+    forming (incomplete) candle. None when the pair does not exist."""
     rows: List[list] = []
     start = int(start_ms)
+    step = INTERVAL_MS.get(interval, 86_400_000)
     while True:
-        url = f"{SPOT_KLINES_URL}?symbol={symbol}&interval=1d&limit=1000&startTime={start}"
+        url = f"{SPOT_KLINES_URL}?symbol={symbol}&interval={interval}&limit=1000&startTime={start}"
         try:
             with urllib.request.urlopen(url, timeout=timeout) as r:
                 chunk = json.load(r)
@@ -109,7 +115,7 @@ def fetch_daily_klines(symbol: str, start_ms: int = START_MS, timeout: float = 6
         rows.extend(chunk)
         if len(chunk) < 1000:
             break
-        start = int(chunk[-1][0]) + 86_400_000
+        start = int(chunk[-1][0]) + step
         time.sleep(0.1)
     if not rows:
         return None
@@ -126,7 +132,8 @@ def fetch_daily_klines(symbol: str, start_ms: int = START_MS, timeout: float = 6
 class DailyDataStore:
     """Parquet cache of complete daily candles + the forming candle of today."""
 
-    def __init__(self, data_dir: str = DEFAULT_DATA_DIR, fetcher: Optional[Callable] = None) -> None:
+    def __init__(self, data_dir: str = DEFAULT_DATA_DIR, fetcher: Optional[Callable] = None,
+                 interval: str = "1d") -> None:
         if fetcher is None:
             # Route each market to its daily source: Binance spot for the USDT pairs, Yahoo for the
             # Strike TradFi markets (gold, silver, indices, oil, stocks) — see strategies/daily_sources.py
@@ -134,10 +141,14 @@ class DailyDataStore:
             fetcher = make_fetcher(fetch_daily_klines)
         self.data_dir = data_dir
         self._fetch = fetcher
+        # The bar length this store holds. Only the Binance markets have sub-daily bars; a Yahoo
+        # market always comes back daily whatever the store asks for (daily_sources.make_fetcher).
+        self.interval = str(interval or "1d")
         os.makedirs(self.data_dir, exist_ok=True)
 
     def _path(self, sym: str) -> str:
-        return os.path.join(self.data_dir, f"{sym}.parquet")
+        suffix = "" if self.interval == "1d" else f".{self.interval}"
+        return os.path.join(self.data_dir, f"{sym}{suffix}.parquet")
 
     def load(self, symbols: List[str], today: pd.Timestamp, refresh: bool = True,
              min_days: int = 30) -> Dict[str, pd.DataFrame]:
@@ -173,7 +184,10 @@ class DailyDataStore:
         last_err: Optional[Exception] = None
         for attempt in range(FETCH_ATTEMPTS):
             try:
-                fresh = self._fetch(sym, start_ms)
+                # a daily store calls its fetcher exactly as before (tests and callers pass plain
+                # fetchers); only a sub-daily store asks for its interval
+                fresh = (self._fetch(sym, start_ms) if self.interval == "1d"
+                         else self._fetch(sym, start_ms, interval=self.interval))
                 last_err = None
                 break
             except Exception as e:  # Binance REST read timeouts happen (CT, 2026-09-02: BNB, ZEC)
@@ -382,7 +396,8 @@ class TrendDailyEngine:
         # () -> (may_add: bool, reason: str). The risk manager's loss limits, circuit breaker and
         # drawdown halt hold this book's ADDS; exits and reductions always go through (2026-09-05).
         self._risk_gate = risk_gate
-        self.store = data_store or DailyDataStore()
+        bh = int(getattr(self.config, "trend_bar_hours", 24) or 24)
+        self.store = data_store or DailyDataStore(interval="1d" if bh >= 24 else f"{bh}h")
         self.state_path = state_path
         self._clock = clock
         self.state = self._load_state()
@@ -433,28 +448,136 @@ class TrendDailyEngine:
         ts = datetime.fromtimestamp(now or self._clock(), timezone.utc)
         return pd.Timestamp(ts.date())
 
+    # ── the clock ──
+    # The book was validated on daily bars evaluated once a day at 04:05 UTC. The same rule evaluated
+    # at every 4 h bar close keeps its turnover and gains ~0.2-0.3 Sharpe and 4 pp of drawdown on the
+    # crypto legs (six years, venue costs, funding; tasks/research_signal_engines_2026-09-20.md §5),
+    # because a stop broken at 06:00 is acted on at 08:05 instead of the next morning. Yahoo markets
+    # have no sub-daily bars: they keep the daily decision, taken only at the execution hour.
+    def _bar_hours(self) -> int:
+        return int(getattr(self.config, "trend_bar_hours", 24) or 24)
+
+    def _bars_per_day(self, sym: str) -> int:
+        bh = self._bar_hours()
+        return 1 if bh >= 24 or is_yahoo_symbol(sym) else 24 // bh
+
+    def _run_hours(self) -> List[int]:
+        """UTC hours (:00) whose bar close is followed by a run: the execution hour once a day, or
+        every bar of the clock starting from it."""
+        bh = self._bar_hours()
+        anchor = int(self.config.trend_execution_hour_utc) % 24
+        if bh >= 24:
+            return [anchor]
+        return sorted({(anchor + k * bh) % 24 for k in range(24 // bh)})
+
+    def _key_of(self, close_dt: datetime) -> str:
+        return close_dt.strftime("%Y-%m-%d") if self._bar_hours() >= 24 else close_dt.strftime("%Y-%m-%dT%H")
+
+    def _last_scheduled(self, now: float) -> Tuple[datetime, str]:
+        """The latest scheduled bar close whose run time (close + delay) is at or before `now`, and
+        the run key of that bar ("YYYY-MM-DD" on the daily clock, "YYYY-MM-DDTHH" on the 4 h one)."""
+        delay = int(self.config.trend_execution_delay_min) * 60
+        cand = datetime.fromtimestamp(now - delay, timezone.utc).replace(minute=0, second=0, microsecond=0)
+        hours = self._run_hours()
+        for _ in range(25):
+            if cand.hour in hours:
+                break
+            cand -= timedelta(hours=1)
+        return cand, self._key_of(cand)
+
+    def _run_close_dt(self) -> datetime:
+        """The scheduled bar close the current moment belongs to. On the daily clock that is simply
+        today's date (the old behaviour, and what the bare-engine tests patch through `_today`)."""
+        if self._bar_hours() >= 24:
+            d = self._today()
+            return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+        close_dt, _ = self._last_scheduled(float(self._clock()))
+        return close_dt
+
+    def _forming_start(self, sym: str, close_dt: datetime) -> pd.Timestamp:
+        """Where `sym`'s FORMING bar begins at the run of `close_dt`: the run's bar close for a
+        sub-daily crypto series, the run's date for a daily series."""
+        if self._bars_per_day(sym) > 1:
+            return pd.Timestamp(close_dt.replace(tzinfo=None))
+        return pd.Timestamp(close_dt.date())
+
+    def _decision_for(self, sym: str, close_dt: datetime) -> pd.Timestamp:
+        """The last SETTLED bar `sym`'s signal may read at this run: the bar that just closed for a
+        sub-daily series (indexed by its open), yesterday for a daily one."""
+        if self._bars_per_day(sym) > 1:
+            return pd.Timestamp(close_dt.replace(tzinfo=None)) - pd.Timedelta(hours=self._bar_hours())
+        return pd.Timestamp(close_dt.date()) - pd.Timedelta(days=1)
+
+    def _load_frames(self, close_dt: datetime, refresh: bool, params: TrendParams,
+                     symbols: Optional[List[str]] = None) -> Dict[str, pd.DataFrame]:
+        """The pool's frames, each split settled/forming on its own clock and each required to hold
+        `min_history_days` of history in its own bars."""
+        syms = list(symbols if symbols is not None else self.pool())
+        if self._bar_hours() >= 24:
+            return self.store.load(syms, self._today(), refresh, params.min_history_days)
+        out: Dict[str, pd.DataFrame] = {}
+        daily = [s for s in syms if self._bars_per_day(s) == 1]
+        fast = [s for s in syms if self._bars_per_day(s) > 1]
+        if daily:
+            out.update(self.store.load(daily, pd.Timestamp(close_dt.date()), refresh, params.min_history_days))
+        if fast:
+            bpd = 24 // self._bar_hours()
+            out.update(self.store.load(fast, pd.Timestamp(close_dt.replace(tzinfo=None)), refresh,
+                                       params.min_history_days * bpd))
+        return out
+
+    def _daily_view(self, data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
+        """Daily bars for the parts of the run that are specified in days (the universe pick, the
+        liquidity view): a sub-daily series is resampled, a daily one is returned as is."""
+        out: Dict[str, pd.DataFrame] = {}
+        for sym, df in data.items():
+            if self._bars_per_day(sym) > 1 and isinstance(df.index, pd.DatetimeIndex):
+                agg = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+                if "quote_volume" in df.columns:
+                    agg["quote_volume"] = "sum"
+                out[sym] = df.resample("1D").agg(agg).dropna(subset=["close"])
+            else:
+                out[sym] = df
+        return out
+
     def next_run_ts(self, now: Optional[float] = None) -> float:
         now = now or self._clock()
-        dt = datetime.fromtimestamp(now, timezone.utc)
-        run = dt.replace(hour=int(self.config.trend_execution_hour_utc), minute=0, second=0,
-                         microsecond=0) + timedelta(minutes=int(self.config.trend_execution_delay_min))
-        today_key = dt.strftime("%Y-%m-%d")
-        if self.state.last_run_date == today_key or run.timestamp() <= now:
-            if self.state.last_run_date == today_key or run.timestamp() <= now - 1:
-                run = run + timedelta(days=1)
-        return run.timestamp()
+        if self._bar_hours() >= 24:
+            dt = datetime.fromtimestamp(now, timezone.utc)
+            run = dt.replace(hour=int(self.config.trend_execution_hour_utc), minute=0, second=0,
+                             microsecond=0) + timedelta(minutes=int(self.config.trend_execution_delay_min))
+            today_key = dt.strftime("%Y-%m-%d")
+            if self.state.last_run_date == today_key or run.timestamp() <= now:
+                if self.state.last_run_date == today_key or run.timestamp() <= now - 1:
+                    run = run + timedelta(days=1)
+            return run.timestamp()
+        delay = int(self.config.trend_execution_delay_min) * 60
+        close_dt, key = self._last_scheduled(now)
+        if key != self.state.last_run_date:
+            return close_dt.timestamp() + delay          # due and not yet run
+        step = timedelta(hours=self._bar_hours())
+        nxt = close_dt + step
+        hours = self._run_hours()
+        for _ in range(25):
+            if nxt.hour in hours:
+                break
+            nxt += timedelta(hours=1)
+        return nxt.timestamp() + delay
 
     def is_due(self, now: Optional[float] = None) -> bool:
         now = now or self._clock()
-        dt = datetime.fromtimestamp(now, timezone.utc)
-        today_key = dt.strftime("%Y-%m-%d")
-        if self.state.last_run_date == today_key:
-            return False
-        run = dt.replace(hour=int(self.config.trend_execution_hour_utc), minute=0, second=0,
-                         microsecond=0) + timedelta(minutes=int(self.config.trend_execution_delay_min))
-        return now >= run.timestamp()
+        if self._bar_hours() >= 24:
+            dt = datetime.fromtimestamp(now, timezone.utc)
+            today_key = dt.strftime("%Y-%m-%d")
+            if self.state.last_run_date == today_key:
+                return False
+            run = dt.replace(hour=int(self.config.trend_execution_hour_utc), minute=0, second=0,
+                             microsecond=0) + timedelta(minutes=int(self.config.trend_execution_delay_min))
+            return now >= run.timestamp()
+        _, key = self._last_scheduled(now)
+        return key != self.state.last_run_date
 
-    def _basis_snapshot(self, data: Dict[str, pd.DataFrame]) -> Dict[str, float]:
+    def _basis_snapshot(self, data: Dict[str, pd.DataFrame], close_dt: Optional[datetime] = None) -> Dict[str, float]:
         """Venue mark against the last settled reference close, per market.
 
         The signal comes from the reference series (Yahoo for TradFi, Binance for crypto) - the
@@ -464,10 +587,12 @@ class TrendDailyEngine:
         within the day's move; a wider gap means the run is trading a breakout the venue never
         printed. Logged on every run and hourly, warned above BASIS_WARN, shown in /api/trend."""
         out: Dict[str, float] = {}
-        today = self._today()
+        if close_dt is None:
+            close_dt = self._run_close_dt()
         for sym, df in data.items():
             try:
-                settled = df[df.index < today] if isinstance(df.index, pd.DatetimeIndex) else df
+                cut = self._forming_start(sym, close_dt)
+                settled = df[df.index < cut] if isinstance(df.index, pd.DatetimeIndex) else df
                 close = float(settled["close"].dropna().iloc[-1])
                 mark = self._venue_mark_of(sym)
             except Exception:  # noqa: BLE001 - one bad frame must not hide the others
@@ -501,9 +626,9 @@ class TrendDailyEngine:
     async def _refresh_basis(self) -> None:
         try:
             params = TrendParams.from_config(self.config)
-            data = await asyncio.to_thread(self.store.load, self.pool(), self._today(), False,
-                                           params.min_history_days)
-            self._basis_snapshot(data)
+            close_dt = self._run_close_dt()
+            data = await asyncio.to_thread(self._load_frames, close_dt, False, params)
+            self._basis_snapshot(data, close_dt)
         except Exception as e:  # noqa: BLE001
             logger.debug("trend_basis_refresh_failed", error=str(e)[:120])
 
@@ -513,10 +638,10 @@ class TrendDailyEngine:
         a deleted cache file left every TradFi row of the positions table at "---" (2026-09-05)."""
         try:
             params = TrendParams.from_config(self.config)
-            data = await asyncio.to_thread(self.store.load, self.pool(), self._today(), True,
-                                           params.min_history_days)
+            close_dt = self._run_close_dt()
+            data = await asyncio.to_thread(self._load_frames, close_dt, True, params)
             logger.info("trend_cache_warmed", markets=len(data))
-            self._basis_snapshot(data)
+            self._basis_snapshot(data, close_dt)
             try:
                 if len({asset_class(x) for x in data}) > 1:
                     eq_now = float(self._equity_provider() or 0.0)
@@ -647,17 +772,28 @@ class TrendDailyEngine:
 
     async def _run_once_locked(self, now: Optional[float]) -> Dict[str, Any]:
         now = now or self._clock()
-        today = self._today(now)
+        # the scheduled bar this run serves (the run may be late - restart, deploy - but it still
+        # serves that bar's key, so it is recorded once)
+        if self._bar_hours() >= 24:
+            d = self._today(now)
+            close_dt, run_key = datetime(d.year, d.month, d.day, tzinfo=timezone.utc), d.strftime("%Y-%m-%d")
+        else:
+            close_dt, run_key = self._last_scheduled(now)
+        today = pd.Timestamp(close_dt.date())
         today_key = today.strftime("%Y-%m-%d")
+        # Yahoo markets decide once a day, at the execution hour, when their bar has settled
+        tradfi_run = self._bar_hours() >= 24 or close_dt.hour == int(self.config.trend_execution_hour_utc) % 24
         params = TrendParams.from_config(self.config)
         st = self.state
         try:
-            data = await asyncio.to_thread(self.store.load, self.pool(), today, True,
-                                           params.min_history_days)
+            data = await asyncio.to_thread(self._load_frames, close_dt, True, params)
+            daily_data = self._daily_view(data)
             st.candidates = len(data)
-            basis_now = self._basis_snapshot(data)
+            basis_now = self._basis_snapshot(data, close_dt)
             basis_held = self._basis_guard(basis_now, today_key)
-            decision = today - pd.Timedelta(days=1)
+            decision = today - pd.Timedelta(days=1)          # daily decision date (universe, Yahoo legs)
+            decision_map = {s: self._decision_for(s, close_dt) for s in data}
+            bpd_map = {s: self._bars_per_day(s) for s in data}
             month_key = today.strftime("%Y-%m")
             # The universe is re-picked monthly, but ALSO whenever the pool or the number of
             # assets changes: a config change must take effect at the next daily run, not four
@@ -691,7 +827,7 @@ class TrendDailyEngine:
                     repick = True
             if repick:
                 if venue_vol or not mixed:
-                    st.universe = select_universe(data, decision, params, current=st.universe,
+                    st.universe = select_universe(daily_data, decision, params, current=st.universe,
                                                   venue_volume=venue_vol or None)
                     st.universe_month = month_key
                     st.universe_key = universe_key
@@ -706,10 +842,16 @@ class TrendDailyEngine:
                     st.liquidity_note = "venue volumes unavailable: universe unchanged this run"
                     logger.warning("trend_universe_pick_skipped", reason="venue_volume_unavailable",
                                    universe=[to_ui_symbol(x) for x in st.universe])
-            self.last_liquidity = self._liquidity_view(data, venue_vol, enter_floor, exit_floor, st.universe)
-            raw_targets = target_weights(data, st.universe, decision, params)
+            self.last_liquidity = self._liquidity_view(daily_data, venue_vol, enter_floor, exit_floor, st.universe)
+            raw_targets = target_weights(data, st.universe, decision_map, params, bars_per_day=bpd_map)
             alloc = 0.0 if self.killed else float(self.config.allocation_trend_daily)
             targets = {s: w * alloc for s, w in raw_targets.items()}
+            if not tradfi_run:
+                # between execution hours a daily market keeps what it holds: its bar has not
+                # settled, so its target is whatever the last daily decision executed
+                for s in list(targets):
+                    if self._bars_per_day(s) == 1:
+                        targets[s] = float(st.weights.get(s, 0.0))
             # positions outside the universe (dropped this month) must be closed
             for sym in list(st.positions):
                 targets.setdefault(sym, 0.0)
@@ -733,7 +875,9 @@ class TrendDailyEngine:
             st.last_adds_blocked = why if not may_add else ""
             # Scheduled execution time of today; a late run (restart/first deploy hours after
             # the open) cannot honestly claim the open price → fill at the forming candle's close
-            sched = today.timestamp() + int(self.config.trend_execution_hour_utc) * 3600                 + int(self.config.trend_execution_delay_min) * 60
+            sched = close_dt.timestamp() + int(self.config.trend_execution_delay_min) * 60
+            if self._bar_hours() >= 24:
+                sched += int(self.config.trend_execution_hour_utc) * 3600
             late = (now - sched) > LATE_FILL_SEC
             opens: Dict[str, float] = {}
             fills_at: Dict[str, float] = {}
@@ -741,12 +885,13 @@ class TrendDailyEngine:
                 df = data.get(sym)
                 if df is None:
                     continue
-                if today in df.index and float(df.loc[today, "open"]) > 0:
-                    opens[sym] = float(df.loc[today, "open"])
-                    cur = float(df.loc[today, "close"])
+                forming = self._forming_start(sym, close_dt)
+                if forming in df.index and float(df.loc[forming, "open"]) > 0:
+                    opens[sym] = float(df.loc[forming, "open"])
+                    cur = float(df.loc[forming, "close"])
                     fills_at[sym] = cur if (late and cur > 0) else opens[sym]
-                else:  # forming candle not returned (rare): fall back to yesterday's close
-                    closes = df.loc[df.index < today, "close"]
+                else:  # forming candle not returned (rare): fall back to the last settled close
+                    closes = df.loc[df.index < forming, "close"]
                     if len(closes):
                         opens[sym] = float(closes.iloc[-1])
                         fills_at[sym] = opens[sym]
@@ -786,19 +931,19 @@ class TrendDailyEngine:
                                            allow_add=may_add and sym not in basis_held,
                                            weight_changed=abs(w - prev_w) > 1e-12, reason=why)
             st.targets = {s: round(w, 6) for s, w in targets.items() if s in st.universe or w > 0}
-            self._record_tracking(today_key, opens, turnover, equity, prev_basis, weights_prev=weights_prev)
+            self._record_tracking(run_key, opens, turnover, equity, prev_basis, weights_prev=weights_prev)
             st.opens_prev = opens
-            st.last_run_date = today_key
+            st.last_run_date = run_key
             st.last_run_ts = now
             st.last_run_status = "ok"
             st.last_error = ""
             st.params_at_run = self._model_params_dict(params)
             self.save_state()
-            logger.info("trend_daily_run_ok", date=today_key, universe=st.universe,
+            logger.info("trend_daily_run_ok", date=run_key, universe=st.universe,
                         targets=st.targets, positions=len(st.positions),
                         equity_basis=round(equity, 2))
             await self.mark_positions(data)
-            return {"status": "ok", "date": today_key, "targets": st.targets}
+            return {"status": "ok", "date": run_key, "targets": st.targets}
         except Exception as e:
             st.last_run_status = "error"
             st.last_error = f"{type(e).__name__}: {e}"[:300]
@@ -1160,7 +1305,7 @@ class TrendDailyEngine:
         # full this drops a network round trip from every pass of the loop
         if data is None and missing:
             try:
-                data = await asyncio.to_thread(self.store.load, missing, self._today(), True, 1)
+                data = await asyncio.to_thread(self.store.load, missing, self._forming_start(missing[0], self._run_close_dt()), True, 1)
             except Exception as e:
                 logger.debug("trend_mark_failed", error=str(e))
                 data = None
@@ -1202,12 +1347,12 @@ class TrendDailyEngine:
                 pos.mark_price = m
                 self.last_marks[sym] = m
 
-    @staticmethod
-    def _model_params_dict(p: TrendParams) -> Dict[str, Any]:
+    def _model_params_dict(self, p: TrendParams) -> Dict[str, Any]:
         """The parameters that shape the targets (not the execution clock or order minimum)."""
         return {"lookbacks": ",".join(str(x) for x in p.lookbacks), "target_vol": float(p.target_vol),
                 "vol_window": int(p.vol_window), "n_assets": int(p.n_assets),
-                "leverage_cap": float(p.leverage_cap), "rebalance_threshold": float(p.rebalance_threshold)}
+                "leverage_cap": float(p.leverage_cap), "rebalance_threshold": float(p.rebalance_threshold),
+                "bar_hours": self._bar_hours()}
 
     def params_changed_since_run(self) -> List[str]:
         """Model parameters that differ between the live config and the last run: Edgar clicked a
@@ -1231,9 +1376,8 @@ class TrendDailyEngine:
             return out
         params = TrendParams.from_config(self.config)
         try:
-            today = self._today()
-            data = self.store.load(list(self.state.positions), today, refresh=False,
-                                   min_days=params.min_history_days)
+            close_dt = self._run_close_dt()
+            data = self._load_frames(close_dt, False, params, list(self.state.positions))
         except Exception as e:  # noqa: BLE001 — visibility must never break the API
             logger.warning("trend_exit_ladder_unavailable", error=str(e)[:160])
             return out
@@ -1241,7 +1385,8 @@ class TrendDailyEngine:
             try:
                 pos = self.state.positions.get(sym)
                 out[sym] = _ladder_in_venue_prices(
-                    exit_ladder(df["close"], params, short=bool(pos and pos.is_short)),
+                    exit_ladder(df["close"], params, short=bool(pos and pos.is_short),
+                                bars_per_day=self._bars_per_day(sym)),
                     self._venue_mark_of(sym))
             except Exception as e:  # noqa: BLE001
                 logger.warning("trend_exit_ladder_failed", symbol=sym, error=str(e)[:120])
@@ -1263,8 +1408,8 @@ class TrendDailyEngine:
             return out
         params = TrendParams.from_config(self.config)
         try:
-            data = self.store.load(list(self.state.positions), self._today(), refresh=False,
-                                   min_days=params.min_history_days)
+            close_dt = self._run_close_dt()
+            data = self._load_frames(close_dt, False, params, list(self.state.positions))
         except Exception as e:  # noqa: BLE001 — visibility must never break the API
             logger.warning("trend_excursion_unavailable", error=str(e)[:160])
             return out
@@ -1321,8 +1466,9 @@ class TrendDailyEngine:
         m = np.array([r["model_ret"] for r in recs], dtype=float)
         p = np.array([r["paper_ret"] for r in recs], dtype=float)
         diff = p - m
-        te = float(diff.std(ddof=1) * np.sqrt(365)) if len(diff) > 1 else 0.0
-        return {"days": len(recs),
+        runs_per_year = 365 * (24 // self._bar_hours())
+        te = float(diff.std(ddof=1) * np.sqrt(runs_per_year)) if len(diff) > 1 else 0.0
+        return {"days": len(recs), "runs_per_day": 24 // self._bar_hours(),
                 "model_return": float(np.prod(1 + m) - 1),
                 "paper_return": float(np.prod(1 + p) - 1),
                 "tracking_error_ann": round(te, 6),
@@ -1372,7 +1518,7 @@ class TrendDailyEngine:
                 "lookbacks": tc.trend_lookbacks, "target_vol": tc.trend_target_vol,
                 "vol_window": tc.trend_vol_window, "n_assets": tc.trend_n_assets,
                 "leverage_cap": tc.trend_leverage_cap, "rebalance_threshold": tc.trend_rebalance_threshold,
-                "execution_hour_utc": tc.trend_execution_hour_utc,
+                "execution_hour_utc": tc.trend_execution_hour_utc, "bar_hours": self._bar_hours(),
                 "execution_delay_min": tc.trend_execution_delay_min, "min_order_usd": tc.trend_min_order_usd,
             },
         }

@@ -97,6 +97,8 @@ def make_fetcher(binance_fetcher):
 
     def fetch_daily_any(symbol: str, start_ms: int = 0, **kw):
         if is_yahoo_symbol(symbol):
+            # Yahoo serves daily bars only: a sub-daily store still gets the daily series here and
+            # the engine keeps that market on the daily decision clock (bars_per_day = 1).
             return fetch_daily_yahoo(symbol, start_ms)
         return binance_fetcher(symbol, start_ms, **kw)
 

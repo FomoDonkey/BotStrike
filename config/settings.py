@@ -189,6 +189,14 @@ class TradingConfig:
     # signal on the other four would cost far more.
     trend_execution_hour_utc: int = 4
     trend_execution_delay_min: int = 5           # ...plus this delay (candle must exist)
+    # How often the SAME daily rule is evaluated: 24 = once a day (the validated book), 4 = at every
+    # 4 h bar close + the delay (04:05, 08:05, ... UTC - the only sub-daily grid that lines up with
+    # the execution hour without a stale bar), on the Binance markets; Yahoo markets have no
+    # sub-daily bars and keep the daily decision at the execution hour. Lookbacks stay in days.
+    # Measured 2026-09-20 (six years, seven crypto perps, venue costs, funding): 24 h Sharpe 1.42 /
+    # MaxDD -22.5 %  ->  12 h 1.73 / -18.2 %,  8 h 1.68 / -18.3 %,  4 h 1.61 / -18.3 %, turnover
+    # unchanged (9/y), OOS 1.40 -> 1.50-1.61 (tasks/research_signal_engines_2026-09-20.md §5).
+    trend_bar_hours: int = 24
     trend_min_order_usd: float = 10.0            # skip rebalances smaller than this notional
     # ── The daily book on the REAL account (mode=live + BOTSTRIKE_ALLOW_LIVE + this flag) ──
     # Passive-then-aggressive execution (strategies/trend_live_executor.py): rest post-only at the
@@ -476,6 +484,8 @@ class Settings:
                 raise ValueError(f"{key} was retired by the research and cannot be allocated capital. {reason}")
         try:
             lbs = [int(x) for x in str(t.trend_lookbacks).split(",") if x.strip()]
+            if int(t.trend_bar_hours) not in (24, 4):
+                raise ValueError("Config incoherence: trend_bar_hours must be 24 (daily) or 4")
         except ValueError:
             raise ValueError("Config incoherence: trend_lookbacks must be comma-separated integers")
         if not lbs or min(lbs) < 2 or max(lbs) > 400:

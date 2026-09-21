@@ -124,16 +124,25 @@ def sub_strategy_positions(close: pd.Series, n: int, allow_shorts: bool = False,
     return pd.Series(pos, index=close.index), pd.Series(stop, index=close.index)
 
 
-def asset_weight(close: pd.Series, p: TrendParams, periods: int = ANNUALIZATION) -> pd.Series:
+def asset_weight(close: pd.Series, p: TrendParams, periods: int = ANNUALIZATION,
+                 bars_per_day: int = 1) -> pd.Series:
     """Target weight of one asset: mean over lookbacks of (vol scalar × position).
-    `periods` is the series' own bars per year (periods_per_year)."""
+
+    `periods` is the series' bars per year at ONE bar a day (periods_per_year); `bars_per_day` says
+    how many bars the series actually holds per day (24 h clock = 1, 4 h clock = 6). Lookbacks and
+    the vol window are specified in DAYS and scaled here, so the rule is the same rule whatever the
+    clock — measured 2026-09-20 on six years of crypto bars: the daily rule evaluated every 12/8/4 h
+    keeps its turnover and gains ~0.2-0.3 Sharpe and 4 pp of drawdown, because a stop broken at
+    06:00 is acted on at 08:05 instead of 04:05 the next day (tasks/research_signal_engines_2026-09-20.md §5).
+    """
+    bpd = max(1, int(bars_per_day))
     ret = close.pct_change(fill_method=None)
-    sigma = ret.rolling(p.vol_window).std() * np.sqrt(periods)
+    sigma = ret.rolling(p.vol_window * bpd).std() * np.sqrt(periods * bpd)
     vol_scalar = (p.target_vol / sigma).clip(upper=p.leverage_cap)
     vol_scalar = vol_scalar.replace([np.inf, -np.inf], np.nan)
     weights = []
     for n in p.lookbacks:
-        pos, _ = sub_strategy_positions(close, n, p.allow_shorts, p.short_size)
+        pos, _ = sub_strategy_positions(close, n * bpd, p.allow_shorts, p.short_size)
         weights.append(vol_scalar * pos)
     w = pd.concat(weights, axis=1).mean(axis=1)
     return w.fillna(0.0)
@@ -263,9 +272,13 @@ def select_universe(data: Dict[str, pd.DataFrame], as_of: pd.Timestamp, p: Trend
     return keep[:p.n_assets]
 
 
-def target_weights(data: Dict[str, pd.DataFrame], universe: List[str], as_of: pd.Timestamp,
-                   p: TrendParams) -> Dict[str, float]:
-    """Final weight per universe member at the close of `as_of`: asset weight × 1/N."""
+def target_weights(data: Dict[str, pd.DataFrame], universe: List[str], as_of,
+                   p: TrendParams, bars_per_day=None) -> Dict[str, float]:
+    """Final weight per universe member at the close of `as_of`: asset weight × 1/N.
+
+    `as_of` is one timestamp for every market or a {symbol: timestamp} dict when the markets tick
+    on different clocks (a 4 h crypto bar beside a daily gold bar); `bars_per_day` likewise an int
+    or a {symbol: int} dict. Both default to the daily book's behaviour."""
     if not universe:
         return {}
     share = 1.0 / len(universe)
@@ -275,11 +288,16 @@ def target_weights(data: Dict[str, pd.DataFrame], universe: List[str], as_of: pd
         if df is None:
             out[sym] = 0.0
             continue
-        close = df.loc[df.index <= as_of, "close"]
-        if len(close) < p.min_history_days:
+        cut = as_of.get(sym) if isinstance(as_of, dict) else as_of
+        bpd = int(bars_per_day.get(sym, 1)) if isinstance(bars_per_day, dict) else int(bars_per_day or 1)
+        if cut is None:
             out[sym] = 0.0
             continue
-        w = asset_weight(close, p, periods_per_year(sym))
+        close = df.loc[df.index <= cut, "close"]
+        if len(close) < p.min_history_days * bpd:
+            out[sym] = 0.0
+            continue
+        w = asset_weight(close, p, periods_per_year(sym), bpd)
         # The clamp is what makes the book long-only; with the short side enabled a negative weight
         # is a short of that size (execution path still to be reviewed — see the research note).
         val = float(w.iloc[-1])
@@ -315,7 +333,7 @@ def model_daily_return(weights_prev: Dict[str, float], open_prev: Dict[str, floa
     return g - turnover * cost_bps / 10_000.0
 
 
-def exit_ladder(close: pd.Series, p: TrendParams, short: bool = False) -> Dict[str, Any]:
+def exit_ladder(close: pd.Series, p: TrendParams, short: bool = False, bars_per_day: int = 1) -> Dict[str, Any]:
     """Where this position actually exits, and how much leaves at each level.
 
     A trend book has no single stop-loss: the weight is the average of `len(p.lookbacks)`
@@ -336,8 +354,9 @@ def exit_ladder(close: pd.Series, p: TrendParams, short: bool = False) -> Dict[s
     price = float(close.iloc[-1])
     out["price"] = price
     levels = []
+    bpd = max(1, int(bars_per_day))
     for n in p.lookbacks:
-        pos, stop = sub_strategy_positions(close, n, p.allow_shorts, p.short_size)
+        pos, stop = sub_strategy_positions(close, n * bpd, p.allow_shorts, p.short_size)
         last = float(pos.iloc[-1]) if len(pos) else 0.0
         # a short position's legs are the ones holding SHORT, and their stops sit ABOVE the price
         if (last <= 0) if not short else (last >= 0):
