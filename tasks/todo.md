@@ -2541,3 +2541,10 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
 - [ ] Desplegar la rama con 24 (sin cambio) → un run diario OK → cambiar a 4 (reinicio) → 60 d de paper con
   tracking honesto antes de considerarlo el libro. Un cambio por vez: primero ver el perfil Balanced en marcha.
 - [ ] UI: textos "04:05 UTC"/"daily run" en BotColumn/TrendDailyPanel/constants para el reloj de 4 h.
+### Run 2026-09-21 04:05Z — VERIFICADO (primer run al tamaño Balanced + n 8)
+- [x] Run OK 04:05:46Z, no tardío. Universo re-elegido con n 8: BTC SOL WTI ADA ZEC BNB **XAU (readmitido) XAG**.
+  Pesos ≈ ×0,42 (vol 0,45/0,8 × 6/8): BTC 0,289 → 0,118, SOL 0,233 → 0,098, ZEC 0,108 → 0,045, BNB 0,321 → 0,162;
+  exposición 121 % → 62 %. Seis trims REBAL (+27,5 $ realizados), entrada XAU 0,011 @ 4.362. Equity 1.065,7.
+- [x] Fila de tracking honesta 21-sep: modelo +1,24 % / papel +2,32 %. `basis_log` 12 mercados (1 lectura),
+  `params_at_run` grabado. Ningún `universe` falso. UI: 7 posiciones, historial "0 · 5 forzados · 21 trims".
+- [ ] Basis WTI −6,2 % (aviso wide): vigilar; el guardia decide desde la 6ª lectura (~26-sep).
