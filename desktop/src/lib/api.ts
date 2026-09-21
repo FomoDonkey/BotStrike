@@ -315,6 +315,9 @@ export interface TrendResponse {
     model_return: number;
     paper_return: number;
     tracking_error_ann: number;
+  /** one record per run; on the 4 h clock the records are bars, and span_days is their total length in days */
+  runs_per_day?: number;
+  span_days?: number;
     records: TrendTrackingRecord[];
   };
   params: Record<string, ConfigScalar>;

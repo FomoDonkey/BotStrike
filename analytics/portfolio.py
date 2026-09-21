@@ -309,7 +309,10 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
             "t_stat": (round(t_stat, 3) if t_stat is not None else None),
             "first_trade_ts": round(_f(srows[0].timestamp), 3) if srows else None,
             "equity_curve": curve,
-            "return_30d": round(sum(_f(t.pnl) for t in sc if _f(t.timestamp) >= cutoff_30) / initial, 6) if initial > 0 else 0.0,
+            # "realised" means realised: every close of the last 30 days - the strategy's own round
+            # trips, the rebalance trims and the forced closes - not only the closes the statistics
+            # count (the card read "30D realised 0.00 %" beside +77 $ of realised trims, 2026-09-21)
+            "return_30d": round(sum(_f(t.pnl) for t in sc_all if _f(t.timestamp) >= cutoff_30) / initial, 6) if initial > 0 else 0.0,
         })
 
     trend_book = sum(_f(p.get("notional")) for p in positions if str(p.get("strategy") or "") == "TREND_DAILY")

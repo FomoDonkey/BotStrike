@@ -2556,3 +2556,12 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
   los mismos precios, exposición 0,67, 7 posiciones, equity 1.087,6. Coste ≈ 0,5 $ de comisiones.
 - [x] Causa raíz corregida: el reloj se lee una vez en `__init__` (`_clock_hours`); test.
 - [ ] Vigilar los primeros runs de 4 h (00:05, 04:05, 08:05Z…): tamaños, tracking por barra, ningún trim raro.
+### Hallazgo 2026-09-21 22:30Z — la caché de ORO de Yahoo era una serie empalmada
+- [x] Al crear el store de 4 h se re-descargó GC=F entero: 1.507 cierres distintos (2020-05-29 → 2026-09-08, ~+1 %)
+  respecto a la caché diaria antigua; los otros 4 Yahoo idénticos. Causa: Yahoo `GC=F` = historia del contrato
+  FRONT actual; la caché antigua se construyó antes del roll y se "curó" solo 5 días atrás → empalme con salto
+  ~09-08/09-09. Sobre la serie consistente nueva, XAU tiene 0/5 piernas (la entrada del 21-sep salió del empalme);
+  el run de las 04:05Z la cerrará como TREND_EXIT. Se mantiene la serie nueva (consistente).
+- [ ] FIX: fuente spot para metales (`XAUUSD=X`, `XAGUSD=X`: sin rolls; Strike XAU sigue spot; el basis −1,7 % era
+  la prima futuro-spot). Comparar series/piernas, actualizar YAHOO_MAP, test, y anotar que GC=F/SI=F/CL=F re-nivelan
+  toda la historia en cada roll (HEAL_DAYS=5 no lo cubre).

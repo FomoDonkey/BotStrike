@@ -202,7 +202,9 @@ export function TrendDailyPanel() {
           <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-2">
             <Hint title="Model = the strategy's own return from the daily source bars (close to close). Paper = what the paper book made over the same day at the venue's marks. The gap is execution: 04:05 fills instead of the close, Strike marks instead of Binance/Yahoo, the rebalance dead-band, fees and funding. TE = annualised tracking error of the daily differences.">Tracking</Hint>
           </span>
-          <span className="text-text-2"><span className="text-text font-semibold">{tracking?.days ?? 0}</span> days</span>
+          <span className="text-text-2" title="One record per run: a day on the daily clock, a bar on the 4 h clock">
+            <span className="text-text font-semibold">{tracking?.days ?? 0}</span> {(tracking?.runs_per_day ?? 1) > 1 ? `runs · ${(tracking?.span_days ?? 0).toFixed(1)} days` : "days"}
+          </span>
           <span className="text-text-2">model <span className="font-semibold" style={{ color: COLOR_BLUE }}>{formatPct(tracking?.model_return ?? 0)}</span></span>
           <span className="text-text-2">paper <span className="font-semibold" style={{ color: COLOR_UP }}>{formatPct(tracking?.paper_return ?? 0)}</span></span>
           <span className="text-text-2">TE (ann.) <span className={cn("font-semibold", (tracking?.tracking_error_ann ?? 0) > 0.05 ? "text-amber" : "text-text")}>{formatPct(tracking?.tracking_error_ann ?? 0)}</span></span>
