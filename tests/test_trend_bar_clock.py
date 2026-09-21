@@ -192,5 +192,5 @@ def test_switching_a_running_book_to_the_four_hour_clock_keeps_its_record(tmp_pa
     assert [r["date"] for r in st.tracking] == ["2026-09-01", "2026-09-02", "2026-09-02T08"]
     summ = eng.tracking_summary()
     assert summ["days"] == 3 and summ["runs_per_day"] == 6
-    assert summ["span_days"] == pytest.approx(2 + 4 / 24, abs=1e-6)     # two daily rows + one 4 h row
+    assert summ["span_days"] == pytest.approx(2 + 4 / 24, abs=0.01)      # two daily rows + one 4 h row (rounded to 2 dp)
     assert summ["model_return"] == pytest.approx((1.01 * 0.995 * (1 + st.tracking[-1]["model_ret"])) - 1, abs=1e-9)
