@@ -172,3 +172,25 @@ def test_store_keeps_one_cache_per_interval(tmp_path):
     b = DailyDataStore(str(tmp_path), fetcher=lambda *a, **k: None, interval="4h")
     assert a._path("BTCUSDT").endswith("BTCUSDT.parquet")
     assert b._path("BTCUSDT").endswith("BTCUSDT.4h.parquet")
+
+
+# ── continuity: the clock changes on a RUNNING book, nothing is reset ─────────────
+def test_switching_a_running_book_to_the_four_hour_clock_keeps_its_record(tmp_path):
+    """The live book has daily tracking rows and a daily run key when the clock moves to 4 h: the next
+    4 h bar is simply due, the new row is keyed by the hour, the old rows stay, and the summary
+    annualises each row by its own length."""
+    frames = {"UPUSDT": _frame4h("up", forming_open=250.0)}
+    eng, fills, s = _engine4h(tmp_path, frames)
+    st = eng.state
+    st.last_run_date = "2026-09-02"                                    # written by the daily clock at 04:05
+    st.tracking = [{"date": "2026-09-01", "model_ret": 0.01, "paper_ret": 0.012, "turnover": 0.1},
+                   {"date": "2026-09-02", "model_ret": -0.005, "paper_ret": -0.004, "turnover": 0.0}]
+    st.opens_prev = {"UPUSDT": 240.0}
+    assert eng.is_due()                                                # "2026-09-02" != "2026-09-02T08"
+    asyncio.run(eng.run_once())
+    assert st.last_run_date == "2026-09-02T08"
+    assert [r["date"] for r in st.tracking] == ["2026-09-01", "2026-09-02", "2026-09-02T08"]
+    summ = eng.tracking_summary()
+    assert summ["days"] == 3 and summ["runs_per_day"] == 6
+    assert summ["span_days"] == pytest.approx(2 + 4 / 24, abs=1e-6)     # two daily rows + one 4 h row
+    assert summ["model_return"] == pytest.approx((1.01 * 0.995 * (1 + st.tracking[-1]["model_ret"])) - 1, abs=1e-9)

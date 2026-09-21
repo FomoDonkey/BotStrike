@@ -1466,9 +1466,13 @@ class TrendDailyEngine:
         m = np.array([r["model_ret"] for r in recs], dtype=float)
         p = np.array([r["paper_ret"] for r in recs], dtype=float)
         diff = p - m
-        runs_per_year = 365 * (24 // self._bar_hours())
-        te = float(diff.std(ddof=1) * np.sqrt(runs_per_year)) if len(diff) > 1 else 0.0
-        return {"days": len(recs), "runs_per_day": 24 // self._bar_hours(),
+        # A record written on the daily clock and one written on the 4 h clock live side by side
+        # when the clock changes on a running book (2026-09-21): each row is annualised by ITS OWN
+        # length - a daily key ("YYYY-MM-DD") is one day, an hourly key ("YYYY-MM-DDTHH") is one bar.
+        row_days = np.array([1.0 if "T" not in str(r.get("date", "")) else self._bar_hours() / 24.0 for r in recs])
+        span_days = float(row_days.sum())
+        te = float(diff.std(ddof=1) * np.sqrt(365.0 / max(row_days.mean(), 1e-9))) if len(diff) > 1 else 0.0
+        return {"days": len(recs), "span_days": round(span_days, 2), "runs_per_day": 24 // self._bar_hours(),
                 "model_return": float(np.prod(1 + m) - 1),
                 "paper_return": float(np.prod(1 + p) - 1),
                 "tracking_error_ann": round(te, 6),

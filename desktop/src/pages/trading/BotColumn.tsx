@@ -200,7 +200,9 @@ function BotTab({ market, positions }: { market: MarketView; positions: Position
               Config changed since the last run ({trend.data!.params_changed_since_run!.join(", ")}) — this estimate uses the last run's targets; the next run re-sizes the book.
             </div>
           )}
-          <ListRow label="Runs" hint="The daily run at 04:05 UTC, once the previous day's TradFi bars have settled">{Number.isFinite(nextRunMs) ? `in ${formatDurationShort((nextRunMs - now) / 1000)}` : "---"}</ListRow>
+          <ListRow label="Runs" hint={Number(trend.data?.params?.bar_hours ?? 24) < 24
+            ? `Every ${trend.data?.params?.bar_hours} h bar close + 5 min on the crypto legs (from 04:05 UTC); gold, silver and oil decide once a day at 04:05 UTC when their daily bar has settled`
+            : "The daily run at 04:05 UTC, once the previous day's TradFi bars have settled"}>{Number.isFinite(nextRunMs) ? `in ${formatDurationShort((nextRunMs - now) / 1000)}` : "---"}</ListRow>
           <ListRow label="Target weight" hint="The model's weight for this market at the last run, as a share of equity. 'none' = not in the universe at the last run">{typeof target === "number" ? formatPct(target, 1) : venueRow?.pool ? "none · candidate" : "none · outside the pool"}</ListRow>
           <ListRow label="Target notional" hint="Target weight × current equity">{typeof target === "number" ? formatMoney(target * eq) : "---"}</ListRow>
           <ListRow label="Held" hint={HINTS.notional}>{pos ? formatMoney(positionNotional(pos)) : formatMoney(0)}</ListRow>

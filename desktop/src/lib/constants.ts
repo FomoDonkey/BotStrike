@@ -62,7 +62,7 @@ export const STRATEGY_DESCRIPTIONS: Record<string, string> = {
   // Strike. Saying only "on Binance spot" made a Strike terminal look mislabelled.
   // 04:05 UTC, not 00:05: the run moved on 2026-09-05 so the TradFi daily bars are settled first
   // (trend_execution_hour_utc). The engine's own description in /api/strategies wins when present.
-  TREND_DAILY: "Daily Donchian ensemble: long the strongest trends, rebalanced daily at 04:05 UTC. Signal from Binance/Yahoo daily bars, positions on Strike.",
+  TREND_DAILY: "Daily Donchian ensemble: long the strongest trends, evaluated at every bar close of the configured clock (daily at 04:05 UTC, or every 4 h on the crypto legs). Signal from Binance/Yahoo bars, positions on Strike.",
   DIVERGENCE: "RSI divergence between confirmed pivots, entered on the structure break with MACD confirmation.",
 };
 
