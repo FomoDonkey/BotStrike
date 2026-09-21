@@ -1815,3 +1815,9 @@ que multiplique por 5 lo conocido se investiga como error antes que como descubr
 fue más interesante y más modesto: la misma señal diaria evaluada cada 12 h suma ~0,2-0,3 de Sharpe y quita 4 pp de
 drawdown sin una operación más al año — porque un stop roto a las 06:00 se ejecuta a las 08:05 y no 22 h después.
 Las mejoras robustas casi nunca son señales nuevas: son retraso, costes, amplitud y tamaño.
+
+## 2026-09-21 — un cambio de reloj se implementa como una rama donde el reloj viejo es idéntico byte a byte
+Regla de seguridad que evitó dos regresiones: con `trend_bar_hours = 24` cada ruta de código debe ser exactamente la
+antigua (los tests que construyen el motor "a pelo" lo comprueban sin querer); la lógica nueva solo entra con 4. Y
+antes de desplegar: las mismas 11 puertas que validaron el libro, sobre las piernas que cambian, con el propio
+harness que encontró el efecto — no con la fe en el backtest que lo encontró.

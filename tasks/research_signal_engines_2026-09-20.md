@@ -358,3 +358,25 @@ checked on six closes a day catches intraday breaks the daily close never sees �
 Both are real properties of the same rule on a finer clock; neither is a new signal. Confidence:
 moderate (t = 1.75 over six years); enough to make it the next validated project, not enough to
 switch the live book on a Sunday night.
+
+---
+
+# Part 6 — the 4 h clock implemented (branch `feat/bar-clock`, 2026-09-21 ~04:00Z) and gated
+
+Config `trend_bar_hours` (24 = the validated daily book, unchanged byte for byte; 4 = the same rule
+at every 4 h bar close + delay on the Binance legs, Yahoo legs decide once a day at the execution
+hour). Model scales lookbacks/vol window by each series' bars per day; one kline store per interval;
+run keys `YYYY-MM-DDTHH`; per-symbol decision/forming boundaries; daily view for the universe pick;
+tracking per bar; ops monitor and strategy description follow the clock. 538 tests (9 new).
+
+## The book's 11 gates on the crypto legs at the 4 h clock (`/tmp/bs/gates_4h.py`)
+
+4 h clock: Sharpe **1.61** · CAGR 30.5 % · maxDD 18.3 % · skew +0.36 · OOS 1.50 — daily clock on the
+same legs: 1.42 / 22.5 %. 25 bps/side 1.49 · funding ×3 1.42 · 3-bar delay 1.53 · 2022+ 1.18 ·
+DSR 0.989 (12 trials). **11/11 PASS.**
+
+## What is still required before the live book moves to the 4 h clock
+1. Deploy the branch with `trend_bar_hours = 24` (no behaviour change) and watch one daily run.
+2. Switch to 4 (restart required: the store changes interval; the 4 h cache warms on first run).
+3. Paper for ≥ 60 days on the honest tracking; the daily-clock replay stays the reference.
+The Balanced profile stays as it is; nothing else changes at the same time.

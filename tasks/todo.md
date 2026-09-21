@@ -2533,3 +2533,11 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
 - [ ] PRÓXIMO PROYECTO (no esta noche): reloj sub-diario para los mercados crypto (12 h como primer candidato: dos
   runs/día, 04:05 y 16:05Z) — abstracción de clave de barra, store `12h`/`4h`, lookbacks × barras/día, tracking por
   barra; TradFi sigue diario. Validar con las 11 puertas sobre las piernas crypto + 60 días de paper en paralelo.
+### Reloj de 4 h — implementado en `feat/bar-clock` (2026-09-21 ~04:00Z), NO desplegado
+- [x] `trend_bar_hours` 24|4; modelo escala por barras/día; store por intervalo; claves de run por barra; decisión
+  por símbolo (crypto: barra cerrada; Yahoo: ayer, solo a la hora de ejecución); vista diaria para el pick; tracking
+  por barra; ops monitor y descripción siguen el reloj. 538 tests (9 nuevos); reloj diario byte a byte igual.
+- [x] 11/11 puertas sobre las piernas crypto a 4 h (Sharpe 1,61, DD 18,3 %, DSR 0,989, 25 bps 1,49, funding ×3 1,42).
+- [ ] Desplegar la rama con 24 (sin cambio) → un run diario OK → cambiar a 4 (reinicio) → 60 d de paper con
+  tracking honesto antes de considerarlo el libro. Un cambio por vez: primero ver el perfil Balanced en marcha.
+- [ ] UI: textos "04:05 UTC"/"daily run" en BotColumn/TrendDailyPanel/constants para el reloj de 4 h.
