@@ -1821,3 +1821,11 @@ Regla de seguridad que evitó dos regresiones: con `trend_bar_hours = 24` cada r
 antigua (los tests que construyen el motor "a pelo" lo comprueban sin querer); la lógica nueva solo entra con 4. Y
 antes de desplegar: las mismas 11 puertas que validaron el libro, sobre las piernas que cambian, con el propio
 harness que encontró el efecto — no con la fe en el backtest que lo encontró.
+
+## 2026-09-21 — un ajuste "requiere reinicio" que el motor lee en vivo es una bomba de relojería
+`PUT /api/config` aplica los cambios al objeto de settings en vivo (así funciona todo lo demás); `trend_bar_hours`
+estaba marcado `restart=True` en el esquema, pero el motor lo leía en cada llamada → 6 s después del PUT corrió
+con lookbacks de 4 h (×6) sobre la caché DIARIA (60-540 días) y recortó el libro al 24 % de exposición. Regla: lo
+que determina la construcción del motor (store, reloj) se lee UNA vez en `__init__` y se cachea; un cambio en vivo
+no puede mover el motor a un reloj cuya caché no tiene. Y al desplegar un ajuste de reinicio: reiniciar ANTES de que
+pase el siguiente ciclo del bucle (o parar → cambiar → arrancar).

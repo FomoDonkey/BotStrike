@@ -2548,3 +2548,11 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
 - [x] Fila de tracking honesta 21-sep: modelo +1,24 % / papel +2,32 %. `basis_log` 12 mercados (1 lectura),
   `params_at_run` grabado. Ningún `universe` falso. UI: 7 posiciones, historial "0 · 5 forzados · 21 trims".
 - [ ] Basis WTI −6,2 % (aviso wide): vigilar; el guardia decide desde la 6ª lectura (~26-sep).
+### Reloj de 4 h ACTIVADO en el CT (2026-09-21 22:02Z) — incidente y corrección
+- [x] Paso 1 (22:00Z): código nuevo con reloj 24 desplegado, estado intacto. Paso 2 (22:02Z): `trend_bar_hours=4` +
+  reinicio; caché de 4 h calentada (12 ficheros); próximo run 00:05Z; runs/día 6.
+- [x] INCIDENTE: el PUT se aplicó en vivo y el motor corrió a las 22:01:49 con lookbacks ×6 sobre la caché diaria →
+  5 trims indebidos (exposición 0,62 → 0,24). Remediado 22:08Z con un run manual sobre la caché de 4 h: recompras a
+  los mismos precios, exposición 0,67, 7 posiciones, equity 1.087,6. Coste ≈ 0,5 $ de comisiones.
+- [x] Causa raíz corregida: el reloj se lee una vez en `__init__` (`_clock_hours`); test.
+- [ ] Vigilar los primeros runs de 4 h (00:05, 04:05, 08:05Z…): tamaños, tracking por barra, ningún trim raro.

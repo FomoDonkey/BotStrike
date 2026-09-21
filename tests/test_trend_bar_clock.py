@@ -194,3 +194,22 @@ def test_switching_a_running_book_to_the_four_hour_clock_keeps_its_record(tmp_pa
     assert summ["days"] == 3 and summ["runs_per_day"] == 6
     assert summ["span_days"] == pytest.approx(2 + 4 / 24, abs=0.01)      # two daily rows + one 4 h row (rounded to 2 dp)
     assert summ["model_return"] == pytest.approx((1.01 * 0.995 * (1 + st.tracking[-1]["model_ret"])) - 1, abs=1e-9)
+
+
+def test_a_live_clock_change_waits_for_the_restart(tmp_path):
+    """2026-09-21 22:01Z: the override was applied live, the engine ran 6 s later with 4 h lookbacks
+    on its DAILY cache and trimmed the book to 24 % exposure. The clock is read once at start."""
+    frames = {"UPUSDT": _frame("up")}
+    s = Settings()
+    eng = TrendDailyEngine(s, on_fill=Fills(), equity_provider=lambda: 1000.0, data_store=FakeStore(frames),
+                           state_path=str(tmp_path / "t.json"), clock=lambda: RUN_08)
+    assert eng._bar_hours() == 24 and eng._run_hours() == [4]
+    s.trading.trend_bar_hours = 4                                       # PUT /api/config, no restart yet
+    assert eng._bar_hours() == 24 and eng._run_hours() == [4]           # still the daily clock
+    assert eng._bars_per_day("UPUSDT") == 1
+    eng.state.last_run_date = "2026-09-02"
+    assert not eng.is_due()                                             # no 4 h run sneaks in
+    # the restart builds a new engine on the new clock
+    eng2 = TrendDailyEngine(s, on_fill=Fills(), equity_provider=lambda: 1000.0, data_store=FakeStore(frames),
+                            state_path=str(tmp_path / "t.json"), clock=lambda: RUN_08)
+    assert eng2._bar_hours() == 4 and eng2._run_hours() == [0, 4, 8, 12, 16, 20]

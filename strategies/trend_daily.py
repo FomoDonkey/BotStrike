@@ -396,7 +396,13 @@ class TrendDailyEngine:
         # () -> (may_add: bool, reason: str). The risk manager's loss limits, circuit breaker and
         # drawdown halt hold this book's ADDS; exits and reductions always go through (2026-09-05).
         self._risk_gate = risk_gate
-        bh = int(getattr(self.config, "trend_bar_hours", 24) or 24)
+        # The clock is read ONCE, here: the kline store below is built for it, and a live config
+        # change must never move the engine to a clock its store does not hold. On 2026-09-21 the
+        # override was applied live 6 s before the restart, one run evaluated 4 h lookbacks on the
+        # daily cache (60-540 DAYS) and trimmed the book to 24 % exposure. `trend_bar_hours` takes
+        # effect at the next restart, as its schema entry says.
+        self._clock_hours = int(getattr(self.config, "trend_bar_hours", 24) or 24)
+        bh = self._clock_hours
         self.store = data_store or DailyDataStore(interval="1d" if bh >= 24 else f"{bh}h")
         self.state_path = state_path
         self._clock = clock
@@ -455,7 +461,8 @@ class TrendDailyEngine:
     # because a stop broken at 06:00 is acted on at 08:05 instead of the next morning. Yahoo markets
     # have no sub-daily bars: they keep the daily decision, taken only at the execution hour.
     def _bar_hours(self) -> int:
-        return int(getattr(self.config, "trend_bar_hours", 24) or 24)
+        cached = getattr(self, "_clock_hours", None)
+        return int(cached) if cached else int(getattr(self.config, "trend_bar_hours", 24) or 24)
 
     def _bars_per_day(self, sym: str) -> int:
         bh = self._bar_hours()
