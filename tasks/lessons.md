@@ -1858,3 +1858,10 @@ ventiladores del Proxmox acelerando. Regla: todo lo que sirve la API en un bucle
 memoriza por lo que lo cambia (run key, serie, lado) y nunca relee disco por llamada; y tras cambiar la resolución de
 una serie, medir la CPU del proceso (py-spy `dump`/`record`: descargar la wheel de PyPI y extraer el binario cuando no
 hay pip/uv en el CT).
+
+## 2026-09-22 — `pytest` a secas en la raíz NO es la batería: siempre `pytest tests/`
+Una ejecución local de `py -3.12 -m pytest -q` en la raíz tardó 3 h 11 min y acabó con 6 errores: recogía también
+las copias de `build/` y `archive/` de tests heredados (`test_self_audit.py` se cuelga, `test_p0_fixes.py` falla al
+importar) que `tests/conftest.py` ignora solo dentro de `tests/`. El gate del CT ejecuta `pytest tests/` (544 en 11 s)
+y ése es el veredicto. Regla: local y CT con el MISMO comando, `pytest tests/ -q`; y un fichero nombrado explícitamente
+salta cualquier `collect_ignore`.
