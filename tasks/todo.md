@@ -2601,3 +2601,10 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
   Order History ADD ×5; feed "Added to LONG ADA-USD · 274 ADA → 327 ADA held".
 - [x] Journal ZEC-USD en Chrome (00:50Z): "Avg hold 81h 58m · 1 close · 0 round trips · 1 forced" = el cierre manual del
   9-sep (Hold 81h 58m en su tarjeta); episodio abierto "Fills 6 · 3 trims · 2 adds"; ADA sin cierre → "n/a" correcto.
+### CPU del host (2026-09-22 01:40Z) — Edgar: "los ventiladores se aceleran cada X segundos"
+- [x] Causa (py-spy en el CT): `exit_ladders()` → `sub_strategy_positions` = 75 % de la CPU del bridge (un núcleo al 90 %
+  durante horas). El bridge pide las escaleras en cada broadcast (bucle intradía cada 3 s × 4 mercados + metrics loop) y
+  cada respuesta releía 7 parquet y corría 35 pasadas Python sobre ~13k barras (reloj 4 h = 6× las del diario).
+- [x] FIX: frames de visibilidad cacheados hasta el siguiente run (clave: close_dt, símbolos, run key, reloj; TTL 5 min) y
+  escalera memorizada por (serie, lado, lookbacks, reloj); solo el re-precio a venue corre en cada llamada. Test
+  `test_visibility_reuses_frames_and_ladders_between_runs`. Desplegar y medir CPU.

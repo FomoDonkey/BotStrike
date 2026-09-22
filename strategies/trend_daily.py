@@ -24,6 +24,7 @@ enabled), so gains are reinvested automatically.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import math
 import os
@@ -408,6 +409,12 @@ class TrendDailyEngine:
         # daily cache (60-540 DAYS) and trimmed the book to 24 % exposure. `trend_bar_hours` takes
         # effect at the next restart, as its schema entry says.
         self._clock_hours = int(getattr(self.config, "trend_bar_hours", 24) or 24)
+        # Visibility caches (exit ladders, excursions): the frames are re-read and the Donchian
+        # loop re-run only when something that can change them changed. The bridge asks for the
+        # ladders on every broadcast - several times a second - and on the 4 h clock each answer
+        # cost 35 pure-Python passes over ~13k bars: one core at 90 % for hours (2026-09-22).
+        self._vis_frames_cache: Optional[Tuple[Tuple[Any, ...], float, Dict[str, pd.DataFrame]]] = None
+        self._ladder_cache: Dict[str, Tuple[Tuple[Any, ...], Dict[str, Any]]] = {}
         bh = self._clock_hours
         self.store = data_store or DailyDataStore(interval="1d" if bh >= 24 else f"{bh}h")
         self.state_path = state_path
@@ -1377,30 +1384,64 @@ class TrendDailyEngine:
         live = self._model_params_dict(TrendParams.from_config(self.config))
         return [k for k, v in live.items() if str(at_run.get(k)) != str(v)]
 
+    VIS_FRAMES_TTL_SEC = 300.0
+
+    def _frames_for_visibility(self, params: TrendParams, symbols: List[str]) -> Dict[str, pd.DataFrame]:
+        """The cached frames the visibility surfaces (ladders, excursions) read - reused until the
+        next run writes new bars (the run key is in the cache key), the bar clock moves, the held
+        set changes, or five minutes pass. Never a network call."""
+        close_dt = self._run_close_dt()
+        # getattr: some tests build the engine without __init__ (object.__new__)
+        key = (str(close_dt), tuple(sorted(symbols)), str(getattr(self.state, "last_run_date", None)),
+               getattr(self, "_clock_hours", 24))
+        now = time.monotonic()
+        hit = getattr(self, "_vis_frames_cache", None)
+        if hit is not None and hit[0] == key and now - hit[1] < self.VIS_FRAMES_TTL_SEC:
+            return hit[2]
+        data = self._load_frames(close_dt, False, params, symbols)
+        self._vis_frames_cache = (key, now, data)
+        return data
+
+    def _cached_exit_ladder(self, sym: str, close: pd.Series, params: TrendParams, short: bool,
+                            bars_per_day: int) -> Dict[str, Any]:
+        """exit_ladder() in SOURCE prices, memoised per market on everything it depends on: the
+        series (length, last bar, last close), the side, the lookbacks and the clock. The caller
+        re-prices the copy into venue prices with the live mark, which is the only cheap part."""
+        key = (len(close), str(close.index[-1]) if len(close) else "", float(close.iloc[-1]) if len(close) else 0.0,
+               bool(short), tuple(params.lookbacks), int(bars_per_day), bool(params.allow_shorts), float(params.short_size))
+        cache = self.__dict__.setdefault("_ladder_cache", {})
+        hit = cache.get(sym)
+        if hit is not None and hit[0] == key:
+            return hit[1]
+        lad = exit_ladder(close, params, short=short, bars_per_day=bars_per_day)
+        cache[sym] = (key, lad)
+        return lad
+
     def exit_ladders(self) -> Dict[str, Dict[str, Any]]:
         """Exit ladder per held market: the price levels at which each Donchian sub-strategy drops
         out and how much of the position leaves with it. A trend book has no single stop; this is
         what the operator needs to see instead (strategies/trend_daily_model.exit_ladder).
 
         Uses the cached daily frames — never a network call, so it is safe on every API request.
+        The frames and the ladders are memoised (see _frames_for_visibility / _cached_exit_ladder);
+        only the re-pricing into venue prices runs on every call.
         """
         out: Dict[str, Dict[str, Any]] = {}
         if not self.state.positions:
             return out
         params = TrendParams.from_config(self.config)
         try:
-            close_dt = self._run_close_dt()
-            data = self._load_frames(close_dt, False, params, list(self.state.positions))
+            data = self._frames_for_visibility(params, list(self.state.positions))
         except Exception as e:  # noqa: BLE001 — visibility must never break the API
             logger.warning("trend_exit_ladder_unavailable", error=str(e)[:160])
             return out
         for sym, df in data.items():
             try:
                 pos = self.state.positions.get(sym)
-                out[sym] = _ladder_in_venue_prices(
-                    exit_ladder(df["close"], params, short=bool(pos and pos.is_short),
-                                bars_per_day=self._bars_per_day(sym)),
-                    self._venue_mark_of(sym))
+                lad = self._cached_exit_ladder(sym, df["close"], params, bool(pos and pos.is_short),
+                                               self._bars_per_day(sym))
+                # _ladder_in_venue_prices rewrites the levels in place: hand it a copy, keep the cache pure
+                out[sym] = _ladder_in_venue_prices(copy.deepcopy(lad), self._venue_mark_of(sym))
             except Exception as e:  # noqa: BLE001
                 logger.warning("trend_exit_ladder_failed", symbol=sym, error=str(e)[:120])
         return out
@@ -1421,8 +1462,7 @@ class TrendDailyEngine:
             return out
         params = TrendParams.from_config(self.config)
         try:
-            close_dt = self._run_close_dt()
-            data = self._load_frames(close_dt, False, params, list(self.state.positions))
+                        data = self._frames_for_visibility(params, list(self.state.positions))
         except Exception as e:  # noqa: BLE001 — visibility must never break the API
             logger.warning("trend_excursion_unavailable", error=str(e)[:160])
             return out

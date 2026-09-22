@@ -213,3 +213,35 @@ def test_a_live_clock_change_waits_for_the_restart(tmp_path):
     eng2 = TrendDailyEngine(s, on_fill=Fills(), equity_provider=lambda: 1000.0, data_store=FakeStore(frames),
                             state_path=str(tmp_path / "t.json"), clock=lambda: RUN_08)
     assert eng2._bar_hours() == 4 and eng2._run_hours() == [0, 4, 8, 12, 16, 20]
+
+
+def test_visibility_reuses_frames_and_ladders_between_runs(tmp_path, monkeypatch):
+    """The bridge asks for the exit ladders on every broadcast. The frames are read once per run
+    key and the Donchian loop runs once per (series, side, lookbacks); a new run key re-reads."""
+    import strategies.trend_daily as td
+    s = Settings()
+    store = FakeStore({"UPUSDT": _frame("up")})
+    from strategies.trend_daily import BookPosition
+    eng = TrendDailyEngine(s, on_fill=Fills(), equity_provider=lambda: 1000.0, data_store=store,
+                           state_path=str(tmp_path / "t.json"), clock=lambda: RUN_08)
+    eng.state.positions["UPUSDT"] = BookPosition(symbol="UPUSDT", size=1.0, entry_price=100.0, entry_fee_rate=0.0004,
+                                                 weight=0.1, opened="2026-09-02", opened_ts=0.0, mark_price=100.0)
+    calls = {"ladder": 0}
+    real = td.exit_ladder
+    def counting(*a, **k):
+        calls["ladder"] += 1
+        return real(*a, **k)
+    monkeypatch.setattr(td, "exit_ladder", counting)
+    loads0 = store.calls
+    first = eng.exit_ladders()
+    for _ in range(5):
+        again = eng.exit_ladders()
+    assert calls["ladder"] == 1                      # one Donchian pass, not six
+    assert store.calls == loads0 + 1                 # one frame read, not six
+    assert again["UPUSDT"]["levels"] == first["UPUSDT"]["levels"]   # the copy handed out is stable
+    assert first["UPUSDT"]["active"] > 0
+    # a new run key (the next run wrote bars) invalidates the frames; a changed series the ladder
+    eng.state.last_run_date = "2026-09-09"
+    store.frames["UPUSDT"] = pd.concat([_frame("up"), _frame("up").iloc[-1:].set_index(_frame("up").index[-1:] + pd.Timedelta(days=1))])
+    eng.exit_ladders()
+    assert store.calls == loads0 + 2 and calls["ladder"] == 2

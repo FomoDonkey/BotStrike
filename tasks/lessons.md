@@ -1850,3 +1850,11 @@ existe para cualquier cierre (duración, estilo) se calcula sobre los cierres qu
 dice su población; (3) un caso límite de un tipo (posición trend con 0 piernas) nunca cae en la rama de otro tipo
 (intradía): `exitLadderOf` devolvía null y XAU perdía tres columnas. Y auditar la UI con un barrido automático de
 placeholders por ruta (`window.__scan`) antes de mirar valores: en 5 minutos lista todo lo que Edgar ve como raro.
+
+## 2026-09-22 — un cálculo "barato" en una ruta de visibilidad se multiplica por la frecuencia del broadcast
+`exit_ladders()` era aceptable con barras diarias (2,3k) y pasó desapercibido; el reloj de 4 h lo multiplicó por 6 y
+el bridge lo llamaba varias veces por segundo (cada broadcast de símbolo + el metrics loop): un núcleo al 90 % y los
+ventiladores del Proxmox acelerando. Regla: todo lo que sirve la API en un bucle (escaleras, MAE/MFE, series) se
+memoriza por lo que lo cambia (run key, serie, lado) y nunca relee disco por llamada; y tras cambiar la resolución de
+una serie, medir la CPU del proceso (py-spy `dump`/`record`: descargar la wheel de PyPI y extraer el binario cuando no
+hay pip/uv en el CT).
