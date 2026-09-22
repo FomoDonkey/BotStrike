@@ -2599,5 +2599,5 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
   no leg active · exits next run · none · by design"; Journal (ADA) "n/a · 0 round trips yet"; Strategies card + leaderboard
   n/a con motivo; Edge monitor "n 0 · INSUFFICIENT" + texto de espera (antes "Win rate 0 % · t-stat 0.00 · PF ---");
   Order History ADD ×5; feed "Added to LONG ADA-USD · 274 ADA → 327 ADA held".
-- [ ] Journal: "Avg hold" sobre episodios aplanados solo verificado por código en un mercado con cierre forzado (ZEC/ETH);
-  en Chrome se vio ADA (sin cierre) → "n/a · no position closed yet" correcto.
+- [x] Journal ZEC-USD en Chrome (00:50Z): "Avg hold 81h 58m · 1 close · 0 round trips · 1 forced" = el cierre manual del
+  9-sep (Hold 81h 58m en su tarjeta); episodio abierto "Fills 6 · 3 trims · 2 adds"; ADA sin cierre → "n/a" correcto.
