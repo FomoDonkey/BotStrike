@@ -144,7 +144,17 @@ export function StrategyCard({ s, pf, edge, allocField, busy, expanded, onToggle
           {s.research && <ResearchDetails r={s.research} />}
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-2 mb-1.5">Edge monitor</p>
-            {edge ? (
+            {edge && !(edge.n > 0) ? (
+              // With no round trip the monitor has nothing to measure: "Win rate 0 % · t-stat 0.00 · PF ---"
+              // read as a failing strategy beside 31 closes (2026-09-22). Say what it waits for instead.
+              <div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6">
+                  <ListRow label="n" hint="Round trips the strategy closed — the only trades that test its exit rule">0</ListRow>
+                  <ListRow label="Verdict"><StatusChip status="disabled" label={edge.verdict || "insufficient"} size="xs" title={edge.reason} /></ListRow>
+                </div>
+                <p className="text-[12px] text-text-2 mt-1">No round trip closed by the strategy yet: the monitor starts with the first one. Rebalance trims and forced closes (manual · universe · risk halt) realise money but say nothing about the exit rule, so they are not counted here.</p>
+              </div>
+            ) : edge ? (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6">
                 <ListRow label="n">{edge.n}</ListRow>
                 <ListRow label="Win rate">{formatPct(edge.win_rate, 0)}</ListRow>
