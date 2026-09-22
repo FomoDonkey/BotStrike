@@ -2591,5 +2591,13 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
   → 327 ADA held" (bridge pasa `adds_to_position` del engine); Order History marca ADD (derivado de la secuencia).
 - [x] Funding XAU $0.0000: real — las 9 filas de funding son de la posición anterior (≤ 18-sep); la actual (21-sep 04:05)
   aún no tiene evento. MAE/MFE 0.0/+177.7 correctos.
-- [ ] Desplegar (bundle index-Cm0CXUsZ.js) tras verificar el run de 00:05Z; re-verificar en Chrome; parchear las 5 filas
-  "Opened" de data/activity.json del 22:08Z (parado → editar → arrancar).
+- [x] Run 00:05Z (primer run puntual del reloj de 4 h): ok, late False, 0 trades, fila 2026-09-22T00 (turnover 0), next 04:05Z.
+- [x] Desplegado 5336cab → 4d7514c → 9ce13bb (gate CT 543 passed); activity.json: 5 filas relabeladas "Added to LONG … → held".
+- [x] Re-verificado en Chrome (bundle index-BueX1D1m.js): Portfolio "Swing · 5 closes", 5d 5h / 2d 12h, "Win rate n/a ·
+  0 round trips", nueva fila "Closes 31 · 16 positive" (solo 16 de 31 cierres acabaron en positivo: los trims también
+  pierden), etiquetas sin truncar (el primer intento las estrujaba a "T…" → valores cortos + fila Closes); XAU "0/5 legs ·
+  no leg active · exits next run · none · by design"; Journal (ADA) "n/a · 0 round trips yet"; Strategies card + leaderboard
+  n/a con motivo; Edge monitor "n 0 · INSUFFICIENT" + texto de espera (antes "Win rate 0 % · t-stat 0.00 · PF ---");
+  Order History ADD ×5; feed "Added to LONG ADA-USD · 274 ADA → 327 ADA held".
+- [ ] Journal: "Avg hold" sobre episodios aplanados solo verificado por código en un mercado con cierre forzado (ZEC/ETH);
+  en Chrome se vio ADA (sin cierre) → "n/a · no position closed yet" correcto.
