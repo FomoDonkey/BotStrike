@@ -160,19 +160,21 @@ export function PortfolioPage() {
         {/* Holding times belong to every close that flattened a position (round trips AND forced closes);
             a trim leaves the position open. With 0 round trips these read "n/a" / "---" and looked
             broken beside 31 closes (2026-09-21). */}
-        <ListRow label="Trading style" hint={HOLD_HINT}>{p ? (p.analysis.median_hold_sec > 0 ? <span>{p.analysis.trading_style}<span className="text-text-3 font-medium"> · {holdPopulation(p.analysis)}</span></span> : <NotYet reason="no position closed yet" />) : "---"}</ListRow>
+        {/* the value stays short: a long value squeezes the label to "T…" in the 270 px column (seen live 2026-09-22) */}
+        <ListRow label="Trading style" hint={HOLD_HINT}>{p ? (p.analysis.median_hold_sec > 0 ? <span title={holdPopulation(p.analysis)}>{p.analysis.trading_style}<span className="text-text-3 font-medium"> · {p.analysis.flattened ?? p.analysis.closed_trades ?? 0} closes</span></span> : <NotYet reason="no close yet" />) : "---"}</ListRow>
         <ListRow label="Avg trade duration" hint={HOLD_HINT}>{p ? (p.analysis.avg_hold_sec > 0 ? formatDurationShort(p.analysis.avg_hold_sec) : <NotYet reason="no position closed yet" />) : "---"}</ListRow>
         <ListRow label="Median trade duration" hint={HOLD_HINT}>{p ? (p.analysis.median_hold_sec > 0 ? formatDurationShort(p.analysis.median_hold_sec) : <NotYet reason="no position closed yet" />) : "---"}</ListRow>
       </ListSection>
       <ListSection title="Performance 30D">
         <ListRow label="Max drawdown" hint={sharpe30?.drawdown_mtm ? "Worst peak-to-trough of the marked account value inside the last 30 days (open positions included), as a share of the peak" : "Worst drawdown of the realised chain in the window, at least today's live figure"}><span className={cn(sharpe30 && sharpe30.drawdown > 0 && "text-rose")}>{sharpe30 ? formatPct(sharpe30.drawdown) : "---"}</span></ListRow>
         <ListRow label="Win rate" hint="Round trips the strategy closed in the last 30 days that ended with a positive net PnL (forced closes and trims are not counted)">{sharpe30 ? (sharpe30.trades > 0 ? formatPct(sharpe30.win_rate, 1)
-          : <NotYet reason={`0 round trips${typeof sharpe30.closes_all === "number" && sharpe30.closes_all > 0 ? ` · ${sharpe30.closes_positive ?? 0}/${sharpe30.closes_all} closes positive` : ""}`} title="The strategy has not closed a full trade yet: every close so far is a rebalance trim or a forced close, which say nothing about the exit rule" />) : "---"}</ListRow>
+          : <NotYet reason="0 round trips" title="The strategy has not closed a full trade yet: every close so far is a rebalance trim or a forced close, which say nothing about the exit rule" />) : "---"}</ListRow>
         <ListRow label="Sharpe" hint={sharpe30 && !sharpe30.sharpe_valid ? sharpe30.sharpe_reason ?? "needs 30 days of history" : "Annualised Sharpe of the marked daily returns over the window"}>
           {sharpe30 ? (sharpe30.sharpe_valid && typeof sharpe30.sharpe === "number" ? sharpe30.sharpe.toFixed(2)
             : <span title={sharpe30.sharpe_reason}>n/a{typeof sharpe30.sharpe_days === "number" ? <span className="text-text-3 font-medium"> · {sharpe30.sharpe_days}/{sharpe30.sharpe_min_days ?? 30} days</span> : null}</span>) : "---"}
         </ListRow>
         <ListRow label="Round trips" hint="Positions opened and flattened in the window; rebalance trims are not counted">{sharpe30 ? sharpe30.trades : "---"}</ListRow>
+        <ListRow label="Closes" hint="Every close of the window — round trips, forced closes and rebalance trims — and how many ended with a positive net PnL. Money, not a statistic of the exit rule.">{sharpe30 && typeof sharpe30.closes_all === "number" ? <span title={`${sharpe30.trims ?? 0} trims · ${sharpe30.forced ?? 0} forced · ${sharpe30.trades} round trips`}>{sharpe30.closes_all}<span className="text-text-3 font-medium"> · {sharpe30.closes_positive ?? 0} positive</span></span> : "---"}</ListRow>
       </ListSection>
       <div className="px-3 py-2 border-t border-hairline flex items-center justify-between gap-2">
         <Freshness at={pf.at} error={pf.error} every={10_000} />
