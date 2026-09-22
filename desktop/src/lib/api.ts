@@ -810,10 +810,21 @@ export interface PortfolioResponse {
   analysis: {
     longest_win_streak_days: number;
     trading_style: string;
+    /** over every close that flattened a position (round trips + forced closes); trims have no holding time */
     avg_hold_sec: number;
     median_hold_sec: number;
+    /** round trips the strategy closed (the statistics population) */
+    closed_trades?: number;
+    /** closes that flattened a position: round trips + forced closes */
+    flattened?: number;
+    forced?: number;
   };
   perf_30d: {
+    /** every close of the window (round trips + forced closes + trims) and how many ended positive */
+    closes_all?: number;
+    closes_positive?: number;
+    forced?: number;
+    trims?: number;
     drawdown: number;
     /** true → worst peak-to-trough of the marked path in the window; false → realised chain floored by the live figure */
     drawdown_mtm?: boolean;

@@ -25,6 +25,8 @@ export interface OrderRow {
   pnl?: number;
   trigger?: string;
   exitReason?: string;
+  /** an ENTRY that grew a position the book already held (a rebalance add or a re-buy), not an opening */
+  add?: boolean;
 }
 
 /** Explode trade DB rows into ENTRY / EXIT fills, newest first. */
@@ -77,6 +79,21 @@ function orderRows(trades: TradeRecord[]): OrderRow[] {
   }
   const ms = (v: number | string) => (typeof v === "number" ? (v > 1e11 ? v : v * 1000) : Date.parse(v) || 0);
   out.sort((a, b) => ms(b.ts) - ms(a.ts));
+  // Walk the fills oldest-first per market: an ENTRY while a position is still held is an ADD.
+  // Five re-buys at 22:08Z on 2026-09-21 printed as five ENTRY orders on positions that never closed.
+  const held = new Map<string, number>();
+  for (let i = out.length - 1; i >= 0; i--) {
+    const r = out[i];
+    if (r.kind === "FUNDING") continue;
+    const k = `${r.symbol}|${r.strategy ?? ""}`;
+    const cur = held.get(k) ?? 0;
+    if (r.kind === "ENTRY") {
+      r.add = cur > 0.02 * (cur + r.size);     // dust left by a full exit is not a held position
+      held.set(k, cur + r.size);
+    } else {
+      held.set(k, Math.max(0, cur - r.size));
+    }
+  }
   return out;
 }
 
@@ -102,7 +119,7 @@ export function OrderHistoryTable({ trades, symbol, loading, filter }: OrderHist
   const columns: Column<OrderRow>[] = [
     { id: "time", label: "Time", align: "l", render: (r) => formatDateTime(r.ts) },
     { id: "symbol", label: "Symbol", align: "l", sortValue: (r) => r.symbol, render: (r) => <span className="font-semibold">{r.symbol}</span> },
-    { id: "kind", label: "Order", align: "l", sortValue: (r) => r.kind, render: (r) => <Chip tone={r.kind === "ENTRY" ? "blue" : r.kind === "FUNDING" ? "amber" : "neutral"} size="xs">{r.kind}</Chip> },
+    { id: "kind", label: "Order", align: "l", sortValue: (r) => (r.kind === "ENTRY" && r.add ? "ADD" : r.kind), render: (r) => <Chip tone={r.kind === "ENTRY" ? "blue" : r.kind === "FUNDING" ? "amber" : "neutral"} size="xs" title={r.kind === "ENTRY" && r.add ? "Grew a position the book already held (rebalance add or re-buy) — not a new trade" : undefined}>{r.kind === "ENTRY" && r.add ? "ADD" : r.kind}</Chip> },
     { id: "side", label: "Side", align: "l", render: (r) => r.kind === "FUNDING" ? <span className="text-text-2 font-medium">carry</span> : <SideChip side={r.side} size="xs" labels="order" /> },
     { id: "type", label: "Type", align: "l", render: (r) => <span className="font-medium">{r.orderType ? r.orderType.replace(/_/g, " ") : "market"}</span> },
     { id: "price", label: "Fill price", sortValue: (r) => r.price, render: (r) => <span className="num">{formatPrice(r.price || 0)}</span> },

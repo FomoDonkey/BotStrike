@@ -1830,9 +1830,23 @@ que determina la construcción del motor (store, reloj) se lee UNA vez en `__ini
 no puede mover el motor a un reloj cuya caché no tiene. Y al desplegar un ajuste de reinicio: reiniciar ANTES de que
 pase el siguiente ciclo del bucle (o parar → cambiar → arrancar).
 
-## 2026-09-21 — la historia de un futuro en Yahoo es la del contrato front ACTUAL: cambia entera en cada roll
-`GC=F` re-descargado tras el cambio de reloj difería en 1.507 cierres (~1 %) de la caché construida un mes antes;
-el "heal" de 5 días no puede ver un re-nivelado de toda la historia, así que la caché vieja era un empalme con un
-salto en el roll — y ese salto fue lo que dejó viva la pierna de 60 días del oro (la entrada del 21-sep). Regla: para
-metales usar spot (`XAUUSD=X`, `XAGUSD=X`, sin rolls; es lo que sigue el perp de Strike); para cualquier futuro de
-Yahoo, re-descargar la historia completa cuando cambie el contrato front, no solo los últimos días.
+## 2026-09-21 — la historia que Yahoo sirve de un futuro NO es fija: nunca empalmar, re-leer entera
+`GC=F` re-descargado el 21-sep difería de la caché construida en agosto en 1.507 cierres: idéntica antes de 2020 y
+desde 2020 movida entre +0,07 % y +1,2 % (suave, retornos corr 0,995) — coincide con el cambio de contrato activo
+oct→dic, pero la causa exacta (roll o revisión del proveedor) no está demostrada; `SI=F` y `CL=F` no cambiaron
+(1 cierre). Lo que sí está demostrado: el "heal" de 5 días convirtió la caché en un EMPALME de dos historias con
+un escalón en la costura, y ese escalón solo abrió la pierna de 60 días del oro (entrada del 21-sep). Regla:
+un mercado de Yahoo se re-lee ENTERO en cada refresh (la llamada devuelve 10 años igualmente) y las filas frescas
+ganan en todo el rango; la caché solo cubre un fetch fallido (`DailyDataStore._load_one`, test
+`test_yahoo_history_is_replaced_in_full_not_spliced`). Spot no existe en Yahoo (`XAUUSD=X`/`XAGUSD=X` → 404);
+el oro tokenizado (PAXG/XAUT) es más ruidoso (146 flips de pierna vs 108 en 2 años) y los ETF (GLD/SLV) son
+otro instrumento (corr 0,91) que exigiría revalidar — el futuro re-leído entero es la serie validada.
+
+## 2026-09-22 — "---" sin explicación se lee como bug; una estadística que no puede existir dice POR QUÉ, en línea
+Tras unificar la población (solo round trips de la estrategia), cuatro páginas mostraban "---"/"n/a" al lado de 31
+cierres y Edgar lo vio como fallos ("el win rate no sale"). Regla: (1) el edge (win rate, PF, best/worst, t-stat) se
+mide en round trips y, con cero, se muestra "n/a · 0 round trips" y qué hubo ("30/31 closes positive"); (2) lo que
+existe para cualquier cierre (duración, estilo) se calcula sobre los cierres que APLANAN (round trips + forzados) y
+dice su población; (3) un caso límite de un tipo (posición trend con 0 piernas) nunca cae en la rama de otro tipo
+(intradía): `exitLadderOf` devolvía null y XAU perdía tres columnas. Y auditar la UI con un barrido automático de
+placeholders por ruta (`window.__scan`) antes de mirar valores: en 5 minutos lista todo lo que Edgar ve como raro.

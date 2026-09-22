@@ -176,7 +176,12 @@ export interface EpisodeStats {
   grossWins: number;
   grossLosses: number;
   profitFactor: number | null;
+  /** average hold of the round trips only */
   avgHoldSec: number | null;
+  /** closes that flattened a position: round trips + forced closes (a trim keeps it open) */
+  flattened: number;
+  /** average hold over every flattened episode - the horizon the book actually held */
+  avgHoldFlatSec: number | null;
   best: Episode | null;
   worst: Episode | null;
   fees: number;
@@ -197,6 +202,8 @@ export function episodeStats(episodes: Episode[]): EpisodeStats {
     if (!best || e.pnl > best.pnl) best = e;
     if (!worst || e.pnl < worst.pnl) worst = e;
   }
+  let holdFlat = 0, nFlat = 0;
+  for (const e of flattened) if (e.closeTs) { holdFlat += e.closeTs - e.openTs; nFlat += 1; }
   for (const e of forcedEps) { net += e.pnl; fees += e.fees; }
   for (const e of open) fees += e.fees;
   const trims = episodes.reduce((a, e) => a + e.fills.filter((f) => f.kind === "trim").length, 0);
@@ -208,6 +215,8 @@ export function episodeStats(episodes: Episode[]): EpisodeStats {
     net, grossWins: gw, grossLosses: gl,
     profitFactor: gl > 0 ? gw / gl : (gw > 0 ? null : null),
     avgHoldSec: closed.length ? hold / closed.length : null,
+    flattened: flattened.length,
+    avgHoldFlatSec: nFlat ? holdFlat / nFlat : null,
     best, worst, fees,
     unrealized: open.reduce((a, e) => a + e.unrealized, 0),
   };

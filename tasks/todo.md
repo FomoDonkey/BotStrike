@@ -2562,9 +2562,11 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
   FRONT actual; la caché antigua se construyó antes del roll y se "curó" solo 5 días atrás → empalme con salto
   ~09-08/09-09. Sobre la serie consistente nueva, XAU tiene 0/5 piernas (la entrada del 21-sep salió del empalme);
   el run de las 04:05Z la cerrará como TREND_EXIT. Se mantiene la serie nueva (consistente).
-- [ ] FIX: fuente spot para metales (`XAUUSD=X`, `XAGUSD=X`: sin rolls; Strike XAU sigue spot; el basis −1,7 % era
-  la prima futuro-spot). Comparar series/piernas, actualizar YAHOO_MAP, test, y anotar que GC=F/SI=F/CL=F re-nivelan
-  toda la historia en cada roll (HEAL_DAYS=5 no lo cubre).
+- [x] FIX metales (2026-09-21 23:20Z): spot NO existe en Yahoo (`XAUUSD=X`/`XAGUSD=X` → 404); PAXG/XAUT más ruidosos
+  (146 flips vs 108); GLD/SLV = otro instrumento (corr 0,91, exigiría revalidar). Elegido: todo mercado de Yahoo se
+  re-lee ENTERO en cada refresh (filas frescas ganan en todo el rango, nada de empalmes de 5 días); Binance conserva
+  el heal. Test `test_yahoo_history_is_replaced_in_full_not_spliced`. Hoy 0/5 piernas en oro y plata en TODAS las
+  fuentes; WTI 1/5 en la serie fresca (la posición tiene 4/5 → el run de 04:05Z debe recortar). Pendiente desplegar.
 ### Auditoría UI ronda 20 (2026-09-21 ~23:00Z, tras el reloj de 4 h) — DOM vs API en el mismo instante
 - [x] Trade: 7 posiciones (entry/mark/PnL/funding/legs/escalera venue/MAE-MFE/hold/fees) idénticas a la API; hint
   "Runs" según el reloj; Trade History 31 = 0 + 5 forzados + 26 trims; Activity carga (config changed sin duplicar).
@@ -2575,3 +2577,19 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
   4 h, ningún trend_missing falso), Journal (0 · 5 · 26 · 7 abiertas) — coinciden. 390 px sin desbordes.
 - [x] XAU 0/5 piernas: explicado (serie GC=F re-nivelada al roll; ver hallazgo). El run de 04:05Z la cerrará.
 - [ ] Portfolio/System muestran "---" durante 1-2 s en la primera carga (los endpoints tardan 0,4-7 s); cosmético.
+### Auditoría UI ronda 21 (2026-09-22 00:00Z) — Edgar: "win rate no sale", "XAU sin métricas", "muchas más cosas"
+- [x] Barrido DOM de las 9 rutas buscando ---/n/a/NaN/vacíos: Trade (solo XAU), Portfolio (4), Journal (4), Strategies (5);
+  Risk, Backtest, Data, Settings, System limpias. Causa común: 0 round trips cerrados por la estrategia (31 cierres =
+  5 forzados + 26 trims) → cada estadística de edge salía "---" sin decir por qué.
+- [x] FIX Portfolio: Trading style / Avg / Median duration ahora sobre TODOS los cierres que aplanan (round trips +
+  forzados; un trim no tiene duración) con la población visible; Win rate "n/a · 0 round trips · 30/31 closes positive".
+- [x] FIX Journal: Win rate / PF / Best-worst "n/a · 0 round trips yet"; Avg hold sobre episodios aplanados (5 closes).
+- [x] FIX Strategies: card Win rate/PF "n/a · 0 round trips", Sharpe "n/a · < 30 days"; leaderboard n/a con título.
+- [x] FIX XAU 0/5 piernas: la tabla la trataba como intradía (--- --- ---) → "0/5 legs" (rojo), "no leg active · exits
+  next run", "none · by design" (`ladderIdle` en market.ts).
+- [x] FIX adds: el feed decía "Opened LONG" ×5 a las 22:08Z para re-compras sobre posiciones abiertas → "Added to LONG …
+  → 327 ADA held" (bridge pasa `adds_to_position` del engine); Order History marca ADD (derivado de la secuencia).
+- [x] Funding XAU $0.0000: real — las 9 filas de funding son de la posición anterior (≤ 18-sep); la actual (21-sep 04:05)
+  aún no tiene evento. MAE/MFE 0.0/+177.7 correctos.
+- [ ] Desplegar (bundle index-Cm0CXUsZ.js) tras verificar el run de 00:05Z; re-verificar en Chrome; parchear las 5 filas
+  "Opened" de data/activity.json del 22:08Z (parado → editar → arrancar).

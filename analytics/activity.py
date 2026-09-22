@@ -99,8 +99,16 @@ class ActivityLog:
             base = symbol.split("-")[0] if symbol else ""
             if ttype == "ENTRY":
                 pos = "LONG" if side == "BUY" else "SHORT"
-                return self.add("fill", f"Opened {pos} {symbol}",
-                                f"{qty:.6g} {base} (${notional:,.2f})" + (f" · {nice}" if nice else ""),
+                # A fill that grows a position the book already holds is an add, not an opening:
+                # the five "Opened LONG" rows of 2026-09-21 22:08Z were re-buys on positions that
+                # never closed, and the feed read as five new trades.
+                adds = bool(t.get("adds_to_position"))
+                after = t.get("position_size_after")
+                detail = f"{qty:.6g} {base} (${notional:,.2f})"
+                if adds and after:
+                    detail += f" → {float(after):.6g} {base} held"
+                return self.add("fill", f"{'Added to' if adds else 'Opened'} {pos} {symbol}",
+                                detail + (f" · {nice}" if nice else ""),
                                 symbol=symbol, side=side, strategy=strategy, ts=t.get("timestamp"))
             pos = "LONG" if side == "BUY" else "SHORT"          # exits carry the POSITION side
             pnl = float(t.get("pnl") or 0.0)

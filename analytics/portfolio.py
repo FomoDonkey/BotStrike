@@ -178,7 +178,13 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
                 streak = 0
 
     # ── hold-time analysis ──
-    holds = [_f(getattr(t, "duration_sec", 0.0)) for t in closes if _f(getattr(t, "duration_sec", 0.0)) > 0]
+    # A holding time belongs to every close that FLATTENED a position - the strategy's own round
+    # trips and the forced closes (manual / universe / risk halt) alike; a rebalance trim leaves
+    # the position open, so it has none. The edge statistics (win rate, PF) stay on the round
+    # trips; the book's horizon is measured on everything it actually held and let go.
+    flattened = [t for t in rows if (getattr(t, "trade_type", "") or "ENTRY") not in ("ENTRY", "FUNDING")
+                 and not is_rebalance_row(t)]
+    holds = [_f(getattr(t, "duration_sec", 0.0)) for t in flattened if _f(getattr(t, "duration_sec", 0.0)) > 0]
     avg_hold = statistics.mean(holds) if holds else 0.0
     med_hold = statistics.median(holds) if holds else 0.0
 
@@ -226,7 +232,15 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
         else:
             sharpe30 = None
             sharpe_reason = f"needs {int(SHARPE_MIN_DAYS)} days of MTM history (have {len(mtm_rets)})"
+    # every close of the window - round trips, forced closes and trims - and how many ended
+    # positive, so a window with no round trip still says what the money did
+    all30 = [t for t in rows if (getattr(t, "trade_type", "") or "ENTRY") not in ("ENTRY", "FUNDING")
+             and _f(t.timestamp) >= cutoff_30]
     perf_30d = {
+        "closes_all": len(all30),
+        "closes_positive": sum(1 for t in all30 if _f(t.pnl) > 0),
+        "forced": sum(1 for t in all30 if is_non_strategy_exit(t)),
+        "trims": sum(1 for t in all30 if is_rebalance_row(t)),
         "drawdown": dd30,
         "drawdown_mtm": bool(has_hist),
         "win_rate": round(wins30 / len(c30), 4) if c30 else 0.0,
@@ -326,8 +340,9 @@ def compute_portfolio(trades: List[Any], initial_capital: float, positions: List
         "margin_usage": round(_f(margin_used) / _f(equity), 6) if _f(equity) > 0 else 0.0,
         "trend_book_notional": round(trend_book, 4),
         "volume_30d": perf_30d["volume"], "fees_taker": fees_taker, "fees_maker": fees_maker,
-        "analysis": {"longest_win_streak_days": best, "trading_style": _trading_style(med_hold, len(closes)),
-                     "avg_hold_sec": round(avg_hold, 1), "median_hold_sec": round(med_hold, 1), "closed_trades": len(closes)},
+        "analysis": {"longest_win_streak_days": best, "trading_style": _trading_style(med_hold, len(holds)),
+                     "avg_hold_sec": round(avg_hold, 1), "median_hold_sec": round(med_hold, 1), "closed_trades": len(closes),
+                     "flattened": len(flattened), "forced": sum(1 for t in flattened if is_non_strategy_exit(t))},
         "perf_30d": perf_30d, "win_days": win_days, "bias": bias, "daily": daily, "by_strategy": by_strategy,
         # what the history covers, so the page can say which part of the chart is an estimate
         "equity_history": {

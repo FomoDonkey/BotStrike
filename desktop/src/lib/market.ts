@@ -34,6 +34,14 @@ export function exitLadderOf(p: PositionData): ExitLadder | null {
   return l && Array.isArray(l.levels) && l.levels.length > 0 ? l : null;
 }
 
+/** A trend position whose every trailing leg has already stopped out: it still has a ladder (0 of
+ *  N legs) and leaves at the next scheduled run. Rendered like an intraday position it showed
+ *  "---" for its exits, ladder and TP (XAU-USD, 2026-09-21). */
+export function ladderIdle(p: PositionData): boolean {
+  const l = p.exit_ladder;
+  return !!l && Number(l.total) > 0 && !(Array.isArray(l.levels) && l.levels.length > 0);
+}
+
 /**
  * Two Donchian lookbacks often share the same stop price (D20 and D30 on the same channel low).
  * Merge them so one price = one rung: the shares add up and the chart draws a single line.

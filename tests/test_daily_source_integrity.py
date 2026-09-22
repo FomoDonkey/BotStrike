@@ -88,3 +88,34 @@ def test_cache_rereads_its_last_days_and_lets_the_settled_bar_win(tmp_path):
     assert out.loc["2026-09-03", "close"] == pytest.approx(66.973)          # the settled bar replaced it
     assert pd.Timestamp(calls[0], unit="ms") <= pd.Timestamp("2026-09-03") - pd.Timedelta(days=HEAL_DAYS - 1)
     assert pd.read_parquet(store._path("XAG-USD")).loc["2026-09-03", "close"] == pytest.approx(66.973)
+
+
+def test_yahoo_history_is_replaced_in_full_not_spliced(tmp_path):
+    """Yahoo re-served the whole GC=F history on 2026-09-21 (+0.3-1.2 % since 2020). A cache healed
+    five days at a time became a splice with a step at the seam - which opened a leg by itself.
+    A Yahoo market is therefore re-read in full: fresh rows win everywhere, not only in the heal
+    window. A Binance market keeps the five-day heal (one call per bar range, never ten years)."""
+    idx = pd.date_range("2026-06-01", "2026-09-18", freq="D")
+    old = pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": 100.0, "volume": 1.0,
+                        "quote_volume": 1.0}, index=idx)
+    fresh_all = old.copy(); fresh_all["close"] = 101.0          # the whole history re-levelled
+
+    calls = {}
+
+    def fetcher(symbol, start_ms):
+        calls[symbol] = start_ms
+        return fresh_all[fresh_all.index >= pd.Timestamp(start_ms, unit="ms").normalize()]
+
+    store = DailyDataStore(data_dir=str(tmp_path), fetcher=fetcher)
+    for sym in ("XAU-USD", "BTCUSDT"):
+        old.to_parquet(store._path(sym))
+    out = store.load(["XAU-USD", "BTCUSDT"], pd.Timestamp("2026-09-19"), refresh=True, min_days=1)
+    # the Yahoo market: every close is the fresh one, no seam
+    assert (out["XAU-USD"]["close"] == 101.0).all()
+    assert pd.Timestamp(calls["XAU-USD"], unit="ms") <= pd.Timestamp("2026-06-01")
+    # the Binance market: only the heal window was re-read, the older rows stay as cached
+    assert out["BTCUSDT"].loc["2026-06-01", "close"] == 100.0
+    assert out["BTCUSDT"].loc["2026-09-18", "close"] == 101.0
+    assert pd.Timestamp(calls["BTCUSDT"], unit="ms") >= pd.Timestamp("2026-09-18") - pd.Timedelta(days=HEAL_DAYS)
+    # the cache on disk holds the full fresh Yahoo history for the next run
+    assert (pd.read_parquet(store._path("XAU-USD"))["close"] == 101.0).all()

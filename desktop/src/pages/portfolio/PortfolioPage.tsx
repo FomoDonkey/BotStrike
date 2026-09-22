@@ -32,6 +32,21 @@ import { useTradeHistory } from "@/pages/trading/useTradeHistory";
 import { Freshness } from "@/components/shared/Freshness";
 import { PortfolioChart } from "./PortfolioChart";
 import type { TrendPosition } from "@/lib/api";
+import type { PortfolioResponse } from "@/lib/api";
+
+const HOLD_HINT = "Time from entry to the close that flattened the position — the strategy's own round trips and the forced closes (manual / universe / risk halt) alike. A rebalance trim leaves the position open, so it has no holding time.";
+
+function holdPopulation(a: PortfolioResponse["analysis"]): string {
+  const n = a.flattened ?? a.closed_trades ?? 0;
+  const forced = a.forced ?? 0;
+  const rt = a.closed_trades ?? Math.max(0, n - forced);
+  return forced > 0 ? `${n} closes (${rt} round trip${rt === 1 ? "" : "s"} · ${forced} forced)` : `${n} round trip${n === 1 ? "" : "s"}`;
+}
+
+/** A statistic that cannot exist yet says why, inline — a bare "---" beside 31 closes read as a bug. */
+function NotYet({ reason, title }: { reason: string; title?: string }) {
+  return <span title={title}>n/a<span className="text-text-3 font-medium"> · {reason}</span></span>;
+}
 
 type TableTab = "positions" | "trend" | "orders" | "order_history" | "history";
 const TABLE_TABS = [
@@ -142,13 +157,17 @@ export function PortfolioPage() {
       </ListSection>
       <ListSection title="Analysis">
         <ListRow label="Longest win streak" hint={p?.equity_history?.samples ? "Consecutive UTC days on which the marked account value rose (open positions included)" : "Consecutive UTC days with positive realised PnL"}>{p ? `${p.analysis.longest_win_streak_days} ${p.analysis.longest_win_streak_days === 1 ? "day" : "days"}` : "---"}</ListRow>
-        <ListRow label="Trading style">{p ? p.analysis.trading_style : "---"}</ListRow>
-        <ListRow label="Avg trade duration">{p ? (p.analysis.avg_hold_sec > 0 ? formatDurationShort(p.analysis.avg_hold_sec) : "---") : "---"}</ListRow>
-        <ListRow label="Median trade duration">{p ? (p.analysis.median_hold_sec > 0 ? formatDurationShort(p.analysis.median_hold_sec) : "---") : "---"}</ListRow>
+        {/* Holding times belong to every close that flattened a position (round trips AND forced closes);
+            a trim leaves the position open. With 0 round trips these read "n/a" / "---" and looked
+            broken beside 31 closes (2026-09-21). */}
+        <ListRow label="Trading style" hint={HOLD_HINT}>{p ? (p.analysis.median_hold_sec > 0 ? <span>{p.analysis.trading_style}<span className="text-text-3 font-medium"> · {holdPopulation(p.analysis)}</span></span> : <NotYet reason="no position closed yet" />) : "---"}</ListRow>
+        <ListRow label="Avg trade duration" hint={HOLD_HINT}>{p ? (p.analysis.avg_hold_sec > 0 ? formatDurationShort(p.analysis.avg_hold_sec) : <NotYet reason="no position closed yet" />) : "---"}</ListRow>
+        <ListRow label="Median trade duration" hint={HOLD_HINT}>{p ? (p.analysis.median_hold_sec > 0 ? formatDurationShort(p.analysis.median_hold_sec) : <NotYet reason="no position closed yet" />) : "---"}</ListRow>
       </ListSection>
       <ListSection title="Performance 30D">
         <ListRow label="Max drawdown" hint={sharpe30?.drawdown_mtm ? "Worst peak-to-trough of the marked account value inside the last 30 days (open positions included), as a share of the peak" : "Worst drawdown of the realised chain in the window, at least today's live figure"}><span className={cn(sharpe30 && sharpe30.drawdown > 0 && "text-rose")}>{sharpe30 ? formatPct(sharpe30.drawdown) : "---"}</span></ListRow>
-        <ListRow label="Win rate" hint="Round trips the strategy closed in the last 30 days that ended with a positive net PnL (forced closes and trims are not counted)">{sharpe30 && sharpe30.trades > 0 ? formatPct(sharpe30.win_rate, 1) : <span title="No round trip closed by the strategy yet">---</span>}</ListRow>
+        <ListRow label="Win rate" hint="Round trips the strategy closed in the last 30 days that ended with a positive net PnL (forced closes and trims are not counted)">{sharpe30 ? (sharpe30.trades > 0 ? formatPct(sharpe30.win_rate, 1)
+          : <NotYet reason={`0 round trips${typeof sharpe30.closes_all === "number" && sharpe30.closes_all > 0 ? ` · ${sharpe30.closes_positive ?? 0}/${sharpe30.closes_all} closes positive` : ""}`} title="The strategy has not closed a full trade yet: every close so far is a rebalance trim or a forced close, which say nothing about the exit rule" />) : "---"}</ListRow>
         <ListRow label="Sharpe" hint={sharpe30 && !sharpe30.sharpe_valid ? sharpe30.sharpe_reason ?? "needs 30 days of history" : "Annualised Sharpe of the marked daily returns over the window"}>
           {sharpe30 ? (sharpe30.sharpe_valid && typeof sharpe30.sharpe === "number" ? sharpe30.sharpe.toFixed(2)
             : <span title={sharpe30.sharpe_reason}>n/a{typeof sharpe30.sharpe_days === "number" ? <span className="text-text-3 font-medium"> · {sharpe30.sharpe_days}/{sharpe30.sharpe_min_days ?? 30} days</span> : null}</span>) : "---"}

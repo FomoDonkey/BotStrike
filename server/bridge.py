@@ -1875,6 +1875,11 @@ def _activity_fill(trade, serialized: dict) -> None:
         row = dict(serialized)
         row.setdefault("timestamp", getattr(trade, "timestamp", None))
         row["trade_type"] = str(ttype)
+        # the engine knows whether this fill opened a position or grew one it already held
+        sf = getattr(trade, "signal_features", None) or {}
+        if isinstance(sf, dict) and sf.get("adds_to_position"):
+            row["adds_to_position"] = True
+            row["position_size_after"] = sf.get("position_size_after")
         get_activity_log().record_fill(row)
     except Exception:  # noqa: BLE001
         pass

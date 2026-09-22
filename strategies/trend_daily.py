@@ -175,11 +175,17 @@ class DailyDataStore:
         if not refresh:
             return cached
         start_ms = START_MS
-        if cached is not None and len(cached):
+        if cached is not None and len(cached) and not is_yahoo_symbol(sym):
             # Re-read the last days every time so a bar cached before its source settled it is
             # replaced by the settled one (fresh rows win in the concat below): Yahoo revises a
             # futures close at settlement, and once a bar is cached it was never looked at again.
             start_ms = int((cached.index[-1] - pd.Timedelta(days=HEAL_DAYS)).timestamp() * 1000)
+        # A Yahoo market is re-read in FULL every refresh (the fetch returns ten years in one call
+        # whatever the start): the history Yahoo serves for a futures series is not fixed - GC=F
+        # came back on 2026-09-21 with every close since 2020 moved by +0.3-1.2 % versus the cache
+        # built in August - and a cache healed five days at a time became a splice of two
+        # histories with a step at the seam. That step alone opened the gold 60-day leg on 21 Sep.
+        # Fresh rows win everywhere (keep="last" below); the cache still covers a failed fetch.
         fresh = None
         last_err: Optional[Exception] = None
         for attempt in range(FETCH_ATTEMPTS):

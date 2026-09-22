@@ -8,7 +8,7 @@ import { DataTable, type Column } from "@/components/ui/DataTable";
 import { ExitLadderCell } from "@/components/ui/ExitLadder";
 import { cn, formatPrice, formatSignedBps, formatSignedMoney, formatSignedPct, formatSize, formatUSD } from "@/lib/utils";
 import {
-  exitLadderOf, pnlDistancePct, positionHoldSec, positionLeverage, positionLiquidation, positionMargin, positionNotional, positionRoe,
+  exitLadderOf, ladderIdle, pnlDistancePct, positionHoldSec, positionLeverage, positionLiquidation, positionMargin, positionNotional, positionRoe,
 } from "@/lib/market";
 import { ClosePositionButton } from "./ClosePosition";
 import { useClosePosition } from "@/hooks/useClosePosition";
@@ -21,6 +21,8 @@ interface PositionsTableProps {
   compact?: boolean;
   emptyText?: string;
 }
+
+const IDLE_LADDER = "Every trailing leg has already stopped out on the signal series. The position leaves at the next scheduled run: the crypto legs at the next 4 h bar close, gold, silver and oil at 04:05 UTC when their daily bar has settled.";
 
 function Level({ level, mark, pct, side }: { level: number | undefined; mark: number; pct?: number | null; side: string }) {
   if (typeof level !== "number" || !(level > 0)) return <span className="text-text-3">---</span>;
@@ -111,6 +113,7 @@ export function PositionsTable({ positions, symbol, compact, emptyText = "No ope
         sortValue: (p) => exitLadderOf(p)?.active ?? -1,
         render: (p) => {
           const l = exitLadderOf(p);
+          if (!l && ladderIdle(p)) return <span className="num" title={IDLE_LADDER}><span className="font-semibold text-rose">0/{p.exit_ladder?.total}</span><span className="text-text-2 font-medium"> legs</span></span>;
           if (!l) return <span className="text-text-3" title="Intraday strategy — one stop-loss and one take-profit, in the next two columns">---</span>;
           return <span className="num" title={HINTS.exitLadder}><span className="font-semibold">{l.active}/{l.total}</span><span className="text-text-2 font-medium"> legs</span></span>;
         },
@@ -120,13 +123,14 @@ export function PositionsTable({ positions, symbol, compact, emptyText = "No ope
         render: (p) => {
           const l = exitLadderOf(p);
           if (l) return <ExitLadderCell ladder={l} entry={p.entry_price} />;
+          if (ladderIdle(p)) return <span className="text-text-2 font-medium" title={IDLE_LADDER}>no leg active · exits next run</span>;
           return <Level level={p.stop_loss} mark={p.mark_price > 0 ? p.mark_price : p.entry_price} pct={p.sl_distance_pct} side={p.side} />;
         },
       },
       {
         id: "tp", label: "TP", hint: `${HINTS.tp} Distance in PnL direction: positive = favourable.`,
         render: (p) => {
-          if (exitLadderOf(p)) return <span className="text-text-2 font-medium" title={HINTS.exitLadder}>none · by design</span>;
+          if (exitLadderOf(p) || ladderIdle(p)) return <span className="text-text-2 font-medium" title={HINTS.exitLadder}>none · by design</span>;
           return <Level level={p.take_profit} mark={p.mark_price > 0 ? p.mark_price : p.entry_price} pct={p.tp_distance_pct} side={p.side} />;
         },
       },
