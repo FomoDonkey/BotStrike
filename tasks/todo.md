@@ -2609,3 +2609,6 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
   escalera memorizada por (serie, lado, lookbacks, reloj); solo el re-precio a venue corre en cada llamada. Test
   `test_visibility_reuses_frames_and_ladders_between_runs`. Desplegado 60f4310 (gate 544): bridge 2,6-3,7 % CPU
   (antes 90 %), escaleras idénticas (5/5 … XAU 0/5), load del host 1,6 → 0,7.
+- [x] Run 04:05Z (primer run diario del reloj 4 h con las piernas TradFi): ok, late False. XAU cerrado ENTERO por la regla
+  (trend_exit, −0,32 $: primer round trip de la estrategia → Win rate 0 % (0 de 1)); WTI recortado 4/5 → 3/5 (+0,22 $);
+  6 posiciones, exposición 0,60, fila 2026-09-22T04 (turnover 0,069), próximo 08:05Z.
