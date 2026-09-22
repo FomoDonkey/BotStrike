@@ -2607,4 +2607,5 @@ caché diaria binance_daily (9 años) + estado del libro. Backtest propio con la
   cada respuesta releía 7 parquet y corría 35 pasadas Python sobre ~13k barras (reloj 4 h = 6× las del diario).
 - [x] FIX: frames de visibilidad cacheados hasta el siguiente run (clave: close_dt, símbolos, run key, reloj; TTL 5 min) y
   escalera memorizada por (serie, lado, lookbacks, reloj); solo el re-precio a venue corre en cada llamada. Test
-  `test_visibility_reuses_frames_and_ladders_between_runs`. Desplegar y medir CPU.
+  `test_visibility_reuses_frames_and_ladders_between_runs`. Desplegado 60f4310 (gate 544): bridge 2,6-3,7 % CPU
+  (antes 90 %), escaleras idénticas (5/5 … XAU 0/5), load del host 1,6 → 0,7.
